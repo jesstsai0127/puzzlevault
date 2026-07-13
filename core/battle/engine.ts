@@ -29,6 +29,7 @@ type ResolvedTarget =
 interface HistoryEntry {
   players: PlayerUnitState[];
   monsters: MonsterUnitState[];
+  movementUsed: number;
 }
 
 /**
@@ -52,6 +53,9 @@ export class BattleEngine {
 
   private players: PlayerUnitState[] = [];
   private monsters: MonsterUnitState[] = [];
+  /** Shared squad-wide movement budget — the sum of every squad member's own actionPoints. */
+  private movementMax = 0;
+  private movementUsed = 0;
   private waveIndex = 0;
   private lives = STARTING_LIVES;
   private turnNumber = 1;
@@ -76,6 +80,7 @@ export class BattleEngine {
       lives: this.lives,
       turnNumber: this.turnNumber,
       victory: this.victory,
+      movement: { used: this.movementUsed, max: this.movementMax },
     };
   }
 
@@ -90,24 +95,24 @@ export class BattleEngine {
   moveUnit(unitIndex: number, dir: CardinalDir): ActionResult {
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
-    if (unit.actionsUsed >= unit.maxActionPoints) return { ok: false, reason: 'no-actions-left' };
+    if (this.movementUsed >= this.movementMax) return { ok: false, reason: 'no-movement-left' };
 
     const next = add(unit.position, MOVE_VECTORS[dir]);
     if (!this.isWalkable(next) || this.isOccupied(next)) return { ok: false, reason: 'blocked' };
 
     this.pushHistory();
     unit.position = next;
-    unit.actionsUsed += 1;
+    this.movementUsed += 1;
     return { ok: true };
   }
 
   useSkill(unitIndex: number, skillId: string, dir: CardinalDir): ActionResult {
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
-    if (unit.actionsUsed >= unit.maxActionPoints) return { ok: false, reason: 'no-actions-left' };
     if (!unit.skillIds.includes(skillId)) return { ok: false, reason: 'unknown-skill' };
     const skill = this.registry.skills[skillId];
     if (!skill) return { ok: false, reason: 'unknown-skill' };
+    if (unit.mp < skill.mpCost) return { ok: false, reason: 'not-enough-mp' };
 
     this.pushHistory();
     const dirVec = MOVE_VECTORS[dir];
@@ -115,7 +120,7 @@ export class BattleEngine {
       const target = this.resolveTarget(unit.position, dirVec, skill.range, effect.target, true);
       this.applyEffect(effect, target, unit);
     }
-    unit.actionsUsed += 1;
+    unit.mp -= skill.mpCost;
     return { ok: true };
   }
 
@@ -124,6 +129,7 @@ export class BattleEngine {
     if (!prev) return false;
     this.players = prev.players;
     this.monsters = prev.monsters;
+    this.movementUsed = prev.movementUsed;
     return true;
   }
 
@@ -163,11 +169,12 @@ export class BattleEngine {
     if (this.monsters.length === 0) {
       this.advanceWave();
     } else {
-      // Every turn is a fresh round: each living unit's action points reset
-      // here, not only when a wave clears (advanceWave/resetToWave already
-      // reset for their own cases).
+      // Every turn is a fresh round: the squad's shared movement and each
+      // living unit's own mp reset here, not only when a wave clears
+      // (advanceWave/resetToWave already reset for their own cases).
+      this.movementUsed = 0;
       for (const p of this.players) {
-        if (p.hp > 0) p.actionsUsed = 0;
+        if (p.hp > 0) p.mp = p.maxMp;
       }
       this.currentIntents = this.computeIntents();
     }
@@ -195,8 +202,9 @@ export class BattleEngine {
     }
     this.waveIndex = nextWave;
     this.monsters = this.spawnWave(nextWave);
+    this.movementUsed = 0;
     for (const p of this.players) {
-      p.actionsUsed = 0;
+      p.mp = p.maxMp;
     }
     this.currentIntents = this.computeIntents();
   }
@@ -217,11 +225,16 @@ export class BattleEngine {
         hp: def.maxHp,
         maxHp: def.maxHp,
         shield: 0,
-        maxActionPoints: def.actionPoints,
-        actionsUsed: 0,
+        mp: def.maxMp,
+        maxMp: def.maxMp,
         skillIds: def.skillIds,
       };
     });
+    this.movementMax = this.squadCharacterIds.reduce(
+      (sum, charId) => sum + this.registry.characters[charId].actionPoints,
+      0,
+    );
+    this.movementUsed = 0;
 
     this.monsters = this.spawnWave(waveIndex);
     this.currentIntents = this.computeIntents();
@@ -484,6 +497,7 @@ export class BattleEngine {
     this.history.push({
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
       monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
+      movementUsed: this.movementUsed,
     });
   }
 }
