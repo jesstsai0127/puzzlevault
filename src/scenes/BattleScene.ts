@@ -124,7 +124,8 @@ export class BattleScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(COLORS.bg);
     this.engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
 
-    this.offsetX = (this.scale.width - yanwuGroundMap.grid[0].length * TILE) / 2;
+    // Left-align the board so the right side has a wide column for the rules panel.
+    this.offsetX = 40;
     this.offsetY = 80;
 
     this.drawStaticTiles();
@@ -169,8 +170,9 @@ export class BattleScene extends Phaser.Scene {
       color: '#f1f1f6',
     });
 
+    const boardCenterX = this.offsetX + (yanwuGroundMap.grid[0].length * TILE) / 2;
     this.instructionText = this.add
-      .text(this.scale.width / 2, this.offsetY - 34, '', {
+      .text(boardCenterX, this.offsetY - 34, '', {
         fontFamily: 'monospace',
         fontSize: '15px',
         color: '#c9c9d6',
@@ -179,7 +181,7 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5, 0);
 
     this.bannerText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, '', {
+      .text(boardCenterX, this.scale.height / 2, '', {
         fontFamily: 'monospace',
         fontSize: '32px',
         color: '#70e000',
