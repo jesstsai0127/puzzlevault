@@ -4,7 +4,7 @@ import type { CardinalDir } from '../../core/geometry';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { STARTING_SQUAD, courtyardMap, registry } from '../../content/registry';
+import { STARTING_SQUAD, yanwuGroundMap, registry } from '../../content/registry';
 import type { EffectType, SkillDef } from '../../core/content/types';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚' };
@@ -94,20 +94,20 @@ export class BattleScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image('char_aster', 'assets/characters/aster.png');
-    this.load.image('char_wren', 'assets/characters/wren.png');
-    this.load.image('mon_gloom_imp', 'assets/monsters/gloom_imp.png');
-    this.load.image('mon_husk_brute', 'assets/monsters/husk_brute.png');
-    this.load.image('mon_whisper_wisp', 'assets/monsters/whisper_wisp.png');
-    this.load.image('mon_thornling', 'assets/monsters/thornling.png');
-    this.load.image('mon_night_hound', 'assets/monsters/night_hound.png');
+    this.load.image('char_li_yan', 'assets/characters/li_yan.png');
+    this.load.image('char_su_qing', 'assets/characters/su_qing.png');
+    this.load.image('mon_yin_ghost', 'assets/monsters/yin_ghost.png');
+    this.load.image('mon_jiangshi', 'assets/monsters/jiangshi.png');
+    this.load.image('mon_yuan_ling', 'assets/monsters/yuan_ling.png');
+    this.load.image('mon_teng_yao', 'assets/monsters/teng_yao.png');
+    this.load.image('mon_yao_lang', 'assets/monsters/yao_lang.png');
   }
 
   create() {
     this.cameras.main.setBackgroundColor(COLORS.bg);
-    this.engine = new BattleEngine(courtyardMap, STARTING_SQUAD, registry);
+    this.engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
 
-    this.offsetX = (this.scale.width - courtyardMap.grid[0].length * TILE) / 2;
+    this.offsetX = (this.scale.width - yanwuGroundMap.grid[0].length * TILE) / 2;
     this.offsetY = 80;
 
     this.drawStaticTiles();
@@ -182,7 +182,7 @@ export class BattleScene extends Phaser.Scene {
   // ---------------------------------------------------------------------
 
   private drawStaticTiles() {
-    courtyardMap.grid.forEach((row, y) => {
+    yanwuGroundMap.grid.forEach((row, y) => {
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
         const color = ch === '#' ? COLORS.wall : ch === '~' ? COLORS.hazard : COLORS.floor;
@@ -192,7 +192,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private buildTileHighlights() {
-    courtyardMap.grid.forEach((row, y) => {
+    yanwuGroundMap.grid.forEach((row, y) => {
       const rowArr: Phaser.GameObjects.Rectangle[] = [];
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
@@ -381,13 +381,13 @@ export class BattleScene extends Phaser.Scene {
 
   /** Only a real wall blocks a skill's line of sight — a shot flies over a hazard tile. */
   private isWallAt(x: number, y: number): boolean {
-    const row = courtyardMap.grid[y];
+    const row = yanwuGroundMap.grid[y];
     if (!row || x < 0 || x >= row.length) return true;
     return row[x] === '#';
   }
 
   private isHazardAt(x: number, y: number): boolean {
-    const row = courtyardMap.grid[y];
+    const row = yanwuGroundMap.grid[y];
     if (!row || x < 0 || x >= row.length) return false;
     return row[x] === '~';
   }
@@ -471,7 +471,7 @@ export class BattleScene extends Phaser.Scene {
     this.reachable = this.armedSkillId ? new Map() : this.computeReachable(this.selectedUnit);
     this.targetable = this.armedSkillId ? this.computeTargetable(this.selectedUnit, this.armedSkillId) : new Map();
 
-    courtyardMap.grid.forEach((row, y) => {
+    yanwuGroundMap.grid.forEach((row, y) => {
       row.split('').forEach((_ch, x) => {
         const rect = this.tileHighlights[y][x];
         const key = `${x},${y}`;
@@ -601,7 +601,7 @@ export class BattleScene extends Phaser.Scene {
     this.spawnPreviewMarkers.forEach((o) => o.destroy());
     this.spawnPreviewMarkers = [];
     if (livingMonsters.length === 0 && !snap.victory) {
-      const nextWave = courtyardMap.waves[snap.waveIndex + 1];
+      const nextWave = yanwuGroundMap.waves[snap.waveIndex + 1];
       for (const spawn of nextWave?.monsters ?? []) {
         const { px, py } = this.tileCenter(spawn.spawn.x, spawn.spawn.y);
         const textureKey = registry.monsters[spawn.monsterId].spriteRef;
@@ -651,7 +651,7 @@ export class BattleScene extends Phaser.Scene {
 
     const movText = `   ${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`;
     this.hudText.setText(
-      `${i18n.t('map.courtyard.name')}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${courtyardMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
+      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
     );
 
     if (snap.victory) {
