@@ -6,7 +6,7 @@ export const DEFAULT_LOCALE: LocaleCode = 'en';
 
 /**
  * Minimal key-lookup i18n. All game/content text is referenced by key
- * (e.g. 'skill.spark_bolt.name'), never hardcoded — this lets content packs
+ * (e.g. 'skill.flying_sword.name'), never hardcoded — this lets content packs
  * (characters, skills, monsters, maps) stay language-agnostic and lets a
  * locale be added later (zh-TW) without touching any content file.
  */
