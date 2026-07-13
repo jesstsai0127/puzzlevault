@@ -25,6 +25,8 @@ export interface SkillDef {
   /** Tiles reachable in the aimed direction. 1 = melee/adjacent only. */
   range: number;
   effects: EffectPrimitive[];
+  /** MP cost to cast — deducted from the caster's own mp, entirely separate from the squad's shared movement points. */
+  mpCost: number;
 }
 
 export interface CharacterDef {
@@ -33,8 +35,10 @@ export interface CharacterDef {
   nameKey: string;
   spriteRef: string;
   maxHp: number;
-  /** Shared per-turn budget: every move step or skill use costs 1 action point. */
+  /** This character's contribution to the squad's shared movement-point pool (summed across the squad at battle start). */
   actionPoints: number;
+  /** This character's own mana pool — skills draw from it, refills every turn. */
+  maxMp: number;
   skillIds: string[];
 }
 
