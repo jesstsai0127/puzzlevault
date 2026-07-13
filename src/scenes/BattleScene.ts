@@ -5,6 +5,21 @@ import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
 import { STARTING_SQUAD, courtyardMap, registry } from '../../content/registry';
+import type { EffectType, SkillDef } from '../../core/content/types';
+
+const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚' };
+
+/** Every skill's numeric effects, exactly as the engine will apply them — e.g. "⚔2" or "⚔1 ➜2". */
+function effectSummary(skill: SkillDef): string {
+  return skill.effects.map((e) => `${EFFECT_ICON[e.type]}${e.amount}`).join(' ');
+}
+
+/** A monster's threat at a glance — its first skill's numeric effects, shown whether or not it's currently telegraphed. */
+function monsterAttackSummary(monsterId: string): string {
+  const def = registry.monsters[monsterId];
+  const skill = registry.skills[def?.skillIds[0]];
+  return skill ? effectSummary(skill) : '';
+}
 
 const TILE = 80;
 
@@ -12,6 +27,7 @@ const COLORS = {
   bg: 0x14141a,
   floor: 0x2a2a35,
   wall: 0x111116,
+  hazard: 0x2e0a14,
   selected: 0xffd166,
   shield: 0x4cc9f0,
   intentMove: 0x8a8a9a,
@@ -49,9 +65,12 @@ export class BattleScene extends Phaser.Scene {
   private tileHighlights: Phaser.GameObjects.Rectangle[][] = [];
   private playerSprites: Phaser.GameObjects.Image[] = [];
   private playerHpBars: Phaser.GameObjects.Rectangle[] = [];
+  private playerHpTexts: Phaser.GameObjects.Text[] = [];
   private playerShieldIcons: Phaser.GameObjects.Arc[] = [];
   private monsterSprites: Map<string, Phaser.GameObjects.Image> = new Map();
   private monsterHpBars: Map<string, Phaser.GameObjects.Rectangle> = new Map();
+  private monsterHpTexts: Map<string, Phaser.GameObjects.Text> = new Map();
+  private monsterAtkTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private intentMarkers: Phaser.GameObjects.GameObject[] = [];
   private spawnPreviewMarkers: Phaser.GameObjects.GameObject[] = [];
   private selectionRing!: Phaser.GameObjects.Rectangle;
@@ -59,6 +78,7 @@ export class BattleScene extends Phaser.Scene {
   private hudText!: Phaser.GameObjects.Text;
   private instructionText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
+  private skillDescText!: Phaser.GameObjects.Text;
   private skillButtons: Button[] = [];
   private endTurnButton!: Button;
   private undoButton!: Button;
@@ -76,6 +96,10 @@ export class BattleScene extends Phaser.Scene {
     this.load.image('char_aster', 'assets/characters/aster.png');
     this.load.image('char_wren', 'assets/characters/wren.png');
     this.load.image('mon_gloom_imp', 'assets/monsters/gloom_imp.png');
+    this.load.image('mon_husk_brute', 'assets/monsters/husk_brute.png');
+    this.load.image('mon_whisper_wisp', 'assets/monsters/whisper_wisp.png');
+    this.load.image('mon_thornling', 'assets/monsters/thornling.png');
+    this.load.image('mon_night_hound', 'assets/monsters/night_hound.png');
   }
 
   create() {
@@ -106,6 +130,12 @@ export class BattleScene extends Phaser.Scene {
       return sprite;
     });
     this.playerHpBars = squad.map(() => this.add.rectangle(0, 0, TILE - 20, 6, COLORS.hpBarFill).setDepth(2));
+    this.playerHpTexts = squad.map(() =>
+      this.add
+        .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 })
+        .setOrigin(0.5)
+        .setDepth(3),
+    );
     this.playerShieldIcons = squad.map(() =>
       this.add.circle(0, 0, 8, COLORS.shield).setDepth(2).setVisible(false),
     );
@@ -148,7 +178,7 @@ export class BattleScene extends Phaser.Scene {
     courtyardMap.grid.forEach((row, y) => {
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
-        const color = ch === '#' ? COLORS.wall : COLORS.floor;
+        const color = ch === '#' ? COLORS.wall : ch === '~' ? COLORS.hazard : COLORS.floor;
         this.add.rectangle(px, py, TILE - 2, TILE - 2, color);
       });
     });
@@ -186,12 +216,19 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private buildBottomButtons() {
-    const barY = this.scale.height - 56;
+    const barY = this.scale.height - 92;
     this.skillButtons = [0, 1].map((i) =>
       this.makeButton(20 + i * 210, barY, 200, 40, () => this.toggleSkill(i)),
     );
     this.undoButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleUndo());
     this.endTurnButton = this.makeButton(this.scale.width - 170, barY, 150, 40, () => this.handleEndTurn());
+
+    this.skillDescText = this.add.text(20, barY + 46, '', {
+      fontFamily: 'monospace',
+      fontSize: '13px',
+      color: '#9a9aa8',
+      wordWrap: { width: this.scale.width - 40 },
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -334,10 +371,17 @@ export class BattleScene extends Phaser.Scene {
   // Grid helpers (mirrors engine's own walkability rules for previewing)
   // ---------------------------------------------------------------------
 
+  /** Only a real wall blocks a skill's line of sight — a shot flies over a hazard tile. */
   private isWallAt(x: number, y: number): boolean {
     const row = courtyardMap.grid[y];
     if (!row || x < 0 || x >= row.length) return true;
     return row[x] === '#';
+  }
+
+  private isHazardAt(x: number, y: number): boolean {
+    const row = courtyardMap.grid[y];
+    if (!row || x < 0 || x >= row.length) return false;
+    return row[x] === '~';
   }
 
   private isOccupiedAt(x: number, y: number): boolean {
@@ -369,7 +413,7 @@ export class BattleScene extends Phaser.Scene {
         const nx = cur.x + v.x;
         const ny = cur.y + v.y;
         const key = `${nx},${ny}`;
-        if (seen.has(key) || this.isWallAt(nx, ny) || this.isOccupiedAt(nx, ny)) continue;
+        if (seen.has(key) || this.isWallAt(nx, ny) || this.isHazardAt(nx, ny) || this.isOccupiedAt(nx, ny)) continue;
         seen.add(key);
         const path = [...cur.path, dir];
         result.set(key, path);
@@ -440,6 +484,7 @@ export class BattleScene extends Phaser.Scene {
       const ratio = Math.max(0, p.hp / p.maxHp);
       bar.setPosition(px, py + TILE / 2 - 10).setSize((TILE - 20) * ratio, 6);
       bar.setFillStyle(ratio > 0.34 ? COLORS.hpBarFill : COLORS.hpBarFillLow);
+      this.playerHpTexts[i].setPosition(px, py + TILE / 2 - 20).setText(`${Math.max(0, p.hp)}/${p.maxHp}`);
       const shieldIcon = this.playerShieldIcons[i];
       shieldIcon.setPosition(px + TILE / 2 - 12, py - TILE / 2 + 12).setVisible(p.shield > 0);
     });
@@ -458,8 +503,12 @@ export class BattleScene extends Phaser.Scene {
       if (!aliveIds.has(id)) {
         sprite.destroy();
         this.monsterHpBars.get(id)?.destroy();
+        this.monsterHpTexts.get(id)?.destroy();
+        this.monsterAtkTexts.get(id)?.destroy();
         this.monsterSprites.delete(id);
         this.monsterHpBars.delete(id);
+        this.monsterHpTexts.delete(id);
+        this.monsterAtkTexts.delete(id);
       }
     }
     livingMonsters.forEach((m) => {
@@ -479,6 +528,26 @@ export class BattleScene extends Phaser.Scene {
       }
       const ratio = Math.max(0, m.hp / m.maxHp);
       bar.setPosition(px, py - TILE / 2 + 10).setSize((TILE - 30) * ratio, 5);
+
+      let hpText = this.monsterHpTexts.get(m.instanceId);
+      if (!hpText) {
+        hpText = this.add
+          .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 })
+          .setOrigin(0.5)
+          .setDepth(3);
+        this.monsterHpTexts.set(m.instanceId, hpText);
+      }
+      hpText.setPosition(px, py - TILE / 2 + 20).setText(`${m.hp}/${m.maxHp}`);
+
+      let atkText = this.monsterAtkTexts.get(m.instanceId);
+      if (!atkText) {
+        atkText = this.add
+          .text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px', color: '#ffd166', stroke: '#000000', strokeThickness: 3 })
+          .setOrigin(0.5)
+          .setDepth(3);
+        this.monsterAtkTexts.set(m.instanceId, atkText);
+      }
+      atkText.setPosition(px, py + TILE / 2 - 10).setText(monsterAttackSummary(m.monsterId));
     });
 
     this.intentMarkers.forEach((o) => o.destroy());
@@ -489,22 +558,28 @@ export class BattleScene extends Phaser.Scene {
       const { px, py } = this.tileCenter(m.position.x, m.position.y);
       let dir: CardinalDir | null = null;
       let color = '#8a8a9a';
+      let label = '';
       if (intent.kind === 'skill') {
         dir = intent.direction;
         color = '#ef4444';
+        const skill = registry.skills[intent.skillId];
+        label = `${DIR_ARROW[dir]} ${skill ? effectSummary(skill) : ''}`.trim();
       } else if (intent.to.x !== m.position.x || intent.to.y !== m.position.y) {
         if (intent.to.x > m.position.x) dir = 'right';
         else if (intent.to.x < m.position.x) dir = 'left';
         else if (intent.to.y > m.position.y) dir = 'down';
         else dir = 'up';
+        label = DIR_ARROW[dir];
       }
       if (!dir) continue;
       const v = DIR_VECTORS[dir];
       const marker = this.add
-        .text(px + v.x * (TILE / 2 - 4), py + v.y * (TILE / 2 - 4) - TILE / 2, DIR_ARROW[dir], {
+        .text(px + v.x * (TILE / 2 - 4), py + v.y * (TILE / 2 - 4) - TILE / 2, label, {
           fontFamily: 'monospace',
-          fontSize: '20px',
+          fontSize: '18px',
           color,
+          stroke: '#000000',
+          strokeThickness: 3,
         })
         .setOrigin(0.5)
         .setDepth(2);
@@ -530,19 +605,27 @@ export class BattleScene extends Phaser.Scene {
     const noActionsLeft = (selected?.actionsUsed ?? 0) >= (selected?.maxActionPoints ?? 0);
     this.skillButtons.forEach((btn, i) => {
       const skillId = selected?.skillIds[i];
+      const skill = skillId ? registry.skills[skillId] : undefined;
+      const nameWithStats = skill ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)}` : '';
       if (!skillId || noActionsLeft || (selected?.hp ?? 0) <= 0) {
         btn.bg.setFillStyle(COLORS.buttonBg, 0.4);
-        btn.label.setText(skillId ? i18n.t(`skill.${skillId}.name`) : '');
+        btn.label.setText(nameWithStats);
         btn.bg.disableInteractive();
       } else {
         const armed = this.armedSkillId === skillId;
         btn.bg.setFillStyle(armed ? COLORS.buttonBgArmed : COLORS.buttonBg, 1);
-        btn.label.setText(i18n.t(`skill.${skillId}.name`) + (armed ? ' ◀' : ''));
+        btn.label.setText(nameWithStats + (armed ? ' ◀' : ''));
         btn.bg.setInteractive({ useHandCursor: true });
       }
     });
     this.undoButton.label.setText(i18n.t('ui.undo'));
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
+
+    this.skillDescText.setText(
+      (selected?.skillIds ?? [])
+        .map((id, i) => `${i + 1}. ${i18n.t(`skill.${id}.desc`)}`)
+        .join('    '),
+    );
 
     if (livingMonsters.length === 0 && !snap.victory) {
       this.instructionText.setText(i18n.t('ui.wave_cleared_hint'));
