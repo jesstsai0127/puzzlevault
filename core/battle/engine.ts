@@ -7,7 +7,7 @@ import {
   stepDirectionToward,
 } from '../geometry';
 import type { CardinalDir, Vec2 } from '../geometry';
-import type { AiCondition, EffectPrimitive, MapDef, MonsterDef, TargetMode } from '../content/types';
+import type { AiCondition, AiRule, AiTarget, EffectPrimitive, MapDef, MonsterDef, TargetMode } from '../content/types';
 import type {
   ActionResult,
   BattleSnapshot,
@@ -24,7 +24,8 @@ const HAZARD_DAMAGE = 3;
 type ResolvedTarget =
   | { kind: 'self' }
   | { kind: 'player'; unit: PlayerUnitState }
-  | { kind: 'monster'; unit: MonsterUnitState };
+  | { kind: 'monster'; unit: MonsterUnitState }
+  | { kind: 'base' };
 
 interface HistoryEntry {
   players: PlayerUnitState[];
@@ -61,6 +62,12 @@ export class BattleEngine {
   private turnNumber = 1;
   private victory = false;
 
+  /** All 'B' tiles on the map — computed once, the grid never changes at runtime. */
+  private baseTiles: Vec2[] = [];
+  private baseMaxHp = 0;
+  private baseHp = 0;
+  private turnsLeftInWave = 0;
+
   private currentIntents: MonsterIntent[] = [];
   private history: HistoryEntry[] = [];
   private monsterSpawnCounter = 0;
@@ -69,7 +76,19 @@ export class BattleEngine {
     this.map = map;
     this.registry = registry;
     this.squadCharacterIds = squadCharacterIds;
+    this.baseTiles = this.computeBaseTiles(map);
+    this.baseMaxHp = map.baseHp;
     this.resetToWave(0, STARTING_LIVES);
+  }
+
+  private computeBaseTiles(map: MapDef): Vec2[] {
+    const tiles: Vec2[] = [];
+    map.grid.forEach((row, y) => {
+      row.split('').forEach((ch, x) => {
+        if (ch === 'B') tiles.push({ x, y });
+      });
+    });
+    return tiles;
   }
 
   getSnapshot(): BattleSnapshot {
@@ -81,6 +100,11 @@ export class BattleEngine {
       turnNumber: this.turnNumber,
       victory: this.victory,
       movement: { used: this.movementUsed, max: this.movementMax },
+      baseHp: this.baseHp,
+      baseMaxHp: this.baseMaxHp,
+      baseTiles: this.baseTiles.map((t) => ({ ...t })),
+      turnsLeftInWave: this.turnsLeftInWave,
+      waveTurns: this.map.waves[this.waveIndex].turns,
     };
   }
 
@@ -157,16 +181,22 @@ export class BattleEngine {
       }
     }
 
+    // Base HP only ever changes above (a monster's stored intent resolving),
+    // never during the player's own turn — so undo/pushHistory doesn't need
+    // to snapshot it; clearing history here is enough.
     this.history = [];
     this.turnNumber += 1;
 
-    if (this.players.every((p) => p.hp <= 0)) {
-      this.handleWipe();
+    if (this.baseHp <= 0) {
+      this.handleBaseDestroyed();
       return;
     }
 
     this.monsters = this.monsters.filter((m) => m.hp > 0);
-    if (this.monsters.length === 0) {
+    this.turnsLeftInWave -= 1;
+    if (this.monsters.length === 0 || this.turnsLeftInWave <= 0) {
+      // Wave survived — either every monster is dead, or the clock ran out
+      // while the base is still standing. Either way, advance.
       this.advanceWave();
     } else {
       // Every turn is a fresh round: the squad's shared movement and each
@@ -184,7 +214,8 @@ export class BattleEngine {
   // Wave / run lifecycle
   // ---------------------------------------------------------------------
 
-  private handleWipe(): void {
+  /** The base ("陣") hit 0 HP — costs a life and resets the current wave with base HP full again. */
+  private handleBaseDestroyed(): void {
     this.lives -= 1;
     if (this.lives > 0) {
       this.resetToWave(this.waveIndex, this.lives);
@@ -202,6 +233,9 @@ export class BattleEngine {
     }
     this.waveIndex = nextWave;
     this.monsters = this.spawnWave(nextWave);
+    this.turnsLeftInWave = this.map.waves[nextWave].turns;
+    // Base HP is NOT reset here — it persists across waves within a run
+    // (only a life loss / run reset restores it, in resetToWave below).
     this.movementUsed = 0;
     for (const p of this.players) {
       p.mp = p.maxMp;
@@ -209,12 +243,14 @@ export class BattleEngine {
     this.currentIntents = this.computeIntents();
   }
 
-  /** Reset players (full HP) and respawn the given wave's monsters (fresh HP). */
+  /** Reset players (full HP), base HP, and respawn the given wave's monsters (fresh HP). */
   private resetToWave(waveIndex: number, lives: number): void {
     this.waveIndex = waveIndex;
     this.lives = lives;
     this.victory = false;
     this.history = [];
+    this.baseHp = this.baseMaxHp;
+    this.turnsLeftInWave = this.map.waves[waveIndex].turns;
 
     this.players = this.squadCharacterIds.map((charId, i) => {
       const def = this.registry.characters[charId];
@@ -317,27 +353,40 @@ export class BattleEngine {
 
   private computeIntentFor(m: MonsterUnitState): MonsterIntent {
     const def = this.registry.monsters[m.monsterId];
-    const nearest = this.nearestPlayer(m.position);
 
     for (const rule of def.aiRules) {
-      if (this.matchesCondition(rule.when, m, nearest)) {
+      if (this.matchesCondition(rule.when, m)) {
         if (rule.action.kind === 'useSkill') {
-          const dir = nearest ? stepDirectionToward(m.position, nearest.position) : 'down';
+          const aim = this.aimPointForRule(rule, m.position);
+          const dir = aim ? stepDirectionToward(m.position, aim) : 'down';
           return { kind: 'skill', instanceId: m.instanceId, skillId: rule.action.skillId, direction: dir };
         }
-        if (!nearest) return { kind: 'move', instanceId: m.instanceId, to: { ...m.position } };
+        const aim = this.resolveAimPoint(rule.action.target, m.position);
+        if (!aim) return { kind: 'move', instanceId: m.instanceId, to: { ...m.position } };
         if (rule.action.kind === 'moveAway') {
-          const dir = oppositeDir(stepDirectionToward(m.position, nearest.position));
+          const dir = oppositeDir(stepDirectionToward(m.position, aim));
           const to = add(m.position, MOVE_VECTORS[dir]);
           const dest = this.isWalkable(to) && !this.isOccupied(to) ? to : { ...m.position };
           return { kind: 'move', instanceId: m.instanceId, to: dest };
         }
-        // moveToward nearestPlayer, up to this monster's moveRange tiles per turn.
-        return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, nearest.position, def.moveRange) };
+        // moveToward the aim point, up to this monster's moveRange tiles per turn.
+        return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange) };
       }
     }
     // validateMonsterDef guarantees a trailing unconditional 'always' rule.
     throw new Error(`monster ${m.instanceId}: no aiRule matched (missing fallback?)`);
+  }
+
+  /**
+   * A useSkill action has no target of its own — it aims wherever the rule's
+   * condition was checking (almost always a targetInRange check), falling
+   * back to nearestPlayer if it was gated by an unconditional 'always' rule.
+   */
+  private aimPointForRule(rule: AiRule, from: Vec2): Vec2 | null {
+    if (rule.when.kind === 'targetInRange') {
+      return this.resolveAimPoint(rule.when.target, from);
+    }
+    return this.resolveAimPoint('nearestPlayer', from);
   }
 
   /** Greedily steps up to `maxSteps` tiles toward `target`, stopping early at a wall/occupied tile. */
@@ -352,17 +401,23 @@ export class BattleEngine {
     return pos;
   }
 
-  private matchesCondition(
-    cond: AiCondition,
-    m: MonsterUnitState,
-    nearest: PlayerUnitState | null,
-  ): boolean {
+  private matchesCondition(cond: AiCondition, m: MonsterUnitState): boolean {
     if (cond.kind === 'always') return true;
     if (cond.kind === 'targetInRange') {
-      if (!nearest) return false;
-      return manhattan(m.position, nearest.position) <= cond.range;
+      const aim = this.resolveAimPoint(cond.target, m.position);
+      if (!aim) return false;
+      return manhattan(m.position, aim) <= cond.range;
     }
     return false;
+  }
+
+  /** Resolves an AiTarget to the actual point a monster aims at, from its own position. */
+  private resolveAimPoint(target: AiTarget, from: Vec2): Vec2 | null {
+    if (target === 'nearestPlayer') {
+      const p = this.nearestPlayer(from);
+      return p ? p.position : null;
+    }
+    return this.nearestBaseTile(from);
   }
 
   private nearestPlayer(from: Vec2): PlayerUnitState | null {
@@ -370,6 +425,13 @@ export class BattleEngine {
     if (alive.length === 0) return null;
     return alive.reduce((best, p) =>
       manhattan(from, p.position) < manhattan(from, best.position) ? p : best,
+    );
+  }
+
+  private nearestBaseTile(from: Vec2): Vec2 | null {
+    if (this.baseTiles.length === 0) return null;
+    return this.baseTiles.reduce((best, t) =>
+      manhattan(from, t) < manhattan(from, best) ? t : best,
     );
   }
 
@@ -388,6 +450,11 @@ export class BattleEngine {
 
     for (let step = 1; step <= range; step++) {
       const p = add(casterPos, { x: dir.x * step, y: dir.y * step });
+      // A monster's shot reaching its own base tile hits the base; a
+      // player's shot never targets the base — it just stops there instead.
+      if (this.isBaseTile(p)) {
+        return casterIsPlayer ? null : { kind: 'base' };
+      }
       // A shot's line of sight is only blocked by real walls — it flies over hazard tiles.
       if (this.isWall(p)) return null;
       if (casterIsPlayer) {
@@ -407,6 +474,13 @@ export class BattleEngine {
     caster: PlayerUnitState | MonsterUnitState,
   ): void {
     if (!target) return;
+    if (target.kind === 'base') {
+      // Only damage makes sense against the base — push/shield/heal are no-ops on it.
+      if (effect.type === 'damage') {
+        this.baseHp = Math.max(0, this.baseHp - effect.amount);
+      }
+      return;
+    }
     const unit = target.kind === 'self' ? caster : target.unit;
 
     switch (effect.type) {
@@ -466,18 +540,24 @@ export class BattleEngine {
   // Grid helpers
   // ---------------------------------------------------------------------
 
-  /** Normal movement: only plain floor is walkable — hazard tiles block it same as a wall. */
+  /** Normal movement: only plain floor is walkable — hazard and base tiles block it same as a wall. */
   private isWalkable(p: Vec2): boolean {
     const row = this.map.grid[p.y];
     if (row === undefined || p.x < 0 || p.x >= row.length) return false;
     return row[p.x] === ' ';
   }
 
-  /** Line-of-sight blocking: only a real wall (or out of bounds) stops a shot — hazard tiles don't. */
+  /** Line-of-sight blocking: a real wall or a base tile (or out of bounds) stops a shot — hazard tiles don't. */
   private isWall(p: Vec2): boolean {
     const row = this.map.grid[p.y];
     if (row === undefined || p.x < 0 || p.x >= row.length) return true;
-    return row[p.x] === '#';
+    return row[p.x] === '#' || row[p.x] === 'B';
+  }
+
+  private isBaseTile(p: Vec2): boolean {
+    const row = this.map.grid[p.y];
+    if (row === undefined || p.x < 0 || p.x >= row.length) return false;
+    return row[p.x] === 'B';
   }
 
   private isHazard(p: Vec2): boolean {
