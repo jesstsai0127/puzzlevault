@@ -28,6 +28,7 @@ const COLORS = {
   floor: 0x2a2a35,
   wall: 0x111116,
   hazard: 0x2e0a14,
+  base: 0x6b4f14,
   selected: 0xffd166,
   shield: 0x4cc9f0,
   intentMove: 0x8a8a9a,
@@ -40,6 +41,25 @@ const COLORS = {
   buttonBgArmed: 0x5a4520,
   buttonBorder: 0x3a3a46,
 };
+
+/** Phase 1 renders every actor as a text glyph instead of an image sprite — see design/roadmap.md ch.1/8. */
+const HERO_GLYPHS = ['🤺', '🧙'];
+const MONSTER_GLYPH = '👻'; // every Phase 1 monster is yin_ghost.
+const BASE_GLYPH = '🏯';
+const HAZARD_GLYPH = '▽';
+
+/** Static Traditional-Chinese rules panel copy — placeholder-quality by design (Phase 1 is text-only, see roadmap ch.3). */
+const RULES_PANEL_STATIC = [
+  '【怎麼玩】',
+  '',
+  '守住左邊的『陣』🏯，別讓妖物 👻 打爆它。',
+  '',
+  '👻 頭上的箭頭是它下一步的動作，出手前就看得到。',
+  '',
+  '點角色→點亮起的格子移動；點技能→點目標施放。用『排雲掌』把妖物推開或推進深淵 ▽。',
+  '',
+  '不用殺光——只要撐過每一波、陣還活著就贏。',
+].join('\n');
 
 const DIR_VECTORS: Record<CardinalDir, { x: number; y: number }> = {
   up: { x: 0, y: -1 },
@@ -63,18 +83,20 @@ export class BattleScene extends Phaser.Scene {
   private offsetY = 0;
 
   private tileHighlights: Phaser.GameObjects.Rectangle[][] = [];
-  private playerSprites: Phaser.GameObjects.Image[] = [];
+  private playerSprites: Phaser.GameObjects.Text[] = [];
   private playerHpBars: Phaser.GameObjects.Rectangle[] = [];
   private playerHpTexts: Phaser.GameObjects.Text[] = [];
   private playerMpTexts: Phaser.GameObjects.Text[] = [];
   private playerShieldIcons: Phaser.GameObjects.Arc[] = [];
-  private monsterSprites: Map<string, Phaser.GameObjects.Image> = new Map();
+  private monsterSprites: Map<string, Phaser.GameObjects.Text> = new Map();
   private monsterHpBars: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private monsterHpTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private monsterAtkTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private intentMarkers: Phaser.GameObjects.GameObject[] = [];
   private spawnPreviewMarkers: Phaser.GameObjects.GameObject[] = [];
   private selectionRing!: Phaser.GameObjects.Rectangle;
+  private baseHpText?: Phaser.GameObjects.Text;
+  private rulesPanelText!: Phaser.GameObjects.Text;
 
   private hudText!: Phaser.GameObjects.Text;
   private instructionText!: Phaser.GameObjects.Text;
@@ -94,13 +116,8 @@ export class BattleScene extends Phaser.Scene {
   }
 
   preload() {
-    this.load.image('char_li_yan', 'assets/characters/li_yan.png');
-    this.load.image('char_su_qing', 'assets/characters/su_qing.png');
-    this.load.image('mon_yin_ghost', 'assets/monsters/yin_ghost.png');
-    this.load.image('mon_jiangshi', 'assets/monsters/jiangshi.png');
-    this.load.image('mon_yuan_ling', 'assets/monsters/yuan_ling.png');
-    this.load.image('mon_teng_yao', 'assets/monsters/teng_yao.png');
-    this.load.image('mon_yao_lang', 'assets/monsters/yao_lang.png');
+    // Phase 1 renders every actor as a text glyph (see HERO_GLYPHS/MONSTER_GLYPH
+    // above) instead of an image sprite — nothing to preload yet.
   }
 
   create() {
@@ -120,11 +137,10 @@ export class BattleScene extends Phaser.Scene {
       .setDepth(2);
 
     const squad = this.engine.getSnapshot().players;
-    this.playerSprites = squad.map((p, i) => {
-      const textureKey = registry.characters[p.characterId].spriteRef;
+    this.playerSprites = squad.map((_p, i) => {
       const sprite = this.add
-        .image(0, 0, textureKey)
-        .setDisplaySize(TILE - 16, TILE - 16)
+        .text(0, 0, HERO_GLYPHS[i] ?? '🧑', { fontSize: '40px' })
+        .setOrigin(0.5)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
       sprite.on('pointerdown', () => this.selectUnit(i));
@@ -172,6 +188,14 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setVisible(false);
 
+    this.rulesPanelText = this.add.text(this.offsetX + yanwuGroundMap.grid[0].length * TILE + 20, this.offsetY, '', {
+      fontFamily: 'monospace',
+      fontSize: '13px',
+      color: '#c9c9d6',
+      wordWrap: { width: this.scale.width - (this.offsetX + yanwuGroundMap.grid[0].length * TILE) - 40 },
+      lineSpacing: 4,
+    });
+
     this.buildBottomButtons();
     this.setupKeyboard();
     this.render();
@@ -182,13 +206,36 @@ export class BattleScene extends Phaser.Scene {
   // ---------------------------------------------------------------------
 
   private drawStaticTiles() {
+    const baseTileCenters: Array<{ px: number; py: number }> = [];
     yanwuGroundMap.grid.forEach((row, y) => {
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
-        const color = ch === '#' ? COLORS.wall : ch === '~' ? COLORS.hazard : COLORS.floor;
+        const color = ch === '#' ? COLORS.wall : ch === '~' ? COLORS.hazard : ch === 'B' ? COLORS.base : COLORS.floor;
         this.add.rectangle(px, py, TILE - 2, TILE - 2, color);
+        if (ch === '~') {
+          this.add.text(px, py, HAZARD_GLYPH, { fontSize: '26px', color: '#ef4444' }).setOrigin(0.5).setDepth(1);
+        }
+        if (ch === 'B') baseTileCenters.push({ px, py });
       });
     });
+
+    // One glyph + one shared HP label over the whole structure, not per-tile
+    // — the base tiles must read as a single fortress, not separate cells.
+    if (baseTileCenters.length > 0) {
+      const cx = baseTileCenters.reduce((s, c) => s + c.px, 0) / baseTileCenters.length;
+      const cy = baseTileCenters.reduce((s, c) => s + c.py, 0) / baseTileCenters.length;
+      this.add.text(cx, cy - 8, BASE_GLYPH, { fontSize: '36px' }).setOrigin(0.5).setDepth(2);
+      this.baseHpText = this.add
+        .text(cx, cy + 30, '', {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: '#ffd166',
+          stroke: '#000000',
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5)
+        .setDepth(3);
+    }
   }
 
   private buildTileHighlights() {
@@ -199,7 +246,7 @@ export class BattleScene extends Phaser.Scene {
         const rect = this.add
           .rectangle(px, py, TILE - 4, TILE - 4, 0xffffff, 0)
           .setDepth(1);
-        if (ch !== '#') {
+        if (ch !== '#' && ch !== 'B') {
           rect.setInteractive({ useHandCursor: true });
           rect.on('pointerdown', () => this.handleTileClick(x, y));
         }
@@ -363,9 +410,9 @@ export class BattleScene extends Phaser.Scene {
     this.armedSkillId = null;
 
     if (after.lives < before.lives) {
-      this.flashBanner(i18n.t('ui.defeat'));
+      this.flashBanner(i18n.t('ui.base_fell'));
     } else if (after.victory) {
-      this.flashBanner(i18n.t('ui.game_complete'));
+      this.flashBanner(i18n.t('ui.defended'));
     }
     this.render();
   }
@@ -379,11 +426,11 @@ export class BattleScene extends Phaser.Scene {
   // Grid helpers (mirrors engine's own walkability rules for previewing)
   // ---------------------------------------------------------------------
 
-  /** Only a real wall blocks a skill's line of sight — a shot flies over a hazard tile. */
+  /** A real wall or a base tile blocks movement / a skill's line of sight — a shot flies over a hazard tile. */
   private isWallAt(x: number, y: number): boolean {
     const row = yanwuGroundMap.grid[y];
     if (!row || x < 0 || x >= row.length) return true;
-    return row[x] === '#';
+    return row[x] === '#' || row[x] === 'B';
   }
 
   private isHazardAt(x: number, y: number): boolean {
@@ -527,8 +574,7 @@ export class BattleScene extends Phaser.Scene {
       const { px, py } = this.tileCenter(m.position.x, m.position.y);
       let sprite = this.monsterSprites.get(m.instanceId);
       if (!sprite) {
-        const textureKey = registry.monsters[m.monsterId].spriteRef;
-        sprite = this.add.image(0, 0, textureKey).setDisplaySize(TILE - 24, TILE - 24).setDepth(2);
+        sprite = this.add.text(0, 0, MONSTER_GLYPH, { fontSize: '36px' }).setOrigin(0.5).setDepth(2);
         this.monsterSprites.set(m.instanceId, sprite);
       }
       sprite.setPosition(px, py);
@@ -604,10 +650,9 @@ export class BattleScene extends Phaser.Scene {
       const nextWave = yanwuGroundMap.waves[snap.waveIndex + 1];
       for (const spawn of nextWave?.monsters ?? []) {
         const { px, py } = this.tileCenter(spawn.spawn.x, spawn.spawn.y);
-        const textureKey = registry.monsters[spawn.monsterId].spriteRef;
         const ghost = this.add
-          .image(px, py, textureKey)
-          .setDisplaySize(TILE - 24, TILE - 24)
+          .text(px, py, MONSTER_GLYPH, { fontSize: '36px' })
+          .setOrigin(0.5)
           .setAlpha(0.4)
           .setDepth(2);
         this.spawnPreviewMarkers.push(ghost);
@@ -651,11 +696,23 @@ export class BattleScene extends Phaser.Scene {
 
     const movText = `   ${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`;
     this.hudText.setText(
-      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
+      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
     );
 
+    this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
+
+    const selectedMp = selected ? `${selected.mp}/${selected.maxMp}` : '-';
+    const liveStatus = [
+      `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
+      `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}`,
+      `${i18n.t('ui.turns_left')} ${snap.turnsLeftInWave}/${snap.waveTurns}`,
+      `${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`,
+      `MP ${selectedMp}`,
+    ].join('\n');
+    this.rulesPanelText.setText(`${RULES_PANEL_STATIC}\n\n${liveStatus}`);
+
     if (snap.victory) {
-      this.bannerText.setText(i18n.t('ui.game_complete')).setVisible(true);
+      this.bannerText.setText(i18n.t('ui.defended')).setVisible(true);
     }
   }
 }
