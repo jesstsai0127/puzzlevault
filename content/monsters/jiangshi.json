@@ -1,15 +1,15 @@
 {
   "formatVersion": 1,
-  "id": "husk_brute",
-  "nameKey": "monster.husk_brute.name",
-  "spriteRef": "mon_husk_brute",
+  "id": "jiangshi",
+  "nameKey": "monster.jiangshi.name",
+  "spriteRef": "mon_jiangshi",
   "maxHp": 6,
   "moveRange": 1,
-  "skillIds": ["husk_slam"],
+  "skillIds": ["corpse_smash"],
   "aiRules": [
     {
       "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 1 },
-      "action": { "kind": "useSkill", "skillId": "husk_slam" }
+      "action": { "kind": "useSkill", "skillId": "corpse_smash" }
     },
     {
       "when": { "kind": "always" },
