@@ -5,7 +5,13 @@ import { STARTING_SQUAD, courtyardMap, registry } from '../content/registry';
 describe('Phase 0 content registry', () => {
   it('parses all builtin content without throwing', () => {
     expect(Object.keys(registry.characters)).toEqual(['aster', 'wren']);
-    expect(Object.keys(registry.monsters)).toEqual(['gloom_imp']);
+    expect(Object.keys(registry.monsters)).toEqual([
+      'gloom_imp',
+      'husk_brute',
+      'whisper_wisp',
+      'thornling',
+      'night_hound',
+    ]);
     expect(courtyardMap.waves).toHaveLength(4);
   });
 
