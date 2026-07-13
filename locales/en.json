@@ -13,8 +13,20 @@
 
   "skill.imp_claw.name": "Claw",
   "skill.imp_claw.desc": "Melee: rake an adjacent target with claws.",
+  "skill.husk_slam.name": "Slam",
+  "skill.husk_slam.desc": "Melee: a heavy blow that also shoves the target back.",
+  "skill.wisp_bolt.name": "Wisp Bolt",
+  "skill.wisp_bolt.desc": "Ranged: a weak bolt fired from a distance, up to 3 tiles.",
+  "skill.thorn_volley.name": "Thorn Volley",
+  "skill.thorn_volley.desc": "Ranged: a barrage of thorns in a straight line, up to 4 tiles.",
+  "skill.hound_bite.name": "Bite",
+  "skill.hound_bite.desc": "Melee: a quick bite from an adjacent target.",
 
   "monster.gloom_imp.name": "Gloom Imp",
+  "monster.husk_brute.name": "Husk Brute",
+  "monster.whisper_wisp.name": "Whisper Wisp",
+  "monster.thornling.name": "Thornling",
+  "monster.night_hound.name": "Night Hound",
 
   "map.courtyard.name": "Courtyard",
 
