@@ -43,46 +43,46 @@ const shieldSkill: SkillDef = {
   effects: [{ type: 'shield', amount: 1, target: 'self' }],
 };
 
-const impClaw: SkillDef = {
+const ghostClaw: SkillDef = {
   formatVersion: 1,
-  id: 'imp_claw',
-  nameKey: 'skill.imp_claw.name',
-  descKey: 'skill.imp_claw.desc',
+  id: 'ghost_claw',
+  nameKey: 'skill.ghost_claw.name',
+  descKey: 'skill.ghost_claw.desc',
   range: 1,
   mpCost: 1,
   effects: [{ type: 'damage', amount: 1, target: 'firstInLine' }],
 };
 
-const gloomImp: MonsterDef = {
+const yinGhost: MonsterDef = {
   formatVersion: 1,
-  id: 'gloom_imp',
-  nameKey: 'monster.gloom_imp.name',
-  spriteRef: 'mon_gloom_imp',
+  id: 'yin_ghost',
+  nameKey: 'monster.yin_ghost.name',
+  spriteRef: 'mon_yin_ghost',
   maxHp: 2,
   moveRange: 1,
-  skillIds: ['imp_claw'],
+  skillIds: ['ghost_claw'],
   aiRules: [
-    { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'imp_claw' } },
+    { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
     { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
   ],
 };
 
-const aster: CharacterDef = {
+const li_yan: CharacterDef = {
   formatVersion: 1,
-  id: 'aster',
-  nameKey: 'character.aster.name',
-  spriteRef: 'char_aster',
+  id: 'li_yan',
+  nameKey: 'character.li_yan.name',
+  spriteRef: 'char_li_yan',
   maxHp: 6,
   actionPoints: 4,
   maxMp: 4,
   skillIds: ['strike', 'push_skill'],
 };
 
-const wren: CharacterDef = {
+const su_qing: CharacterDef = {
   formatVersion: 1,
-  id: 'wren',
-  nameKey: 'character.wren.name',
-  spriteRef: 'char_wren',
+  id: 'su_qing',
+  nameKey: 'character.su_qing.name',
+  spriteRef: 'char_su_qing',
   maxHp: 5,
   actionPoints: 4,
   maxMp: 4,
@@ -90,15 +90,15 @@ const wren: CharacterDef = {
 };
 
 const registry: ContentRegistry = {
-  characters: { aster, wren },
+  characters: { li_yan, su_qing },
   skills: {
     strike,
     push_skill: pushSkill,
     ranged_skill: rangedSkill,
     shield_skill: shieldSkill,
-    imp_claw: impClaw,
+    ghost_claw: ghostClaw,
   },
-  monsters: { gloom_imp: gloomImp },
+  monsters: { yin_ghost: yinGhost },
 };
 
 // 8x4 room: '#' wall, ' ' floor.
@@ -115,19 +115,19 @@ function twoWaveMap(): MapDef {
       { x: 1, y: 2 },
     ],
     waves: [
-      { monsters: [{ monsterId: 'gloom_imp', spawn: { x: 2, y: 1 } }] }, // adjacent to player 0
-      { monsters: [{ monsterId: 'gloom_imp', spawn: { x: 6, y: 1 } }] },
+      { monsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }] }, // adjacent to player 0
+      { monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] },
     ],
   };
 }
 
 describe('BattleEngine: setup', () => {
   it('spawns players at playerStarts with full HP and computes initial intents', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
     const snap = engine.getSnapshot();
     expect(snap.players).toEqual([
-      expect.objectContaining({ characterId: 'aster', position: { x: 1, y: 1 }, hp: 6 }),
-      expect.objectContaining({ characterId: 'wren', position: { x: 1, y: 2 }, hp: 5 }),
+      expect.objectContaining({ characterId: 'li_yan', position: { x: 1, y: 1 }, hp: 6 }),
+      expect.objectContaining({ characterId: 'su_qing', position: { x: 1, y: 2 }, hp: 5 }),
     ]);
     expect(snap.monsters).toHaveLength(1);
     expect(snap.waveIndex).toBe(0);
@@ -135,10 +135,10 @@ describe('BattleEngine: setup', () => {
   });
 
   it('an adjacent monster telegraphs a skill intent, not a move', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
     const intents = engine.getIntents();
     expect(intents).toEqual([
-      { kind: 'skill', instanceId: expect.any(String), skillId: 'imp_claw', direction: 'left' },
+      { kind: 'skill', instanceId: expect.any(String), skillId: 'ghost_claw', direction: 'left' },
     ]);
   });
 });
@@ -153,33 +153,33 @@ describe('BattleEngine: player actions', () => {
         { x: 1, y: 1 },
         { x: 6, y: 2 },
       ],
-      waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 6, y: 1 } }] }],
+      waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
     };
   }
 
   it('moves a unit one step and is blocked by a wall', () => {
-    const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     expect(engine.moveUnit(0, 'up')).toEqual({ ok: false, reason: 'blocked' }); // y=0 is wall
     expect(engine.moveUnit(0, 'down')).toEqual({ ok: true });
     expect(engine.getSnapshot().players[0].position).toEqual({ x: 1, y: 2 });
   });
 
   it('is blocked by an occupied tile', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
-    // wren is at (1,2), directly below aster (1,1)
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    // su_qing is at (1,2), directly below li_yan (1,1)
     expect(engine.moveUnit(0, 'down')).toEqual({ ok: false, reason: 'blocked' });
   });
 
   it('strike deals damage to a monster in the aimed direction', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
-    const res = engine.useSkill(0, 'strike', 'right'); // monster at (2,1), aster at (1,1)
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    const res = engine.useSkill(0, 'strike', 'right'); // monster at (2,1), li_yan at (1,1)
     expect(res).toEqual({ ok: true });
     expect(engine.getSnapshot().monsters[0].hp).toBe(0);
   });
 
   it('the shared movement pool exhausts after 8 total moves across the squad, not per-unit', () => {
-    const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
-    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right'); // aster (1,1) -> (5,1)
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right'); // li_yan (1,1) -> (5,1)
     for (let i = 0; i < 4; i++) engine.moveUnit(0, 'left'); // back to (1,1)
     expect(engine.getSnapshot().movement).toEqual({ used: 8, max: 8 });
     expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'no-movement-left' });
@@ -187,7 +187,7 @@ describe('BattleEngine: player actions', () => {
   });
 
   it('mp and the shared movement pool are independent — exhausting one does not block the other', () => {
-    const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right');
     for (let i = 0; i < 4; i++) engine.moveUnit(0, 'left'); // shared movement pool now exhausted
     expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // mp untouched by movement
@@ -200,8 +200,8 @@ describe('BattleEngine: player actions', () => {
   });
 
   it('resets the shared movement pool and every unit\'s mp at the start of every turn, not only when a wave clears', () => {
-    // Monster starts 5 tiles from aster, so a couple of moves won't clear the wave.
-    const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
+    // Monster starts 5 tiles from li_yan, so a couple of moves won't clear the wave.
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, 'down');
     engine.moveUnit(0, 'right');
     engine.useSkill(0, 'strike', 'right'); // whiffs (no monster in range yet), still costs mp
@@ -218,8 +218,8 @@ describe('BattleEngine: player actions', () => {
   it('push moves the target away from the caster, stopping at a wall', () => {
     const map = twoWaveMap();
     map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the right wall (x=6 is the last floor col)
-    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
-    // move aster 3 tiles right (3 of its 4 action points), landing adjacent to the monster at (4,1)
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    // move li_yan 3 tiles right (3 of its 4 action points), landing adjacent to the monster at (4,1)
     engine.moveUnit(0, 'right');
     engine.moveUnit(0, 'right');
     engine.moveUnit(0, 'right');
@@ -232,7 +232,7 @@ describe('BattleEngine: player actions', () => {
   });
 
   it('shield blocks the next hit instead of losing HP', () => {
-    // wren adjacent to the monster (so it's the one attacked); aster stays out of range.
+    // su_qing adjacent to the monster (so it's the one attacked); li_yan stays out of range.
     const map: MapDef = {
       ...twoWaveMap(),
       playerStarts: [
@@ -240,19 +240,19 @@ describe('BattleEngine: player actions', () => {
         { x: 1, y: 1 },
       ],
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
-    engine.useSkill(1, 'shield_skill', 'down'); // wren (unit 1) shields itself
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing (unit 1) shields itself
     expect(engine.getSnapshot().players[1].shield).toBe(1);
 
-    engine.endTurn(); // adjacent imp's stored intent attacks wren
+    engine.endTurn(); // adjacent ghost's stored intent attacks su_qing
 
-    const wren2 = engine.getSnapshot().players[1];
-    expect(wren2.shield).toBe(0); // charge consumed
-    expect(wren2.hp).toBe(5); // fully blocked, no HP lost
+    const suQing2 = engine.getSnapshot().players[1];
+    expect(suQing2.shield).toBe(0); // charge consumed
+    expect(suQing2.hp).toBe(5); // fully blocked, no HP lost
   });
 
   it('undo restores the pre-action snapshot (including the shared movement pool); history clears after endTurn', () => {
-    const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     const before = engine.getSnapshot().players[0].position;
     engine.moveUnit(0, 'down');
     expect(engine.getSnapshot().movement.used).toBe(1);
@@ -269,14 +269,14 @@ describe('BattleEngine: player actions', () => {
 
 describe('BattleEngine: turn resolution', () => {
   it('resolves a stored skill intent as damage to the player on endTurn', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
-    engine.endTurn(); // adjacent imp attacks aster for 1
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    engine.endTurn(); // adjacent ghost attacks li_yan for 1
     expect(engine.getSnapshot().players[0].hp).toBe(5);
   });
 
   it('a monster killed during the player turn does not act on endTurn', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
-    engine.useSkill(0, 'strike', 'right'); // kills the imp (2 dmg, maxHp 2)
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    engine.useSkill(0, 'strike', 'right'); // kills the ghost (2 dmg, maxHp 2)
     engine.endTurn();
     expect(engine.getSnapshot().players[0].hp).toBe(6); // took no damage
   });
@@ -284,7 +284,7 @@ describe('BattleEngine: turn resolution', () => {
 
 describe('BattleEngine: wave clear and victory', () => {
   it('clearing a wave advances to the next wave and resets per-turn budgets', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['aster', 'wren'], registry);
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
     engine.useSkill(0, 'strike', 'right'); // kills wave-0's only monster
     engine.endTurn();
     const snap = engine.getSnapshot();
@@ -300,24 +300,24 @@ describe('BattleEngine: wave clear and victory', () => {
       ...twoWaveMap(),
       waves: [
         twoWaveMap().waves[0],
-        { monsters: [{ monsterId: 'gloom_imp', spawn: { x: 1, y: 1 } }] }, // aster's own tile
+        { monsters: [{ monsterId: 'yin_ghost', spawn: { x: 1, y: 1 } }] }, // li_yan's own tile
       ],
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.useSkill(0, 'strike', 'right'); // kills wave-0's monster
     engine.endTurn(); // advances to wave 1
     const snap = engine.getSnapshot();
     expect(snap.waveIndex).toBe(1);
-    expect(snap.monsters[0].position).not.toEqual({ x: 1, y: 1 }); // not on top of aster
+    expect(snap.monsters[0].position).not.toEqual({ x: 1, y: 1 }); // not on top of li_yan
     const p = snap.monsters[0].position;
     expect(grid[p.y][p.x]).toBe(' '); // still a valid floor tile
-    expect(snap.players[0].hp).toBe(5); // imp_claw's 1 damage as an ambush hit before relocating
+    expect(snap.players[0].hp).toBe(5); // ghost_claw's 1 damage as an ambush hit before relocating
   });
 
   it('clearing the final wave sets victory', () => {
     const map = twoWaveMap();
     map.waves = [map.waves[0]]; // only one wave
-    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.useSkill(0, 'strike', 'right');
     engine.endTurn();
     expect(engine.getSnapshot().victory).toBe(true);
@@ -326,11 +326,11 @@ describe('BattleEngine: wave clear and victory', () => {
 });
 
 describe('BattleEngine: wipe and lives', () => {
-  const fragileAster: CharacterDef = { ...aster, maxHp: 1 };
-  const fragileWren: CharacterDef = { ...wren, maxHp: 1 };
+  const fragileLiYan: CharacterDef = { ...li_yan, maxHp: 1 };
+  const fragileSuQing: CharacterDef = { ...su_qing, maxHp: 1 };
   const fragileRegistry: ContentRegistry = {
     ...registry,
-    characters: { aster: fragileAster, wren: fragileWren },
+    characters: { li_yan: fragileLiYan, su_qing: fragileSuQing },
   };
 
   function doubleAdjacentMap(): MapDef {
@@ -346,8 +346,8 @@ describe('BattleEngine: wipe and lives', () => {
       waves: [
         {
           monsters: [
-            { monsterId: 'gloom_imp', spawn: { x: 2, y: 1 } }, // adjacent to player 0
-            { monsterId: 'gloom_imp', spawn: { x: 3, y: 1 } }, // adjacent to player 1
+            { monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }, // adjacent to player 0
+            { monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }, // adjacent to player 1
           ],
         },
       ],
@@ -355,8 +355,8 @@ describe('BattleEngine: wipe and lives', () => {
   }
 
   it('a full wipe with lives remaining decrements lives and retries the same wave', () => {
-    const engine = new BattleEngine(doubleAdjacentMap(), ['aster', 'wren'], fragileRegistry);
-    engine.endTurn(); // both imps attack, both 1-HP players die
+    const engine = new BattleEngine(doubleAdjacentMap(), ['li_yan', 'su_qing'], fragileRegistry);
+    engine.endTurn(); // both ghosts attack, both 1-HP players die
     const snap = engine.getSnapshot();
     expect(snap.lives).toBe(2);
     expect(snap.waveIndex).toBe(0);
@@ -365,7 +365,7 @@ describe('BattleEngine: wipe and lives', () => {
   });
 
   it('exhausting all lives resets the whole run to wave 0 with lives back to 3', () => {
-    const engine = new BattleEngine(doubleAdjacentMap(), ['aster', 'wren'], fragileRegistry);
+    const engine = new BattleEngine(doubleAdjacentMap(), ['li_yan', 'su_qing'], fragileRegistry);
     engine.endTurn(); // lives 3 -> 2
     engine.endTurn(); // lives 2 -> 1
     engine.endTurn(); // lives 1 -> 0 -> full reset to 3
@@ -384,7 +384,7 @@ describe('BattleEngine: new AI behaviors', () => {
       spriteRef: 'mon_wisp',
       maxHp: 1,
       moveRange: 1,
-      skillIds: ['imp_claw'],
+      skillIds: ['ghost_claw'],
       aiRules: [
         { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'moveAway', target: 'nearestPlayer' } },
         { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
@@ -393,9 +393,9 @@ describe('BattleEngine: new AI behaviors', () => {
     const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, wisp: skittish } };
     const map: MapDef = {
       ...twoWaveMap(),
-      waves: [{ monsters: [{ monsterId: 'wisp', spawn: { x: 2, y: 1 } }] }], // adjacent to aster at (1,1)
+      waves: [{ monsters: [{ monsterId: 'wisp', spawn: { x: 2, y: 1 } }] }], // adjacent to li_yan at (1,1)
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], localRegistry);
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     expect(engine.getIntents()).toEqual([
       { kind: 'move', instanceId: expect.any(String), to: { x: 3, y: 1 } }, // steps further away, not toward
     ]);
@@ -409,9 +409,9 @@ describe('BattleEngine: new AI behaviors', () => {
       spriteRef: 'mon_hound',
       maxHp: 2,
       moveRange: 2,
-      skillIds: ['imp_claw'],
+      skillIds: ['ghost_claw'],
       aiRules: [
-        { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'imp_claw' } },
+        { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
         { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
       ],
     };
@@ -419,10 +419,10 @@ describe('BattleEngine: new AI behaviors', () => {
     const map: MapDef = {
       ...twoWaveMap(),
       playerStarts: [{ x: 1, y: 1 }, { x: 1, y: 2 }],
-      waves: [{ monsters: [{ monsterId: 'hound', spawn: { x: 6, y: 1 } }] }], // 5 tiles from aster
+      waves: [{ monsters: [{ monsterId: 'hound', spawn: { x: 6, y: 1 } }] }], // 5 tiles from li_yan
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], localRegistry);
-    engine.endTurn(); // hound moves toward aster
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
+    engine.endTurn(); // hound moves toward li_yan
     expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 4, y: 1 }); // 2 tiles this turn, not 1
   });
 });
@@ -438,11 +438,11 @@ describe('BattleEngine: hazard terrain', () => {
       nameKey: 'map.hazard.name',
       grid: hazardGrid,
       playerStarts: [{ x: 1, y: 2 }, { x: 1, y: 1 }],
-      waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 3, y: 2 } }] }],
+      waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }] }],
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
-    engine.moveUnit(0, 'right'); // aster (1,2) -> (2,2), adjacent to the imp at (3,2)
-    const res = engine.useSkill(0, 'push_skill', 'right'); // pushes the imp 2: (3,2) -> (4,2) hazard
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, 'right'); // li_yan (1,2) -> (2,2), adjacent to the ghost at (3,2)
+    const res = engine.useSkill(0, 'push_skill', 'right'); // pushes the ghost 2: (3,2) -> (4,2) hazard
     expect(res).toEqual({ ok: true });
     expect(engine.getSnapshot().monsters[0].hp).toBe(0);
   });
@@ -480,11 +480,11 @@ describe('BattleEngine: hazard terrain', () => {
       id: 'hazard-shove',
       nameKey: 'map.hazard2.name',
       grid: hazardGrid,
-      playerStarts: [{ x: 3, y: 2 }, { x: 1, y: 1 }], // aster adjacent to the brute, hazard just past aster
+      playerStarts: [{ x: 3, y: 2 }, { x: 1, y: 1 }], // li_yan adjacent to the brute, hazard just past li_yan
       waves: [{ monsters: [{ monsterId: 'brute', spawn: { x: 2, y: 2 } }] }],
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], localRegistry);
-    engine.endTurn(); // brute shoves aster from (3,2) into the hazard at (4,2)
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
+    engine.endTurn(); // brute shoves li_yan from (3,2) into the hazard at (4,2)
     const snap = engine.getSnapshot();
     expect(snap.players[0].position).toEqual({ x: 4, y: 2 });
     expect(snap.players[0].hp).toBe(3); // 6 maxHp - 3 hazard damage, not a kill
@@ -496,10 +496,10 @@ describe('BattleEngine: hazard terrain', () => {
       id: 'hazard-sightline',
       nameKey: 'map.hazard3.name',
       grid: hazardGrid,
-      playerStarts: [{ x: 1, y: 1 }, { x: 2, y: 2 }], // wren at (2,2), hazard at (4,2) between it and the monster
-      waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 5, y: 2 } }] }],
+      playerStarts: [{ x: 1, y: 1 }, { x: 2, y: 2 }], // su_qing at (2,2), hazard at (4,2) between it and the monster
+      waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }] }],
     };
-    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     const res = engine.useSkill(1, 'ranged_skill', 'right'); // range 3: (3,2) floor, (4,2) hazard, (5,2) monster
     expect(res).toEqual({ ok: true });
     expect(engine.getSnapshot().monsters[0].hp).toBe(0); // maxHp 2 - 2 damage landed, the ray wasn't blocked by the hazard
