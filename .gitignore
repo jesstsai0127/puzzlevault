@@ -3,3 +3,5 @@ dist/
 assets-src/
 *.log
 .env
+global-spec.md
+lessons-learned.md
