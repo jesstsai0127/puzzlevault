@@ -4,10 +4,10 @@
   "nameKey": "map.courtyard.name",
   "grid": [
     "########",
+    "#    ~ #",
     "#      #",
     "#      #",
-    "#      #",
-    "#      #",
+    "#    ~ #",
     "########"
   ],
   "playerStarts": [
@@ -19,22 +19,20 @@
     {
       "monsters": [
         { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 3 } }
+        { "monsterId": "whisper_wisp", "spawn": { "x": 6, "y": 3 } }
       ]
     },
     {
       "monsters": [
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 1 } },
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 3 } }
+        { "monsterId": "husk_brute", "spawn": { "x": 6, "y": 2 } },
+        { "monsterId": "whisper_wisp", "spawn": { "x": 6, "y": 3 } }
       ]
     },
     {
       "monsters": [
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 1 } },
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 3 } },
-        { "monsterId": "gloom_imp", "spawn": { "x": 6, "y": 4 } }
+        { "monsterId": "thornling", "spawn": { "x": 6, "y": 2 } },
+        { "monsterId": "night_hound", "spawn": { "x": 6, "y": 3 } },
+        { "monsterId": "husk_brute", "spawn": { "x": 5, "y": 3 } }
       ]
     }
   ]
