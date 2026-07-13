@@ -44,7 +44,7 @@
   "ui.intent_move": "will move",
   "ui.intent_attack": "will attack",
   "ui.turn": "Turn",
-  "ui.ap": "AP",
+  "ui.mov": "MOV",
   "ui.instruction_idle": "Click a character, then click a highlighted tile to move, or a skill button below.",
   "ui.instruction_armed": "Click a highlighted tile to aim, or click the skill again to cancel.",
   "ui.wave_cleared_hint": "Wave cleared! Finish using remaining actions, then click End Turn to continue."
