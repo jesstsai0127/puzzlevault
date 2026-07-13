@@ -3,10 +3,11 @@ import {
   add,
   equalsVec2,
   manhattan,
+  oppositeDir,
   stepDirectionToward,
 } from '../geometry';
 import type { CardinalDir, Vec2 } from '../geometry';
-import type { AiCondition, EffectPrimitive, MapDef, TargetMode } from '../content/types';
+import type { AiCondition, EffectPrimitive, MapDef, MonsterDef, TargetMode } from '../content/types';
 import type {
   ActionResult,
   BattleSnapshot,
@@ -17,6 +18,8 @@ import type {
 } from './types';
 
 const STARTING_LIVES = 3;
+/** Damage a player takes when shoved into a hazard tile — monsters shoved in die outright instead. */
+const HAZARD_DAMAGE = 3;
 
 type ResolvedTarget =
   | { kind: 'self' }
@@ -229,6 +232,13 @@ export class BattleEngine {
     const claimed = new Set<string>();
     return wave.monsters.map((spawn) => {
       const def = this.registry.monsters[spawn.monsterId];
+      const occupant = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, spawn.spawn));
+      if (occupant) {
+        // Standing on a spawn tile is a risk, not a free block: the monster
+        // gets one ambush hit in as it forces its way in, then still takes
+        // the nearest free tile (units never share a cell).
+        this.dealDamage(occupant, this.ambushDamageFor(def));
+      }
       const pos = this.findFreeSpawnTile(spawn.spawn, claimed);
       claimed.add(`${pos.x},${pos.y}`);
       this.monsterSpawnCounter += 1;
@@ -241,6 +251,16 @@ export class BattleEngine {
         shield: 0,
       };
     });
+  }
+
+  /** The damage a monster's ambush hit deals: its own first damage-effect amount, or 1 if it has none. */
+  private ambushDamageFor(def: MonsterDef): number {
+    for (const skillId of def.skillIds) {
+      const skill = this.registry.skills[skillId];
+      const dmg = skill?.effects.find((e) => e.type === 'damage');
+      if (dmg) return dmg.amount;
+    }
+    return 1;
   }
 
   /**
@@ -292,16 +312,31 @@ export class BattleEngine {
           const dir = nearest ? stepDirectionToward(m.position, nearest.position) : 'down';
           return { kind: 'skill', instanceId: m.instanceId, skillId: rule.action.skillId, direction: dir };
         }
-        // moveToward nearestPlayer
         if (!nearest) return { kind: 'move', instanceId: m.instanceId, to: { ...m.position } };
-        const dir = stepDirectionToward(m.position, nearest.position);
-        const to = add(m.position, MOVE_VECTORS[dir]);
-        const dest = this.isWalkable(to) && !this.isOccupied(to) ? to : { ...m.position };
-        return { kind: 'move', instanceId: m.instanceId, to: dest };
+        if (rule.action.kind === 'moveAway') {
+          const dir = oppositeDir(stepDirectionToward(m.position, nearest.position));
+          const to = add(m.position, MOVE_VECTORS[dir]);
+          const dest = this.isWalkable(to) && !this.isOccupied(to) ? to : { ...m.position };
+          return { kind: 'move', instanceId: m.instanceId, to: dest };
+        }
+        // moveToward nearestPlayer, up to this monster's moveRange tiles per turn.
+        return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, nearest.position, def.moveRange) };
       }
     }
     // validateMonsterDef guarantees a trailing unconditional 'always' rule.
     throw new Error(`monster ${m.instanceId}: no aiRule matched (missing fallback?)`);
+  }
+
+  /** Greedily steps up to `maxSteps` tiles toward `target`, stopping early at a wall/occupied tile. */
+  private multiStepToward(start: Vec2, target: Vec2, maxSteps: number): Vec2 {
+    let pos = { ...start };
+    for (let i = 0; i < maxSteps; i++) {
+      const dir = stepDirectionToward(pos, target);
+      const next = add(pos, MOVE_VECTORS[dir]);
+      if (!this.isWalkable(next) || this.isOccupied(next)) break;
+      pos = next;
+    }
+    return pos;
   }
 
   private matchesCondition(
@@ -340,7 +375,8 @@ export class BattleEngine {
 
     for (let step = 1; step <= range; step++) {
       const p = add(casterPos, { x: dir.x * step, y: dir.y * step });
-      if (!this.isWalkable(p)) return null;
+      // A shot's line of sight is only blocked by real walls — it flies over hazard tiles.
+      if (this.isWall(p)) return null;
       if (casterIsPlayer) {
         const m = this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
         if (m) return { kind: 'monster', unit: m };
@@ -394,8 +430,22 @@ export class BattleEngine {
     const dirVec = MOVE_VECTORS[dir];
     for (let i = 0; i < distance; i++) {
       const next = add(unit.position, dirVec);
+      if (this.isHazard(next) && !this.isOccupied(next)) {
+        unit.position = next;
+        this.applyHazardDamage(unit);
+        break; // fell in — the push stops here regardless of remaining distance
+      }
       if (!this.isWalkable(next) || this.isOccupied(next)) break;
       unit.position = next;
+    }
+  }
+
+  /** A monster shoved into a hazard tile doesn't survive; a player character takes a flat hit instead (shield can still block it). */
+  private applyHazardDamage(unit: PlayerUnitState | MonsterUnitState): void {
+    if ('instanceId' in unit) {
+      unit.hp = 0;
+    } else {
+      this.dealDamage(unit, HAZARD_DAMAGE);
     }
   }
 
@@ -403,10 +453,24 @@ export class BattleEngine {
   // Grid helpers
   // ---------------------------------------------------------------------
 
+  /** Normal movement: only plain floor is walkable — hazard tiles block it same as a wall. */
   private isWalkable(p: Vec2): boolean {
     const row = this.map.grid[p.y];
     if (row === undefined || p.x < 0 || p.x >= row.length) return false;
     return row[p.x] === ' ';
+  }
+
+  /** Line-of-sight blocking: only a real wall (or out of bounds) stops a shot — hazard tiles don't. */
+  private isWall(p: Vec2): boolean {
+    const row = this.map.grid[p.y];
+    if (row === undefined || p.x < 0 || p.x >= row.length) return true;
+    return row[p.x] === '#';
+  }
+
+  private isHazard(p: Vec2): boolean {
+    const row = this.map.grid[p.y];
+    if (row === undefined || p.x < 0 || p.x >= row.length) return false;
+    return row[p.x] === '~';
   }
 
   private isOccupied(p: Vec2): boolean {
