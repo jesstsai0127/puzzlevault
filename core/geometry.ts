@@ -37,3 +37,14 @@ export function stepDirectionToward(from: Vec2, to: Vec2): CardinalDir {
   }
   return dy >= 0 ? 'down' : 'up';
 }
+
+const OPPOSITE_DIR: Record<CardinalDir, CardinalDir> = {
+  up: 'down',
+  down: 'up',
+  left: 'right',
+  right: 'left',
+};
+
+export function oppositeDir(dir: CardinalDir): CardinalDir {
+  return OPPOSITE_DIR[dir];
+}
