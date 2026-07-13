@@ -4,5 +4,6 @@
   "nameKey": "skill.thorn_volley.name",
   "descKey": "skill.thorn_volley.desc",
   "range": 4,
+  "mpCost": 2,
   "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
 }
