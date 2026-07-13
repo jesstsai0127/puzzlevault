@@ -44,7 +44,8 @@ export type AiCondition =
 
 export type AiAction =
   | { kind: 'useSkill'; skillId: string }
-  | { kind: 'moveToward'; target: 'nearestPlayer' };
+  | { kind: 'moveToward'; target: 'nearestPlayer' }
+  | { kind: 'moveAway'; target: 'nearestPlayer' };
 
 export interface AiRule {
   when: AiCondition;
