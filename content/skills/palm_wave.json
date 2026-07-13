@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
-  "id": "repel_charm",
-  "nameKey": "skill.repel_charm.name",
-  "descKey": "skill.repel_charm.desc",
+  "id": "palm_wave",
+  "nameKey": "skill.palm_wave.name",
+  "descKey": "skill.palm_wave.desc",
   "range": 1,
   "mpCost": 1,
   "effects": [{ "type": "push", "amount": 2, "target": "firstInLine" }]
