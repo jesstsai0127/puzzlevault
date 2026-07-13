@@ -4,5 +4,6 @@
   "nameKey": "skill.repel_charm.name",
   "descKey": "skill.repel_charm.desc",
   "range": 1,
+  "mpCost": 1,
   "effects": [{ "type": "push", "amount": 2, "target": "firstInLine" }]
 }
