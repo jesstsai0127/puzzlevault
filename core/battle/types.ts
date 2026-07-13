@@ -43,4 +43,13 @@ export interface BattleSnapshot {
   victory: boolean;
   /** Shared squad-wide movement budget — either player can spend from it, resets every turn. */
   movement: { used: number; max: number };
+  /** Shared HP pool for the base ("陣") — reaching 0 costs a life and resets the wave. */
+  baseHp: number;
+  baseMaxHp: number;
+  /** All grid tiles occupied by the base, for rendering. */
+  baseTiles: Vec2[];
+  /** Turns remaining before this wave is survived regardless of remaining monsters. */
+  turnsLeftInWave: number;
+  /** This wave's total turn budget (e.g. for a "2/4" display). */
+  waveTurns: number;
 }
