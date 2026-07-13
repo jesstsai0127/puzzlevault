@@ -13,9 +13,9 @@ export interface PlayerUnitState {
   hp: number;
   maxHp: number;
   shield: number;
-  /** Shared per-turn budget: every move step or skill use costs 1 action point. */
-  maxActionPoints: number;
-  actionsUsed: number;
+  /** This character's own mana — skills draw from it, independent of the squad's shared movement points. */
+  mp: number;
+  maxMp: number;
   skillIds: string[];
 }
 
@@ -41,4 +41,6 @@ export interface BattleSnapshot {
   lives: number;
   turnNumber: number;
   victory: boolean;
+  /** Shared squad-wide movement budget — either player can spend from it, resets every turn. */
+  movement: { used: number; max: number };
 }
