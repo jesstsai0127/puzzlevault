@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { PuzzleScene } from './scenes/PuzzleScene';
+import { BattleScene } from './scenes/BattleScene';
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -7,6 +7,5 @@ new Phaser.Game({
   height: 720,
   parent: 'game',
   backgroundColor: '#14141a',
-  pixelArt: true,
-  scene: [PuzzleScene],
+  scene: [BattleScene],
 });
