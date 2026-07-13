@@ -4,6 +4,7 @@
   "nameKey": "skill.husk_slam.name",
   "descKey": "skill.husk_slam.desc",
   "range": 1,
+  "mpCost": 3,
   "effects": [
     { "type": "damage", "amount": 3, "target": "firstInLine" },
     { "type": "push", "amount": 1, "target": "firstInLine" }
