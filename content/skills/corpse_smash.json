@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
-  "id": "husk_slam",
-  "nameKey": "skill.husk_slam.name",
-  "descKey": "skill.husk_slam.desc",
+  "id": "corpse_smash",
+  "nameKey": "skill.corpse_smash.name",
+  "descKey": "skill.corpse_smash.desc",
   "range": 1,
   "mpCost": 3,
   "effects": [
