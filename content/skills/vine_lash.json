@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
-  "id": "thorn_volley",
-  "nameKey": "skill.thorn_volley.name",
-  "descKey": "skill.thorn_volley.desc",
+  "id": "vine_lash",
+  "nameKey": "skill.vine_lash.name",
+  "descKey": "skill.vine_lash.desc",
   "range": 4,
   "mpCost": 2,
   "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
