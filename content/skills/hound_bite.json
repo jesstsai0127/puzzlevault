@@ -4,5 +4,6 @@
   "nameKey": "skill.hound_bite.name",
   "descKey": "skill.hound_bite.desc",
   "range": 1,
+  "mpCost": 2,
   "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
 }
