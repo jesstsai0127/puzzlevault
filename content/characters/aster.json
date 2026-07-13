@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "aster",
+  "nameKey": "character.aster.name",
+  "spriteRef": "char_aster",
+  "maxHp": 6,
+  "actionPoints": 4,
+  "skillIds": ["arcane_strike", "repel_charm"]
+}
