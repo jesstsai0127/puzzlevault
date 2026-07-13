@@ -66,6 +66,7 @@ export class BattleScene extends Phaser.Scene {
   private playerSprites: Phaser.GameObjects.Image[] = [];
   private playerHpBars: Phaser.GameObjects.Rectangle[] = [];
   private playerHpTexts: Phaser.GameObjects.Text[] = [];
+  private playerMpTexts: Phaser.GameObjects.Text[] = [];
   private playerShieldIcons: Phaser.GameObjects.Arc[] = [];
   private monsterSprites: Map<string, Phaser.GameObjects.Image> = new Map();
   private monsterHpBars: Map<string, Phaser.GameObjects.Rectangle> = new Map();
@@ -133,6 +134,12 @@ export class BattleScene extends Phaser.Scene {
     this.playerHpTexts = squad.map(() =>
       this.add
         .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 })
+        .setOrigin(0.5)
+        .setDepth(3),
+    );
+    this.playerMpTexts = squad.map(() =>
+      this.add
+        .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#4cc9f0', stroke: '#000000', strokeThickness: 3 })
         .setOrigin(0.5)
         .setDepth(3),
     );
@@ -309,7 +316,8 @@ export class BattleScene extends Phaser.Scene {
     const unit = this.engine.getSnapshot().players[this.selectedUnit];
     if (!unit || unit.hp <= 0) return;
     const skillId = unit.skillIds[skillIndex];
-    if (!skillId || unit.actionsUsed >= unit.maxActionPoints) return;
+    const skill = skillId ? registry.skills[skillId] : undefined;
+    if (!skillId || !skill || unit.mp < skill.mpCost) return;
     this.armedSkillId = this.armedSkillId === skillId ? null : skillId;
     this.render();
   }
@@ -398,7 +406,7 @@ export class BattleScene extends Phaser.Scene {
     const snap = this.engine.getSnapshot();
     const unit = snap.players[unitIndex];
     if (!unit || unit.hp <= 0) return result;
-    const budget = unit.maxActionPoints - unit.actionsUsed;
+    const budget = snap.movement.max - snap.movement.used;
     if (budget <= 0) return result;
 
     const start = unit.position;
@@ -485,6 +493,10 @@ export class BattleScene extends Phaser.Scene {
       bar.setPosition(px, py + TILE / 2 - 10).setSize((TILE - 20) * ratio, 6);
       bar.setFillStyle(ratio > 0.34 ? COLORS.hpBarFill : COLORS.hpBarFillLow);
       this.playerHpTexts[i].setPosition(px, py + TILE / 2 - 20).setText(`${Math.max(0, p.hp)}/${p.maxHp}`);
+      this.playerMpTexts[i]
+        .setPosition(px - TILE / 2 + 14, py - TILE / 2 + 12)
+        .setText(`${p.mp}/${p.maxMp}`)
+        .setVisible(p.hp > 0);
       const shieldIcon = this.playerShieldIcons[i];
       shieldIcon.setPosition(px + TILE / 2 - 12, py - TILE / 2 + 12).setVisible(p.shield > 0);
     });
@@ -602,12 +614,14 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    const noActionsLeft = (selected?.actionsUsed ?? 0) >= (selected?.maxActionPoints ?? 0);
     this.skillButtons.forEach((btn, i) => {
       const skillId = selected?.skillIds[i];
       const skill = skillId ? registry.skills[skillId] : undefined;
-      const nameWithStats = skill ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)}` : '';
-      if (!skillId || noActionsLeft || (selected?.hp ?? 0) <= 0) {
+      const nameWithStats = skill
+        ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)} 💧${skill.mpCost}`
+        : '';
+      const notEnoughMp = !skill || (selected?.mp ?? 0) < skill.mpCost;
+      if (!skillId || notEnoughMp || (selected?.hp ?? 0) <= 0) {
         btn.bg.setFillStyle(COLORS.buttonBg, 0.4);
         btn.label.setText(nameWithStats);
         btn.bg.disableInteractive();
@@ -635,11 +649,9 @@ export class BattleScene extends Phaser.Scene {
       );
     }
 
-    const apText = selected
-      ? `   ${i18n.t('ui.ap')} ${selected.maxActionPoints - selected.actionsUsed}/${selected.maxActionPoints}`
-      : '';
+    const movText = `   ${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`;
     this.hudText.setText(
-      `${i18n.t('map.courtyard.name')}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${courtyardMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${apText}`,
+      `${i18n.t('map.courtyard.name')}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${courtyardMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
     );
 
     if (snap.victory) {
