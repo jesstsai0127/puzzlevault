@@ -123,12 +123,13 @@ const yanwuGroundMap = {
   formatVersion: CONTENT_FORMAT_VERSION,
   id: 'yanwu_ground',
   nameKey: 'map.yanwu_ground.name',
-  grid: ['######', '#    #', '#    #', '######'],
+  grid: ['######', '#B   #', '#    #', '######'],
+  baseHp: 8,
   playerStarts: [
-    { x: 1, y: 1 },
-    { x: 1, y: 2 },
+    { x: 2, y: 1 },
+    { x: 2, y: 2 },
   ],
-  waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }] }],
+  waves: [{ turns: 4, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }] }],
 };
 
 describe('parseMapDef', () => {
@@ -156,8 +157,27 @@ describe('parseMapDef', () => {
   });
 
   it('accepts a hazard tile (~) in the grid', () => {
-    const withHazard = { ...yanwuGroundMap, grid: ['######', '# ~  #', '#    #', '######'] };
-    expect(parseMapDef(withHazard).grid[1]).toBe('# ~  #');
+    const withHazard = { ...yanwuGroundMap, grid: ['######', '#B   #', '#  ~ #', '######'] };
+    expect(parseMapDef(withHazard).grid[2]).toBe('#  ~ #');
+  });
+
+  it('rejects a map with no base tile', () => {
+    expect(() =>
+      parseMapDef({ ...yanwuGroundMap, grid: ['######', '#    #', '#    #', '######'] }),
+    ).toThrow(/no base/);
+  });
+
+  it('rejects a non-positive baseHp', () => {
+    expect(() => parseMapDef({ ...yanwuGroundMap, baseHp: 0 })).toThrow(/baseHp/);
+  });
+
+  it('rejects a wave with a non-positive turns budget', () => {
+    expect(() =>
+      parseMapDef({
+        ...yanwuGroundMap,
+        waves: [{ turns: 0, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }] }],
+      }),
+    ).toThrow(/turns/);
   });
 
   it('rejects an unknown grid character', () => {
