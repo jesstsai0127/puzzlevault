@@ -1,0 +1,11 @@
+{
+  "formatVersion": 1,
+  "id": "husk_slam",
+  "nameKey": "skill.husk_slam.name",
+  "descKey": "skill.husk_slam.desc",
+  "range": 1,
+  "effects": [
+    { "type": "damage", "amount": 3, "target": "firstInLine" },
+    { "type": "push", "amount": 1, "target": "firstInLine" }
+  ]
+}

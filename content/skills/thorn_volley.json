@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "thorn_volley",
+  "nameKey": "skill.thorn_volley.name",
+  "descKey": "skill.thorn_volley.desc",
+  "range": 4,
+  "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
+}

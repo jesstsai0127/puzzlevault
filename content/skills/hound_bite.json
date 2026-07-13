@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "hound_bite",
+  "nameKey": "skill.hound_bite.name",
+  "descKey": "skill.hound_bite.desc",
+  "range": 1,
+  "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
+}

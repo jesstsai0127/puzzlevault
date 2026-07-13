@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "wisp_bolt",
+  "nameKey": "skill.wisp_bolt.name",
+  "descKey": "skill.wisp_bolt.desc",
+  "range": 3,
+  "effects": [{ "type": "damage", "amount": 1, "target": "firstInLine" }]
+}
