@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "ward",
+  "nameKey": "skill.ward.name",
+  "descKey": "skill.ward.desc",
+  "range": 0,
+  "effects": [{ "type": "shield", "amount": 1, "target": "self" }]
+}
