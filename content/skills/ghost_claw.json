@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
-  "id": "imp_claw",
-  "nameKey": "skill.imp_claw.name",
-  "descKey": "skill.imp_claw.desc",
+  "id": "ghost_claw",
+  "nameKey": "skill.ghost_claw.name",
+  "descKey": "skill.ghost_claw.desc",
   "range": 1,
   "mpCost": 1,
   "effects": [{ "type": "damage", "amount": 1, "target": "firstInLine" }]
