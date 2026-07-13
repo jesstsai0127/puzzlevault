@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "id": "su_qing",
+  "nameKey": "character.su_qing.name",
+  "spriteRef": "char_su_qing",
+  "maxHp": 5,
+  "actionPoints": 4,
+  "maxMp": 4,
+  "skillIds": ["flying_sword", "qi_shield"]
+}
