@@ -4,5 +4,6 @@
   "nameKey": "skill.ward.name",
   "descKey": "skill.ward.desc",
   "range": 0,
+  "mpCost": 1,
   "effects": [{ "type": "shield", "amount": 1, "target": "self" }]
 }
