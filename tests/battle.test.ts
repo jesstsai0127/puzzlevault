@@ -9,6 +9,7 @@ const strike: SkillDef = {
   nameKey: 'skill.strike.name',
   descKey: 'skill.strike.desc',
   range: 1,
+  mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
@@ -18,6 +19,7 @@ const pushSkill: SkillDef = {
   nameKey: 'skill.push_skill.name',
   descKey: 'skill.push_skill.desc',
   range: 1,
+  mpCost: 1,
   effects: [{ type: 'push', amount: 2, target: 'firstInLine' }],
 };
 
@@ -27,6 +29,7 @@ const rangedSkill: SkillDef = {
   nameKey: 'skill.ranged_skill.name',
   descKey: 'skill.ranged_skill.desc',
   range: 3,
+  mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
@@ -36,6 +39,7 @@ const shieldSkill: SkillDef = {
   nameKey: 'skill.shield_skill.name',
   descKey: 'skill.shield_skill.desc',
   range: 0,
+  mpCost: 1,
   effects: [{ type: 'shield', amount: 1, target: 'self' }],
 };
 
@@ -45,6 +49,7 @@ const impClaw: SkillDef = {
   nameKey: 'skill.imp_claw.name',
   descKey: 'skill.imp_claw.desc',
   range: 1,
+  mpCost: 1,
   effects: [{ type: 'damage', amount: 1, target: 'firstInLine' }],
 };
 
@@ -69,6 +74,7 @@ const aster: CharacterDef = {
   spriteRef: 'char_aster',
   maxHp: 6,
   actionPoints: 4,
+  maxMp: 4,
   skillIds: ['strike', 'push_skill'],
 };
 
@@ -79,6 +85,7 @@ const wren: CharacterDef = {
   spriteRef: 'char_wren',
   maxHp: 5,
   actionPoints: 4,
+  maxMp: 4,
   skillIds: ['ranged_skill', 'shield_skill'],
 };
 
@@ -170,28 +177,42 @@ describe('BattleEngine: player actions', () => {
     expect(engine.getSnapshot().monsters[0].hp).toBe(0);
   });
 
-  it('a unit cannot act after exhausting all action points', () => {
+  it('the shared movement pool exhausts after 8 total moves across the squad, not per-unit', () => {
     const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
-    engine.moveUnit(0, 'down');
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
-    expect(engine.getSnapshot().players[0].actionsUsed).toBe(4);
-    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'no-actions-left' });
-    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'no-actions-left' });
+    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right'); // aster (1,1) -> (5,1)
+    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'left'); // back to (1,1)
+    expect(engine.getSnapshot().movement).toEqual({ used: 8, max: 8 });
+    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'no-movement-left' });
+    expect(engine.moveUnit(1, 'right')).toEqual({ ok: false, reason: 'no-movement-left' }); // shared, not per-unit
   });
 
-  it('resets action points at the start of every turn, not only when a wave clears', () => {
+  it('mp and the shared movement pool are independent — exhausting one does not block the other', () => {
+    const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
+    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right');
+    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'left'); // shared movement pool now exhausted
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // mp untouched by movement
+    expect(engine.getSnapshot().players[0].mp).toBe(2); // maxMp 4 - strike's mpCost 2
+
+    const res = engine.useSkill(0, 'strike', 'right'); // now mp 2, still enough for one more cast
+    expect(res).toEqual({ ok: true });
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'not-enough-mp' }); // mp is 0
+    expect(engine.moveUnit(1, 'right')).toEqual({ ok: false, reason: 'no-movement-left' }); // still shared/exhausted
+  });
+
+  it('resets the shared movement pool and every unit\'s mp at the start of every turn, not only when a wave clears', () => {
     // Monster starts 5 tiles from aster, so a couple of moves won't clear the wave.
     const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
     engine.moveUnit(0, 'down');
     engine.moveUnit(0, 'right');
-    expect(engine.getSnapshot().players[0].actionsUsed).toBe(2);
+    engine.useSkill(0, 'strike', 'right'); // whiffs (no monster in range yet), still costs mp
+    expect(engine.getSnapshot().movement).toEqual({ used: 2, max: 8 });
+    expect(engine.getSnapshot().players[0].mp).toBe(2); // maxMp 4 - strike's mpCost 2
 
     engine.endTurn();
 
     expect(engine.getSnapshot().monsters.length).toBeGreaterThan(0); // sanity: wave still active
-    expect(engine.getSnapshot().players[0].actionsUsed).toBe(0); // fresh budget for the new turn
+    expect(engine.getSnapshot().movement).toEqual({ used: 0, max: 8 }); // fresh budget for the new turn
+    expect(engine.getSnapshot().players[0].mp).toBe(4); // mp fully restored too
   });
 
   it('push moves the target away from the caster, stopping at a wall', () => {
@@ -230,12 +251,14 @@ describe('BattleEngine: player actions', () => {
     expect(wren2.hp).toBe(5); // fully blocked, no HP lost
   });
 
-  it('undo restores the pre-action snapshot; history clears after endTurn', () => {
+  it('undo restores the pre-action snapshot (including the shared movement pool); history clears after endTurn', () => {
     const engine = new BattleEngine(roomyMap(), ['aster', 'wren'], registry);
     const before = engine.getSnapshot().players[0].position;
     engine.moveUnit(0, 'down');
+    expect(engine.getSnapshot().movement.used).toBe(1);
     expect(engine.undo()).toBe(true);
     expect(engine.getSnapshot().players[0].position).toEqual(before);
+    expect(engine.getSnapshot().movement.used).toBe(0); // shared pool restored too
     expect(engine.undo()).toBe(false);
 
     engine.moveUnit(0, 'down');
@@ -431,6 +454,7 @@ describe('BattleEngine: hazard terrain', () => {
       nameKey: 'skill.shove.name',
       descKey: 'skill.shove.desc',
       range: 1,
+      mpCost: 1,
       effects: [{ type: 'push', amount: 2, target: 'firstInLine' }],
     };
     const brute: MonsterDef = {
