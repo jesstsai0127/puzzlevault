@@ -151,4 +151,15 @@ describe('parseMapDef', () => {
   it('rejects a map with no waves', () => {
     expect(() => parseMapDef({ ...courtyardMap, waves: [] })).toThrow(/no waves/);
   });
+
+  it('accepts a hazard tile (~) in the grid', () => {
+    const withHazard = { ...courtyardMap, grid: ['######', '# ~  #', '#    #', '######'] };
+    expect(parseMapDef(withHazard).grid[1]).toBe('# ~  #');
+  });
+
+  it('rejects an unknown grid character', () => {
+    expect(() =>
+      parseMapDef({ ...courtyardMap, grid: ['######', '# X  #', '#    #', '######'] }),
+    ).toThrow(/unknown character/);
+  });
 });
