@@ -13,8 +13,20 @@
 
   "skill.imp_claw.name": "利爪",
   "skill.imp_claw.desc": "近戰：用利爪抓擊相鄰目標。",
+  "skill.husk_slam.name": "重擊",
+  "skill.husk_slam.desc": "近戰：一記重擊，同時把目標往後推開。",
+  "skill.wisp_bolt.name": "低語箭",
+  "skill.wisp_bolt.desc": "遠程：從遠處射出的弱箭，最遠 3 格。",
+  "skill.thorn_volley.name": "荊棘齊射",
+  "skill.thorn_volley.desc": "遠程：一連串荊棘直線齊射，最遠 4 格。",
+  "skill.hound_bite.name": "撕咬",
+  "skill.hound_bite.desc": "近戰：對相鄰目標快速一咬。",
 
   "monster.gloom_imp.name": "幽暗小鬼",
+  "monster.husk_brute.name": "殘軀壯漢",
+  "monster.whisper_wisp.name": "低語魅影",
+  "monster.thornling.name": "荊棘傀儡",
+  "monster.night_hound.name": "夜獵犬",
 
   "map.courtyard.name": "中庭",
 
