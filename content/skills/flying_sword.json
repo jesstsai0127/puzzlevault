@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
-  "id": "spark_bolt",
-  "nameKey": "skill.spark_bolt.name",
-  "descKey": "skill.spark_bolt.desc",
+  "id": "flying_sword",
+  "nameKey": "skill.flying_sword.name",
+  "descKey": "skill.flying_sword.desc",
   "range": 3,
   "mpCost": 2,
   "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
