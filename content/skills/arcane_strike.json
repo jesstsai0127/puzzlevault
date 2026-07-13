@@ -4,5 +4,6 @@
   "nameKey": "skill.arcane_strike.name",
   "descKey": "skill.arcane_strike.desc",
   "range": 1,
+  "mpCost": 2,
   "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
 }
