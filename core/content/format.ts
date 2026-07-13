@@ -120,6 +120,9 @@ export function parseMonsterDef(raw: unknown): MonsterDef {
 // Map / waves
 // ---------------------------------------------------------------------------
 
+/** '#' wall, ' ' floor, '~' hazard (blocks movement like a wall, but a push can still land a unit on it). */
+const GRID_CHARS = new Set(['#', ' ', '~']);
+
 function parseWallFloorGrid(grid: string[]): { width: number; height: number; walkable: boolean[][] } {
   const height = grid.length;
   const width = grid[0]?.length ?? 0;
@@ -141,6 +144,9 @@ export function validateMapDef(def: MapDef): string[] {
   const { width, height, walkable } = parseWallFloorGrid(def.grid);
   def.grid.forEach((row: string, y: number) => {
     if (row.length !== width) problems.push(`grid row ${y} length ${row.length} != ${width}`);
+    row.split('').forEach((ch, x) => {
+      if (!GRID_CHARS.has(ch)) problems.push(`grid (${x},${y}): unknown character '${ch}'`);
+    });
   });
 
   const inBounds = (p: Vec2) => p.x >= 0 && p.y >= 0 && p.x < width && p.y < height;
