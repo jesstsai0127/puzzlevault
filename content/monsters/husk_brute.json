@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "id": "husk_brute",
+  "nameKey": "monster.husk_brute.name",
+  "spriteRef": "mon_husk_brute",
+  "maxHp": 6,
+  "moveRange": 1,
+  "skillIds": ["husk_slam"],
+  "aiRules": [
+    {
+      "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 1 },
+      "action": { "kind": "useSkill", "skillId": "husk_slam" }
+    },
+    {
+      "when": { "kind": "always" },
+      "action": { "kind": "moveToward", "target": "nearestPlayer" }
+    }
+  ]
+}

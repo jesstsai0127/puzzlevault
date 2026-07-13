@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "id": "thornling",
+  "nameKey": "monster.thornling.name",
+  "spriteRef": "mon_thornling",
+  "maxHp": 4,
+  "moveRange": 1,
+  "skillIds": ["thorn_volley"],
+  "aiRules": [
+    {
+      "when": { "kind": "always" },
+      "action": { "kind": "useSkill", "skillId": "thorn_volley" }
+    }
+  ]
+}

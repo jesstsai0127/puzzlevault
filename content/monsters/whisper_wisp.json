@@ -1,0 +1,23 @@
+{
+  "formatVersion": 1,
+  "id": "whisper_wisp",
+  "nameKey": "monster.whisper_wisp.name",
+  "spriteRef": "mon_whisper_wisp",
+  "maxHp": 2,
+  "moveRange": 1,
+  "skillIds": ["wisp_bolt"],
+  "aiRules": [
+    {
+      "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 1 },
+      "action": { "kind": "moveAway", "target": "nearestPlayer" }
+    },
+    {
+      "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 3 },
+      "action": { "kind": "useSkill", "skillId": "wisp_bolt" }
+    },
+    {
+      "when": { "kind": "always" },
+      "action": { "kind": "moveToward", "target": "nearestPlayer" }
+    }
+  ]
+}
