@@ -13,6 +13,7 @@ const meleeSkill = {
   nameKey: 'skill.arcane_strike.name',
   descKey: 'skill.arcane_strike.desc',
   range: 1,
+  mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
@@ -22,6 +23,7 @@ const wardSkill = {
   nameKey: 'skill.ward.name',
   descKey: 'skill.ward.desc',
   range: 0,
+  mpCost: 1,
   effects: [{ type: 'shield', amount: 1, target: 'self' }],
 };
 
@@ -62,6 +64,7 @@ const asterCharacter = {
   spriteRef: 'char_aster',
   maxHp: 6,
   actionPoints: 4,
+  maxMp: 4,
   skillIds: ['arcane_strike', 'repel_charm'],
 };
 
