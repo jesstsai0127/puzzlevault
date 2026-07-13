@@ -42,14 +42,16 @@ export interface CharacterDef {
   skillIds: string[];
 }
 
+export type AiTarget = 'nearestPlayer' | 'nearestBaseTile';
+
 export type AiCondition =
   | { kind: 'always' }
-  | { kind: 'targetInRange'; target: 'nearestPlayer'; range: number };
+  | { kind: 'targetInRange'; target: AiTarget; range: number };
 
 export type AiAction =
   | { kind: 'useSkill'; skillId: string }
-  | { kind: 'moveToward'; target: 'nearestPlayer' }
-  | { kind: 'moveAway'; target: 'nearestPlayer' };
+  | { kind: 'moveToward'; target: AiTarget }
+  | { kind: 'moveAway'; target: AiTarget };
 
 export interface AiRule {
   when: AiCondition;
@@ -75,14 +77,18 @@ export interface WaveSpawnDef {
 
 export interface WaveDef {
   monsters: WaveSpawnDef[];
+  /** Turn budget: this wave is survived once this many turns elapse, even with monsters still alive. */
+  turns: number;
 }
 
 export interface MapDef {
   formatVersion: number;
   id: string;
   nameKey: string;
-  /** Sokoban-style char grid: '#' wall, ' ' floor. */
+  /** Sokoban-style char grid: '#' wall, ' ' floor, '~' hazard, 'B' base (impassable, shared HP pool). */
   grid: string[];
   playerStarts: Vec2[];
   waves: WaveDef[];
+  /** Shared HP pool for all of this map's 'B' base tiles combined. */
+  baseHp: number;
 }
