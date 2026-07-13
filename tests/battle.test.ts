@@ -272,7 +272,7 @@ describe('BattleEngine: wave clear and victory', () => {
     expect(snap.victory).toBe(false);
   });
 
-  it('relocates a spawn to the nearest free tile if a player is standing on it', () => {
+  it('relocates a spawn to the nearest free tile and ambushes the player standing on it', () => {
     const map: MapDef = {
       ...twoWaveMap(),
       waves: [
@@ -288,6 +288,7 @@ describe('BattleEngine: wave clear and victory', () => {
     expect(snap.monsters[0].position).not.toEqual({ x: 1, y: 1 }); // not on top of aster
     const p = snap.monsters[0].position;
     expect(grid[p.y][p.x]).toBe(' '); // still a valid floor tile
+    expect(snap.players[0].hp).toBe(5); // imp_claw's 1 damage as an ambush hit before relocating
   });
 
   it('clearing the final wave sets victory', () => {
@@ -348,5 +349,135 @@ describe('BattleEngine: wipe and lives', () => {
     const snap = engine.getSnapshot();
     expect(snap.lives).toBe(3);
     expect(snap.waveIndex).toBe(0);
+  });
+});
+
+describe('BattleEngine: new AI behaviors', () => {
+  it('a moveAway rule steps the monster away when the player is adjacent', () => {
+    const skittish: MonsterDef = {
+      formatVersion: 1,
+      id: 'wisp',
+      nameKey: 'monster.wisp.name',
+      spriteRef: 'mon_wisp',
+      maxHp: 1,
+      moveRange: 1,
+      skillIds: ['imp_claw'],
+      aiRules: [
+        { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'moveAway', target: 'nearestPlayer' } },
+        { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+      ],
+    };
+    const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, wisp: skittish } };
+    const map: MapDef = {
+      ...twoWaveMap(),
+      waves: [{ monsters: [{ monsterId: 'wisp', spawn: { x: 2, y: 1 } }] }], // adjacent to aster at (1,1)
+    };
+    const engine = new BattleEngine(map, ['aster', 'wren'], localRegistry);
+    expect(engine.getIntents()).toEqual([
+      { kind: 'move', instanceId: expect.any(String), to: { x: 3, y: 1 } }, // steps further away, not toward
+    ]);
+  });
+
+  it('a monster with moveRange > 1 advances multiple tiles toward the player in one turn', () => {
+    const hound: MonsterDef = {
+      formatVersion: 1,
+      id: 'hound',
+      nameKey: 'monster.hound.name',
+      spriteRef: 'mon_hound',
+      maxHp: 2,
+      moveRange: 2,
+      skillIds: ['imp_claw'],
+      aiRules: [
+        { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'imp_claw' } },
+        { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+      ],
+    };
+    const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, hound } };
+    const map: MapDef = {
+      ...twoWaveMap(),
+      playerStarts: [{ x: 1, y: 1 }, { x: 1, y: 2 }],
+      waves: [{ monsters: [{ monsterId: 'hound', spawn: { x: 6, y: 1 } }] }], // 5 tiles from aster
+    };
+    const engine = new BattleEngine(map, ['aster', 'wren'], localRegistry);
+    engine.endTurn(); // hound moves toward aster
+    expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 4, y: 1 }); // 2 tiles this turn, not 1
+  });
+});
+
+describe('BattleEngine: hazard terrain', () => {
+  // hazard '~' at (4,2)
+  const hazardGrid = ['########', '#      #', '#   ~  #', '#      #', '########'];
+
+  it('pushing a monster into a hazard tile kills it instantly', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'hazard-push',
+      nameKey: 'map.hazard.name',
+      grid: hazardGrid,
+      playerStarts: [{ x: 1, y: 2 }, { x: 1, y: 1 }],
+      waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 3, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
+    engine.moveUnit(0, 'right'); // aster (1,2) -> (2,2), adjacent to the imp at (3,2)
+    const res = engine.useSkill(0, 'push_skill', 'right'); // pushes the imp 2: (3,2) -> (4,2) hazard
+    expect(res).toEqual({ ok: true });
+    expect(engine.getSnapshot().monsters[0].hp).toBe(0);
+  });
+
+  it('a monster pushing a player into a hazard tile deals flat damage instead of killing them', () => {
+    const shove: SkillDef = {
+      formatVersion: 1,
+      id: 'shove',
+      nameKey: 'skill.shove.name',
+      descKey: 'skill.shove.desc',
+      range: 1,
+      effects: [{ type: 'push', amount: 2, target: 'firstInLine' }],
+    };
+    const brute: MonsterDef = {
+      formatVersion: 1,
+      id: 'brute',
+      nameKey: 'monster.brute.name',
+      spriteRef: 'mon_brute',
+      maxHp: 5,
+      moveRange: 1,
+      skillIds: ['shove'],
+      aiRules: [
+        { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'shove' } },
+        { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+      ],
+    };
+    const localRegistry: ContentRegistry = {
+      ...registry,
+      skills: { ...registry.skills, shove },
+      monsters: { ...registry.monsters, brute },
+    };
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'hazard-shove',
+      nameKey: 'map.hazard2.name',
+      grid: hazardGrid,
+      playerStarts: [{ x: 3, y: 2 }, { x: 1, y: 1 }], // aster adjacent to the brute, hazard just past aster
+      waves: [{ monsters: [{ monsterId: 'brute', spawn: { x: 2, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['aster', 'wren'], localRegistry);
+    engine.endTurn(); // brute shoves aster from (3,2) into the hazard at (4,2)
+    const snap = engine.getSnapshot();
+    expect(snap.players[0].position).toEqual({ x: 4, y: 2 });
+    expect(snap.players[0].hp).toBe(3); // 6 maxHp - 3 hazard damage, not a kill
+  });
+
+  it("a skill's line of sight flies over a hazard tile instead of stopping at it", () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'hazard-sightline',
+      nameKey: 'map.hazard3.name',
+      grid: hazardGrid,
+      playerStarts: [{ x: 1, y: 1 }, { x: 2, y: 2 }], // wren at (2,2), hazard at (4,2) between it and the monster
+      waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 5, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['aster', 'wren'], registry);
+    const res = engine.useSkill(1, 'ranged_skill', 'right'); // range 3: (3,2) floor, (4,2) hazard, (5,2) monster
+    expect(res).toEqual({ ok: true });
+    expect(engine.getSnapshot().monsters[0].hp).toBe(0); // maxHp 2 - 2 damage landed, the ray wasn't blocked by the hazard
   });
 });
