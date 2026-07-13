@@ -122,8 +122,11 @@ export function parseMonsterDef(raw: unknown): MonsterDef {
 // Map / waves
 // ---------------------------------------------------------------------------
 
-/** '#' wall, ' ' floor, '~' hazard (blocks movement like a wall, but a push can still land a unit on it). */
-const GRID_CHARS = new Set(['#', ' ', '~']);
+/**
+ * '#' wall, ' ' floor, '~' hazard (blocks movement like a wall, but a push can
+ * still land a unit on it), 'B' base (impassable to everyone, shares one HP pool).
+ */
+const GRID_CHARS = new Set(['#', ' ', '~', 'B']);
 
 function parseWallFloorGrid(grid: string[]): { width: number; height: number; walkable: boolean[][] } {
   const height = grid.length;
@@ -151,6 +154,9 @@ export function validateMapDef(def: MapDef): string[] {
     });
   });
 
+  if (!(def.baseHp > 0)) problems.push('baseHp must be > 0');
+  if (!def.grid.some((row) => row.includes('B'))) problems.push("map has no base ('B') tile");
+
   const inBounds = (p: Vec2) => p.x >= 0 && p.y >= 0 && p.x < width && p.y < height;
   const isWalkable = (p: Vec2) => inBounds(p) && walkable[p.y]?.[p.x];
 
@@ -170,6 +176,7 @@ export function validateMapDef(def: MapDef): string[] {
     problems.push('map has no waves');
   } else {
     def.waves.forEach((wave: WaveDef, wi: number) => {
+      if (!(wave.turns > 0)) problems.push(`wave ${wi}: turns must be > 0`);
       if (!Array.isArray(wave.monsters) || wave.monsters.length === 0) {
         problems.push(`wave ${wi} has no monsters`);
         return;
