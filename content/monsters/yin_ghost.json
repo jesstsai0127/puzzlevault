@@ -1,15 +1,15 @@
 {
   "formatVersion": 1,
-  "id": "gloom_imp",
-  "nameKey": "monster.gloom_imp.name",
-  "spriteRef": "mon_gloom_imp",
+  "id": "yin_ghost",
+  "nameKey": "monster.yin_ghost.name",
+  "spriteRef": "mon_yin_ghost",
   "maxHp": 3,
   "moveRange": 1,
-  "skillIds": ["imp_claw"],
+  "skillIds": ["ghost_claw"],
   "aiRules": [
     {
       "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 1 },
-      "action": { "kind": "useSkill", "skillId": "imp_claw" }
+      "action": { "kind": "useSkill", "skillId": "ghost_claw" }
     },
     {
       "when": { "kind": "always" },
