@@ -4,5 +4,6 @@
   "nameKey": "skill.imp_claw.name",
   "descKey": "skill.imp_claw.desc",
   "range": 1,
+  "mpCost": 1,
   "effects": [{ "type": "damage", "amount": 1, "target": "firstInLine" }]
 }
