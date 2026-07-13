@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "id": "teng_yao",
+  "nameKey": "monster.teng_yao.name",
+  "spriteRef": "mon_teng_yao",
+  "maxHp": 4,
+  "moveRange": 1,
+  "skillIds": ["vine_lash"],
+  "aiRules": [
+    {
+      "when": { "kind": "always" },
+      "action": { "kind": "useSkill", "skillId": "vine_lash" }
+    }
+  ]
+}
