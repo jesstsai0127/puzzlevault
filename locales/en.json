@@ -1,0 +1,39 @@
+{
+  "character.aster.name": "Aster",
+  "character.wren.name": "Wren",
+
+  "skill.arcane_strike.name": "Arcane Strike",
+  "skill.arcane_strike.desc": "Melee: strike an adjacent enemy.",
+  "skill.repel_charm.name": "Repel Charm",
+  "skill.repel_charm.desc": "Push an adjacent enemy back 2 tiles.",
+  "skill.spark_bolt.name": "Spark Bolt",
+  "skill.spark_bolt.desc": "Ranged: bolt of energy in a straight line, up to 3 tiles.",
+  "skill.ward.name": "Ward",
+  "skill.ward.desc": "Raise a shield that blocks the next hit.",
+
+  "skill.imp_claw.name": "Claw",
+  "skill.imp_claw.desc": "Melee: rake an adjacent target with claws.",
+
+  "monster.gloom_imp.name": "Gloom Imp",
+
+  "map.courtyard.name": "Courtyard",
+
+  "ui.hp": "HP",
+  "ui.wave": "Wave",
+  "ui.lives": "Lives",
+  "ui.end_turn": "End Turn",
+  "ui.undo": "Undo",
+  "ui.move": "Move",
+  "ui.victory": "Wave Cleared!",
+  "ui.next_wave": "Press Enter for next wave",
+  "ui.defeat": "Defeated — restarting from Wave 1",
+  "ui.restart_prompt": "Press Enter to restart",
+  "ui.game_complete": "All Waves Cleared!",
+  "ui.intent_move": "will move",
+  "ui.intent_attack": "will attack",
+  "ui.turn": "Turn",
+  "ui.ap": "AP",
+  "ui.instruction_idle": "Click a character, then click a highlighted tile to move, or a skill button below.",
+  "ui.instruction_armed": "Click a highlighted tile to aim, or click the skill again to cancel.",
+  "ui.wave_cleared_hint": "Wave cleared! Finish using remaining actions, then click End Turn to continue."
+}
