@@ -1,0 +1,39 @@
+{
+  "character.aster.name": "亞斯特",
+  "character.wren.name": "蘭恩",
+
+  "skill.arcane_strike.name": "奧術打擊",
+  "skill.arcane_strike.desc": "近戰：打擊相鄰的敵人。",
+  "skill.repel_charm.name": "斥退咒",
+  "skill.repel_charm.desc": "將相鄰的敵人擊退 2 格。",
+  "skill.spark_bolt.name": "火花箭",
+  "skill.spark_bolt.desc": "遠程：直線發射能量箭，最遠 3 格。",
+  "skill.ward.name": "護盾術",
+  "skill.ward.desc": "施展護盾，格擋下一次攻擊。",
+
+  "skill.imp_claw.name": "利爪",
+  "skill.imp_claw.desc": "近戰：用利爪抓擊相鄰目標。",
+
+  "monster.gloom_imp.name": "幽暗小鬼",
+
+  "map.courtyard.name": "中庭",
+
+  "ui.hp": "生命值",
+  "ui.wave": "波次",
+  "ui.lives": "生命數",
+  "ui.end_turn": "結束回合",
+  "ui.undo": "復原",
+  "ui.move": "移動",
+  "ui.victory": "本波清除！",
+  "ui.next_wave": "按 Enter 進入下一波",
+  "ui.defeat": "已陣亡，從第一波重新開始",
+  "ui.restart_prompt": "按 Enter 重新開始",
+  "ui.game_complete": "全部波次清除！",
+  "ui.intent_move": "將會移動",
+  "ui.intent_attack": "將會攻擊",
+  "ui.turn": "回合",
+  "ui.ap": "行動點數",
+  "ui.instruction_idle": "點選角色，再點選亮起的格子移動，或點下方的技能按鈕。",
+  "ui.instruction_armed": "點選亮起的格子瞄準施放，或再點一次技能取消。",
+  "ui.wave_cleared_hint": "這波已清空！用完剩下的行動點數後，按「結束回合」進入下一波。"
+}
