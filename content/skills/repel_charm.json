@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "id": "repel_charm",
+  "nameKey": "skill.repel_charm.name",
+  "descKey": "skill.repel_charm.desc",
+  "range": 1,
+  "effects": [{ "type": "push", "amount": 2, "target": "firstInLine" }]
+}
