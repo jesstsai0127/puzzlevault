@@ -1,6 +1,6 @@
 # Puzzlevault
 
-A turn-based tactical squad game in the style of *Into the Breach*, set in an original magic-academy world. Move a 2-character squad through waves of monsters whose next move is always telegraphed before you act — the puzzle is arranging your moves and spells so their attacks miss.
+A turn-based tactical squad game in the style of *Into the Breach*, set in an original Chinese wuxia/xianxia world. Guide a squad of two cultivators — a sword-wielding melee fighter and a flying-sword adept — through waves of demons and ghosts whose next move is always telegraphed before you act. The puzzle is arranging your movement and techniques so their attacks miss.
 
 Play the current build: https://jesstsai0127.github.io/puzzlevault/
 
