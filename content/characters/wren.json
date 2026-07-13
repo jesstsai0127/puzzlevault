@@ -5,5 +5,6 @@
   "spriteRef": "char_wren",
   "maxHp": 5,
   "actionPoints": 4,
+  "maxMp": 4,
   "skillIds": ["spark_bolt", "ward"]
 }
