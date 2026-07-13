@@ -4,35 +4,43 @@
   "nameKey": "map.yanwu_ground.name",
   "grid": [
     "########",
-    "#    ~ #",
-    "#      #",
-    "#      #",
-    "#    ~ #",
+    "#     ~#",
+    "#B     #",
+    "#B     #",
+    "#     ~#",
     "########"
   ],
+  "baseHp": 8,
   "playerStarts": [
-    { "x": 1, "y": 2 },
-    { "x": 1, "y": 3 }
+    { "x": 1, "y": 1 },
+    { "x": 1, "y": 4 }
   ],
   "waves": [
-    { "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 2 } }] },
     {
+      "turns": 4,
+      "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } }]
+    },
+    {
+      "turns": 4,
       "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "yuan_ling", "spawn": { "x": 6, "y": 3 } }
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } }
       ]
     },
     {
+      "turns": 4,
       "monsters": [
-        { "monsterId": "jiangshi", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "yuan_ling", "spawn": { "x": 6, "y": 3 } }
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } }
       ]
     },
     {
+      "turns": 4,
       "monsters": [
-        { "monsterId": "teng_yao", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "yao_lang", "spawn": { "x": 6, "y": 3 } },
-        { "monsterId": "jiangshi", "spawn": { "x": 5, "y": 3 } }
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } }
       ]
     }
   ]
