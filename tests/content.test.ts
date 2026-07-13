@@ -9,19 +9,19 @@ import {
 
 const meleeSkill = {
   formatVersion: CONTENT_FORMAT_VERSION,
-  id: 'arcane_strike',
-  nameKey: 'skill.arcane_strike.name',
-  descKey: 'skill.arcane_strike.desc',
+  id: 'sword_qi',
+  nameKey: 'skill.sword_qi.name',
+  descKey: 'skill.sword_qi.desc',
   range: 1,
   mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
-const wardSkill = {
+const qiShieldSkill = {
   formatVersion: CONTENT_FORMAT_VERSION,
-  id: 'ward',
-  nameKey: 'skill.ward.name',
-  descKey: 'skill.ward.desc',
+  id: 'qi_shield',
+  nameKey: 'skill.qi_shield.name',
+  descKey: 'skill.qi_shield.desc',
   range: 0,
   mpCost: 1,
   effects: [{ type: 'shield', amount: 1, target: 'self' }],
@@ -34,7 +34,7 @@ describe('parseSkillDef', () => {
   });
 
   it('parses a valid self-target shield skill with range 0', () => {
-    const skill = parseSkillDef(wardSkill);
+    const skill = parseSkillDef(qiShieldSkill);
     expect(skill.range).toBe(0);
   });
 
@@ -57,60 +57,60 @@ describe('parseSkillDef', () => {
   });
 });
 
-const asterCharacter = {
+const liYanCharacter = {
   formatVersion: CONTENT_FORMAT_VERSION,
-  id: 'aster',
-  nameKey: 'character.aster.name',
-  spriteRef: 'char_aster',
+  id: 'li_yan',
+  nameKey: 'character.li_yan.name',
+  spriteRef: 'char_li_yan',
   maxHp: 6,
   actionPoints: 4,
   maxMp: 4,
-  skillIds: ['arcane_strike', 'repel_charm'],
+  skillIds: ['sword_qi', 'palm_wave'],
 };
 
 describe('parseCharacterDef', () => {
   it('parses a valid character', () => {
-    expect(parseCharacterDef(asterCharacter).id).toBe('aster');
+    expect(parseCharacterDef(liYanCharacter).id).toBe('li_yan');
   });
 
   it('rejects a character with no skills', () => {
-    expect(() => parseCharacterDef({ ...asterCharacter, skillIds: [] })).toThrow(/no skills/);
+    expect(() => parseCharacterDef({ ...liYanCharacter, skillIds: [] })).toThrow(/no skills/);
   });
 
   it('rejects non-positive maxHp', () => {
-    expect(() => parseCharacterDef({ ...asterCharacter, maxHp: 0 })).toThrow(/maxHp/);
+    expect(() => parseCharacterDef({ ...liYanCharacter, maxHp: 0 })).toThrow(/maxHp/);
   });
 });
 
-const gloomImp = {
+const yinGhost = {
   formatVersion: CONTENT_FORMAT_VERSION,
-  id: 'gloom_imp',
-  nameKey: 'monster.gloom_imp.name',
-  spriteRef: 'mon_gloom_imp',
+  id: 'yin_ghost',
+  nameKey: 'monster.yin_ghost.name',
+  spriteRef: 'mon_yin_ghost',
   maxHp: 3,
   moveRange: 1,
-  skillIds: ['imp_claw'],
+  skillIds: ['ghost_claw'],
   aiRules: [
-    { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'imp_claw' } },
+    { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
     { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
   ],
 };
 
 describe('parseMonsterDef', () => {
   it('parses a valid monster with a fallback aiRule', () => {
-    expect(parseMonsterDef(gloomImp).aiRules).toHaveLength(2);
+    expect(parseMonsterDef(yinGhost).aiRules).toHaveLength(2);
   });
 
   it('rejects a monster whose aiRules do not end in an unconditional fallback', () => {
     expect(() =>
-      parseMonsterDef({ ...gloomImp, aiRules: [gloomImp.aiRules[0]] }),
+      parseMonsterDef({ ...yinGhost, aiRules: [yinGhost.aiRules[0]] }),
     ).toThrow(/fallback/);
   });
 
   it('rejects an aiRule referencing a skill the monster does not have', () => {
     expect(() =>
       parseMonsterDef({
-        ...gloomImp,
+        ...yinGhost,
         aiRules: [
           { when: { kind: 'always' }, action: { kind: 'useSkill', skillId: 'nonexistent' } },
         ],
@@ -119,50 +119,50 @@ describe('parseMonsterDef', () => {
   });
 });
 
-const courtyardMap = {
+const yanwuGroundMap = {
   formatVersion: CONTENT_FORMAT_VERSION,
-  id: 'courtyard',
-  nameKey: 'map.courtyard.name',
+  id: 'yanwu_ground',
+  nameKey: 'map.yanwu_ground.name',
   grid: ['######', '#    #', '#    #', '######'],
   playerStarts: [
     { x: 1, y: 1 },
     { x: 1, y: 2 },
   ],
-  waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 4, y: 1 } }] }],
+  waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }] }],
 };
 
 describe('parseMapDef', () => {
   it('parses a valid map', () => {
-    expect(parseMapDef(courtyardMap).waves).toHaveLength(1);
+    expect(parseMapDef(yanwuGroundMap).waves).toHaveLength(1);
   });
 
   it('rejects a playerStart on a wall', () => {
     expect(() =>
-      parseMapDef({ ...courtyardMap, playerStarts: [{ x: 0, y: 0 }, { x: 1, y: 2 }] }),
+      parseMapDef({ ...yanwuGroundMap, playerStarts: [{ x: 0, y: 0 }, { x: 1, y: 2 }] }),
     ).toThrow(/not on a walkable tile/);
   });
 
   it('rejects a wave spawn outside the grid', () => {
     expect(() =>
       parseMapDef({
-        ...courtyardMap,
-        waves: [{ monsters: [{ monsterId: 'gloom_imp', spawn: { x: 99, y: 99 } }] }],
+        ...yanwuGroundMap,
+        waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 99, y: 99 } }] }],
       }),
     ).toThrow(/not walkable/);
   });
 
   it('rejects a map with no waves', () => {
-    expect(() => parseMapDef({ ...courtyardMap, waves: [] })).toThrow(/no waves/);
+    expect(() => parseMapDef({ ...yanwuGroundMap, waves: [] })).toThrow(/no waves/);
   });
 
   it('accepts a hazard tile (~) in the grid', () => {
-    const withHazard = { ...courtyardMap, grid: ['######', '# ~  #', '#    #', '######'] };
+    const withHazard = { ...yanwuGroundMap, grid: ['######', '# ~  #', '#    #', '######'] };
     expect(parseMapDef(withHazard).grid[1]).toBe('# ~  #');
   });
 
   it('rejects an unknown grid character', () => {
     expect(() =>
-      parseMapDef({ ...courtyardMap, grid: ['######', '# X  #', '#    #', '######'] }),
+      parseMapDef({ ...yanwuGroundMap, grid: ['######', '# X  #', '#    #', '######'] }),
     ).toThrow(/unknown character/);
   });
 });
