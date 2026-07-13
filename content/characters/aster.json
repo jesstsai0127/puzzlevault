@@ -5,5 +5,6 @@
   "spriteRef": "char_aster",
   "maxHp": 6,
   "actionPoints": 4,
+  "maxMp": 4,
   "skillIds": ["arcane_strike", "repel_charm"]
 }
