@@ -41,13 +41,24 @@
       ]
     },
     {
-      "turns": 4,
+      "turns": 3,
       "monsters": [
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 2 } }
+      ]
+    },
+    {
+      "turns": 4,
+      "monsters": [
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 3 } }
       ]
     }
   ]
