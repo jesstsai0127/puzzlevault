@@ -5,5 +5,5 @@
   "descKey": "skill.ghost_claw.desc",
   "range": 1,
   "mpCost": 1,
-  "effects": [{ "type": "damage", "amount": 1, "target": "firstInLine" }]
+  "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
 }
