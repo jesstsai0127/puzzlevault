@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
-import { STARTING_SQUAD, yanwuGroundMap, registry } from '../content/registry';
+import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry } from '../content/registry';
 
 describe('Phase 0 content registry', () => {
   it('parses all builtin content without throwing', () => {
@@ -56,5 +56,29 @@ describe('Phase 0 content registry', () => {
     // point is that real content resolves through many turns without an
     // engine exception (mismatched skill/monster data would throw).
     expect(engine.getSnapshot().turnNumber).toBeGreaterThan(1);
+  });
+});
+
+describe('maps registry (multi-level select, roadmap ch.5)', () => {
+  it('exposes every playable level by a stable id, and demo1 is the default', () => {
+    expect(Object.keys(maps)).toEqual(['demo1', 'demo2']);
+    expect(maps.demo1).toBe(yanwuGroundMap);
+    expect(DEFAULT_MAP_ID).toBe('demo1');
+    expect(maps[DEFAULT_MAP_ID]).toBe(maps.demo1);
+  });
+
+  it('demo2 (pincer) spawns its first wave from both flanks of a centered base', () => {
+    const demo2 = maps.demo2;
+    expect(demo2.waves).toHaveLength(4);
+    const firstWaveXs = demo2.waves[0].monsters.map((m) => m.spawn.x).sort((a, b) => a - b);
+    expect(firstWaveXs).toEqual([1, 7]); // one spawn near the west wall, one near the east wall
+  });
+
+  it('builds a playable BattleEngine on demo2 without throwing', () => {
+    const engine = new BattleEngine(maps.demo2, STARTING_SQUAD, registry);
+    const snap = engine.getSnapshot();
+    expect(snap.players).toHaveLength(2);
+    expect(snap.monsters).toHaveLength(2);
+    expect(snap.baseTiles.length).toBeGreaterThan(0);
   });
 });
