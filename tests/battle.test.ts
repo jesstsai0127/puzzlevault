@@ -138,7 +138,6 @@ describe('BattleEngine: setup', () => {
     ]);
     expect(snap.monsters).toHaveLength(1);
     expect(snap.waveIndex).toBe(0);
-    expect(snap.lives).toBe(3);
   });
 
   it('an adjacent monster telegraphs a skill intent, not a move', () => {
@@ -386,7 +385,6 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBeNull(); // confirming resets for another run (Phase 1 has only one map)
     expect(snap.waveIndex).toBe(0);
-    expect(snap.lives).toBe(3);
   });
 
   it("outlasting the last wave's clock with the base alive sets a pending victory, even with monsters still on the board", () => {
@@ -405,10 +403,10 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
   });
 });
 
-describe('BattleEngine: base destruction and lives', () => {
+describe('BattleEngine: base destruction and defeat', () => {
   // Phase 1's lose condition is base HP, not player HP — a monster that
   // targets nearestBaseTile instead of nearestPlayer, so hitting 0 base HP
-  // (not a player wipe) is what should now decrement lives / reset the run.
+  // (not a player wipe) is what should now set the defeat outcome.
   const baseSeekingGhost: MonsterDef = {
     ...yinGhost,
     id: 'base_ghost',
@@ -445,51 +443,30 @@ describe('BattleEngine: base destruction and lives', () => {
     };
   }
 
-  it('base HP reaching 0 freezes the board on a pending lifeLost outcome — lives/board untouched until confirmed', () => {
+  it('base HP reaching 0 freezes the board on a pending defeat outcome — board untouched until confirmed', () => {
     const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // both ghosts hit the base for 1 each: baseHp 2 -> 0
     const frozen = engine.getSnapshot();
-    expect(frozen.outcome).toBe('lifeLost');
-    expect(frozen.lives).toBe(3); // NOT decremented yet — the player hasn't confirmed
+    expect(frozen.outcome).toBe('defeat');
     expect(frozen.baseHp).toBe(0); // the actual losing position, not silently reset to full
     expect(frozen.monsters).toHaveLength(2); // the same two ghosts that landed the killing blow, not a respawn
 
     engine.confirmOutcome();
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBeNull();
-    expect(snap.lives).toBe(2);
     expect(snap.waveIndex).toBe(0);
     expect(snap.baseHp).toBe(2); // reset to full (baseMaxHp)
     expect(snap.monsters).toHaveLength(2); // wave respawned
   });
 
-  it('exhausting all lives resets the whole run to wave 0 with lives back to 3, once each loss is confirmed', () => {
-    const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
-    engine.endTurn();
-    expect(engine.getSnapshot().outcome).toBe('lifeLost');
-    engine.confirmOutcome(); // lives 3 -> 2
-    engine.endTurn();
-    expect(engine.getSnapshot().outcome).toBe('lifeLost');
-    engine.confirmOutcome(); // lives 2 -> 1
-    engine.endTurn();
-    expect(engine.getSnapshot().outcome).toBe('gameOver'); // this loss would take lives to 0
-    engine.confirmOutcome(); // lives 1 -> 0 -> full reset to 3
-    const snap = engine.getSnapshot();
-    expect(snap.outcome).toBeNull();
-    expect(snap.lives).toBe(3);
-    expect(snap.waveIndex).toBe(0);
-    expect(snap.baseHp).toBe(2);
-  });
-
-  it('resetLevel() is a manual full restart, available at any time mid-run', () => {
+  it('resetLevel() is a manual full restart, available at any time mid-run — including with a defeat still pending', () => {
     const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // baseHp 2 -> 0, pendingOutcome set
-    expect(engine.getSnapshot().outcome).toBe('lifeLost');
+    expect(engine.getSnapshot().outcome).toBe('defeat');
 
     engine.resetLevel(); // bail out without confirming the loss first
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBeNull();
-    expect(snap.lives).toBe(3); // untouched by the pending loss — a clean restart, not a life spent
     expect(snap.waveIndex).toBe(0);
     expect(snap.baseHp).toBe(2);
   });
