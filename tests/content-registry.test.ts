@@ -31,7 +31,11 @@ describe('Phase 0 content registry', () => {
 
   it('runs several turns of real content end-to-end without throwing', () => {
     const engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
-    for (let turn = 0; turn < 8 && !engine.getSnapshot().victory; turn++) {
+    for (let turn = 0; turn < 8; turn++) {
+      if (engine.getSnapshot().outcome) {
+        engine.confirmOutcome(); // a life lost / run over / win — confirm and keep exercising content
+        continue;
+      }
       // Advance the squad toward the enemy side each turn, attacking when in range.
       for (let unitIndex = 0; unitIndex < 2; unitIndex++) {
         const before = engine.getSnapshot();

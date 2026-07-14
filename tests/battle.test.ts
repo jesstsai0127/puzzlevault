@@ -329,7 +329,7 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     expect(snap.monsters).toHaveLength(0); // board is clear, but that's just a breather
     expect(snap.movement).toEqual({ used: 0, max: 8 }); // still a fresh round every turn
     expect(snap.players[0].mp).toBe(4);
-    expect(snap.victory).toBe(false);
+    expect(snap.outcome).toBeNull();
   });
 
   it('reinforcing adds the next wave on top of survivors — count grows, survivors are not cleared', () => {
@@ -369,17 +369,27 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     expect(snap.players[0].hp).toBe(5); // ghost_claw's 1 damage as an ambush hit before relocating
   });
 
-  it('clearing the only (last) wave immediately sets victory', () => {
+  it('clearing the only (last) wave immediately sets a pending victory outcome, frozen until confirmed', () => {
     const map = twoWaveMap();
     map.waves = [map.waves[0]]; // only one wave, so it's also the last wave
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.useSkill(0, 'strike', 'right');
     engine.endTurn();
-    expect(engine.getSnapshot().victory).toBe(true);
+    expect(engine.getSnapshot().outcome).toBe('victory');
     expect(engine.getIntents()).toEqual([]);
+    // Frozen: further play is locked out until confirmOutcome().
+    engine.endTurn(); // no-op — pendingOutcome guards it
+    expect(engine.getSnapshot().outcome).toBe('victory'); // unchanged by the no-op endTurn
+    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'outcome-pending' });
+
+    engine.confirmOutcome();
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBeNull(); // confirming resets for another run (Phase 1 has only one map)
+    expect(snap.waveIndex).toBe(0);
+    expect(snap.lives).toBe(3);
   });
 
-  it("outlasting the last wave's clock with the base alive is victory, even with monsters still on the board", () => {
+  it("outlasting the last wave's clock with the base alive sets a pending victory, even with monsters still on the board", () => {
     const map: MapDef = {
       ...twoWaveMap(),
       // 5 tiles from the players, moveRange 1 — cannot possibly arrive within 2 turns.
@@ -387,11 +397,11 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.endTurn(); // turn 1 of 2
-    expect(engine.getSnapshot().victory).toBe(false);
+    expect(engine.getSnapshot().outcome).toBeNull();
     engine.endTurn(); // turn 2 of 2: clock elapses, monster still alive, base intact -> victory
     const snap = engine.getSnapshot();
-    expect(snap.victory).toBe(true);
-    expect(snap.monsters.length).toBeGreaterThan(0); // you did NOT have to kill it
+    expect(snap.outcome).toBe('victory');
+    expect(snap.monsters.length).toBeGreaterThan(0); // you did NOT have to kill it — and the frozen board still shows it
   });
 });
 
@@ -435,23 +445,51 @@ describe('BattleEngine: base destruction and lives', () => {
     };
   }
 
-  it('base HP reaching 0 costs a life and resets the wave with base HP back to full', () => {
+  it('base HP reaching 0 freezes the board on a pending lifeLost outcome — lives/board untouched until confirmed', () => {
     const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // both ghosts hit the base for 1 each: baseHp 2 -> 0
+    const frozen = engine.getSnapshot();
+    expect(frozen.outcome).toBe('lifeLost');
+    expect(frozen.lives).toBe(3); // NOT decremented yet — the player hasn't confirmed
+    expect(frozen.baseHp).toBe(0); // the actual losing position, not silently reset to full
+    expect(frozen.monsters).toHaveLength(2); // the same two ghosts that landed the killing blow, not a respawn
+
+    engine.confirmOutcome();
     const snap = engine.getSnapshot();
+    expect(snap.outcome).toBeNull();
     expect(snap.lives).toBe(2);
     expect(snap.waveIndex).toBe(0);
     expect(snap.baseHp).toBe(2); // reset to full (baseMaxHp)
     expect(snap.monsters).toHaveLength(2); // wave respawned
   });
 
-  it('exhausting all lives resets the whole run to wave 0 with lives back to 3', () => {
+  it('exhausting all lives resets the whole run to wave 0 with lives back to 3, once each loss is confirmed', () => {
     const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
-    engine.endTurn(); // lives 3 -> 2
-    engine.endTurn(); // lives 2 -> 1
-    engine.endTurn(); // lives 1 -> 0 -> full reset to 3
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('lifeLost');
+    engine.confirmOutcome(); // lives 3 -> 2
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('lifeLost');
+    engine.confirmOutcome(); // lives 2 -> 1
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('gameOver'); // this loss would take lives to 0
+    engine.confirmOutcome(); // lives 1 -> 0 -> full reset to 3
     const snap = engine.getSnapshot();
+    expect(snap.outcome).toBeNull();
     expect(snap.lives).toBe(3);
+    expect(snap.waveIndex).toBe(0);
+    expect(snap.baseHp).toBe(2);
+  });
+
+  it('resetLevel() is a manual full restart, available at any time mid-run', () => {
+    const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
+    engine.endTurn(); // baseHp 2 -> 0, pendingOutcome set
+    expect(engine.getSnapshot().outcome).toBe('lifeLost');
+
+    engine.resetLevel(); // bail out without confirming the loss first
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBeNull();
+    expect(snap.lives).toBe(3); // untouched by the pending loss — a clean restart, not a life spent
     expect(snap.waveIndex).toBe(0);
     expect(snap.baseHp).toBe(2);
   });
