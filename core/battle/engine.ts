@@ -18,7 +18,6 @@ import type {
   RunOutcome,
 } from './types';
 
-const STARTING_LIVES = 3;
 /** Damage a player takes when shoved into a hazard tile — monsters shoved in die outright instead. */
 const HAZARD_DAMAGE = 3;
 
@@ -59,7 +58,6 @@ export class BattleEngine {
   private movementMax = 0;
   private movementUsed = 0;
   private waveIndex = 0;
-  private lives = STARTING_LIVES;
   private turnNumber = 1;
   /** Set by endTurn() the instant a loss/win happens; the board is frozen on that turn's result until confirmOutcome() is called. */
   private pendingOutcome: RunOutcome | null = null;
@@ -82,7 +80,7 @@ export class BattleEngine {
     this.squadCharacterIds = squadCharacterIds;
     this.baseTiles = this.computeBaseTiles(map);
     this.baseMaxHp = map.baseHp;
-    this.resetToWave(0, STARTING_LIVES);
+    this.resetRun();
   }
 
   private computeBaseTiles(map: MapDef): Vec2[] {
@@ -100,7 +98,6 @@ export class BattleEngine {
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
       monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
       waveIndex: this.waveIndex,
-      lives: this.lives,
       turnNumber: this.turnNumber,
       outcome: this.pendingOutcome,
       movement: { used: this.movementUsed, max: this.movementMax },
@@ -178,7 +175,7 @@ export class BattleEngine {
     this.history = [];
   }
 
-  /** Called at the moment a fresh player turn begins (constructor, resetToWave, and every endTurn branch that starts a new turn). */
+  /** Called at the moment a fresh player turn begins (constructor, resetRun, and every endTurn branch that starts a new turn). */
   private captureTurnStart(): void {
     this.turnStartSnapshot = {
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
@@ -221,10 +218,10 @@ export class BattleEngine {
     this.monsters = this.monsters.filter((m) => m.hp > 0);
 
     if (this.baseHp <= 0) {
-      // Freeze right here on the position that killed the base — lives/board
-      // aren't touched until the player calls confirmOutcome(), so what they
-      // see is the actual losing turn, not an already-reset fresh wave.
-      this.pendingOutcome = this.lives - 1 > 0 ? 'lifeLost' : 'gameOver';
+      // Freeze right here on the position that killed the base — the board
+      // isn't touched until the player calls confirmOutcome(), so what they
+      // see is the actual losing turn, not an already-reset wave 1.
+      this.pendingOutcome = 'defeat';
       this.currentIntents = [];
       return;
     }
@@ -255,29 +252,21 @@ export class BattleEngine {
   // ---------------------------------------------------------------------
 
   /**
-   * Applies whatever endTurn() froze (life lost / run over / victory) and
-   * moves the board past it. Player-called, on their own timing, so the
-   * losing or winning position stays on screen until they've actually seen
-   * it instead of being silently swapped out underneath the result banner.
+   * Applies whatever endTurn() froze (defeat or victory) and moves the board
+   * past it — a defeat or a win both restart the level from wave 1. Player-
+   * called, on their own timing, so the losing or winning position stays on
+   * screen until they've actually seen it, instead of being silently swapped
+   * out underneath the result banner.
    */
   confirmOutcome(): void {
-    const outcome = this.pendingOutcome;
-    if (!outcome) return;
-    this.pendingOutcome = null;
-    if (outcome === 'lifeLost') {
-      this.lives -= 1;
-      this.resetToWave(this.waveIndex, this.lives);
-    } else if (outcome === 'gameOver') {
-      this.resetToWave(0, STARTING_LIVES);
-    } else {
-      this.resetLevel();
-    }
+    if (!this.pendingOutcome) return;
+    this.resetLevel();
   }
 
-  /** Manual full restart, available any time — not gated on a loss/win. Wipes the run back to wave 0 with full lives. */
+  /** Full restart to wave 1 — the only reset this game has, whether triggered by a loss, a win, or the player bailing out manually mid-run. */
   resetLevel(): void {
     this.pendingOutcome = null;
-    this.resetToWave(0, STARTING_LIVES);
+    this.resetRun();
   }
 
   /** Reinforcement clock hit zero before the last wave: add the next wave's monsters on top of any survivors. */
@@ -290,7 +279,7 @@ export class BattleEngine {
     this.waveIndex = nextWave;
     this.turnsLeftInWave = this.map.waves[nextWave].turns;
     // Base HP is NOT reset here — it persists across waves within a run
-    // (only a life loss / run reset restores it, in resetToWave below).
+    // (only a defeat / manual reset restores it, in resetRun below).
     this.startFreshTurn();
   }
 
@@ -304,14 +293,13 @@ export class BattleEngine {
     this.captureTurnStart();
   }
 
-  /** Reset players (full HP), base HP, and respawn the given wave's monsters (fresh HP). */
-  private resetToWave(waveIndex: number, lives: number): void {
-    this.waveIndex = waveIndex;
-    this.lives = lives;
+  /** Reset players (full HP), base HP, and respawn wave 1's monsters (fresh HP) — the only reset state this game has. */
+  private resetRun(): void {
+    this.waveIndex = 0;
     this.pendingOutcome = null;
     this.history = [];
     this.baseHp = this.baseMaxHp;
-    this.turnsLeftInWave = this.map.waves[waveIndex].turns;
+    this.turnsLeftInWave = this.map.waves[0].turns;
 
     this.players = this.squadCharacterIds.map((charId, i) => {
       const def = this.registry.characters[charId];
@@ -333,14 +321,14 @@ export class BattleEngine {
     );
     this.movementUsed = 0;
 
-    this.monsters = this.spawnWave(waveIndex);
+    this.monsters = this.spawnWave(0);
     this.currentIntents = this.computeIntents();
     this.captureTurnStart();
   }
 
   /**
    * `avoidMonsters` lets a reinforcement wave steer clear of survivors still
-   * on the board; a fresh wave spawn (resetToWave) passes none, since those
+   * on the board; a fresh wave spawn (resetRun) passes none, since those
    * old monsters are being discarded, not stood beside.
    */
   private spawnWave(waveIndex: number, avoidMonsters: MonsterUnitState[] = []): MonsterUnitState[] {
