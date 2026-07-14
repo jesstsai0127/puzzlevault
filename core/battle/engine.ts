@@ -70,6 +70,8 @@ export class BattleEngine {
 
   private currentIntents: MonsterIntent[] = [];
   private history: HistoryEntry[] = [];
+  /** Snapshot at the moment a fresh player turn begins — restored wholesale by resetTurn(). */
+  private turnStartSnapshot: HistoryEntry | null = null;
   private monsterSpawnCounter = 0;
 
   constructor(map: MapDef, squadCharacterIds: string[], registry: ContentRegistry) {
@@ -157,6 +159,30 @@ export class BattleEngine {
     return true;
   }
 
+  /**
+   * Reverts every action taken so far THIS turn back to the snapshot captured
+   * the instant the turn began (see captureTurnStart()) — the single button/
+   * key players use instead of undo()'s per-step history. Base HP never
+   * changes during the player's own turn (only a resolved monster intent on
+   * endTurn can touch it), so it needn't be part of the snapshot.
+   */
+  resetTurn(): void {
+    if (!this.turnStartSnapshot) return;
+    this.players = this.turnStartSnapshot.players.map((p) => ({ ...p, position: { ...p.position } }));
+    this.monsters = this.turnStartSnapshot.monsters.map((m) => ({ ...m, position: { ...m.position } }));
+    this.movementUsed = this.turnStartSnapshot.movementUsed;
+    this.history = [];
+  }
+
+  /** Called at the moment a fresh player turn begins (constructor, resetToWave, and every endTurn branch that starts a new turn). */
+  private captureTurnStart(): void {
+    this.turnStartSnapshot = {
+      players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
+      monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
+      movementUsed: this.movementUsed,
+    };
+  }
+
   // ---------------------------------------------------------------------
   // Turn resolution
   // ---------------------------------------------------------------------
@@ -194,19 +220,23 @@ export class BattleEngine {
 
     this.monsters = this.monsters.filter((m) => m.hp > 0);
     this.turnsLeftInWave -= 1;
-    if (this.monsters.length === 0 || this.turnsLeftInWave <= 0) {
-      // Wave survived — either every monster is dead, or the clock ran out
-      // while the base is still standing. Either way, advance.
-      this.advanceWave();
+
+    const isLastWave = this.waveIndex === this.map.waves.length - 1;
+    if (isLastWave && (this.monsters.length === 0 || this.turnsLeftInWave <= 0)) {
+      // Victory: outlasted the final assault's clock, or cleared the board
+      // after the last wave arrived. The base is alive (checked above).
+      this.victory = true;
+      this.currentIntents = [];
+    } else if (!isLastWave && this.turnsLeftInWave <= 0) {
+      // Reinforce: the clock ran out before the last wave — survivors PERSIST
+      // and the next wave's monsters are ADDED on top of them, not a fresh start.
+      this.reinforce();
     } else {
-      // Every turn is a fresh round: the squad's shared movement and each
-      // living unit's own mp reset here, not only when a wave clears
-      // (advanceWave/resetToWave already reset for their own cases).
-      this.movementUsed = 0;
-      for (const p of this.players) {
-        if (p.hp > 0) p.mp = p.maxMp;
-      }
-      this.currentIntents = this.computeIntents();
+      // Continue: neither reinforcement time nor a last-wave win — including
+      // a non-final wave cleared early, which just gives a breather until the
+      // clock reinforces. Every turn is a fresh round regardless: the squad's
+      // shared movement and each living unit's own mp reset here.
+      this.startFreshTurn();
     }
   }
 
@@ -224,23 +254,28 @@ export class BattleEngine {
     }
   }
 
-  private advanceWave(): void {
+  /** Reinforcement clock hit zero before the last wave: add the next wave's monsters on top of any survivors. */
+  private reinforce(): void {
     const nextWave = this.waveIndex + 1;
-    if (nextWave >= this.map.waves.length) {
-      this.victory = true;
-      this.currentIntents = [];
-      return;
-    }
+    // Existing survivors (this.monsters) are passed as the avoid-list so
+    // reinforcements land beside them, never on top of them.
+    const reinforcements = this.spawnWave(nextWave, this.monsters);
+    this.monsters = [...this.monsters, ...reinforcements];
     this.waveIndex = nextWave;
-    this.monsters = this.spawnWave(nextWave);
     this.turnsLeftInWave = this.map.waves[nextWave].turns;
     // Base HP is NOT reset here — it persists across waves within a run
     // (only a life loss / run reset restores it, in resetToWave below).
+    this.startFreshTurn();
+  }
+
+  /** Resets the squad's shared movement and every living unit's mp, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
+  private startFreshTurn(): void {
     this.movementUsed = 0;
     for (const p of this.players) {
-      p.mp = p.maxMp;
+      if (p.hp > 0) p.mp = p.maxMp;
     }
     this.currentIntents = this.computeIntents();
+    this.captureTurnStart();
   }
 
   /** Reset players (full HP), base HP, and respawn the given wave's monsters (fresh HP). */
@@ -274,9 +309,15 @@ export class BattleEngine {
 
     this.monsters = this.spawnWave(waveIndex);
     this.currentIntents = this.computeIntents();
+    this.captureTurnStart();
   }
 
-  private spawnWave(waveIndex: number): MonsterUnitState[] {
+  /**
+   * `avoidMonsters` lets a reinforcement wave steer clear of survivors still
+   * on the board; a fresh wave spawn (resetToWave) passes none, since those
+   * old monsters are being discarded, not stood beside.
+   */
+  private spawnWave(waveIndex: number, avoidMonsters: MonsterUnitState[] = []): MonsterUnitState[] {
     const wave = this.map.waves[waveIndex];
     const claimed = new Set<string>();
     return wave.monsters.map((spawn) => {
@@ -288,7 +329,7 @@ export class BattleEngine {
         // the nearest free tile (units never share a cell).
         this.dealDamage(occupant, this.ambushDamageFor(def));
       }
-      const pos = this.findFreeSpawnTile(spawn.spawn, claimed);
+      const pos = this.findFreeSpawnTile(spawn.spawn, claimed, avoidMonsters);
       claimed.add(`${pos.x},${pos.y}`);
       this.monsterSpawnCounter += 1;
       return {
@@ -317,11 +358,12 @@ export class BattleEngine {
    * wandered there in a previous wave. BFS outward for the nearest free
    * tile instead of spawning on top of them.
    */
-  private findFreeSpawnTile(preferred: Vec2, claimed: Set<string>): Vec2 {
+  private findFreeSpawnTile(preferred: Vec2, claimed: Set<string>, avoidMonsters: MonsterUnitState[]): Vec2 {
     const isFree = (p: Vec2) =>
       this.isWalkable(p) &&
       !claimed.has(`${p.x},${p.y}`) &&
-      !this.players.some((pl) => pl.hp > 0 && equalsVec2(pl.position, p));
+      !this.players.some((pl) => pl.hp > 0 && equalsVec2(pl.position, p)) &&
+      !avoidMonsters.some((m) => m.hp > 0 && equalsVec2(m.position, p));
 
     if (isFree(preferred)) return { ...preferred };
 
@@ -369,12 +411,31 @@ export class BattleEngine {
           const dest = this.isWalkable(to) && !this.isOccupied(to) ? to : { ...m.position };
           return { kind: 'move', instanceId: m.instanceId, to: dest };
         }
-        // moveToward the aim point, up to this monster's moveRange tiles per turn.
+        // moveToward the aim point. If a hero is standing on the immediate step
+        // toward the aim (blocking the lane to the base), the monster claws
+        // through that hero instead of idling — body-blocking now costs the
+        // blocker HP. The base stays the goal; heroes are only hit when they're
+        // in the way. (See roadmap ch.4.)
+        const stepDir = stepDirectionToward(m.position, aim);
+        const ahead = add(m.position, MOVE_VECTORS[stepDir]);
+        const blocker = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, ahead));
+        const attackSkillId = blocker ? this.monsterAttackSkillId(def) : undefined;
+        if (attackSkillId) {
+          return { kind: 'skill', instanceId: m.instanceId, skillId: attackSkillId, direction: stepDir };
+        }
         return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange) };
       }
     }
     // validateMonsterDef guarantees a trailing unconditional 'always' rule.
     throw new Error(`monster ${m.instanceId}: no aiRule matched (missing fallback?)`);
+  }
+
+  /** The skill a monster attacks with: the skillId of its first useSkill rule, else its first skill. */
+  private monsterAttackSkillId(def: MonsterDef): string | undefined {
+    for (const rule of def.aiRules) {
+      if (rule.action.kind === 'useSkill') return rule.action.skillId;
+    }
+    return def.skillIds[0];
   }
 
   /**
