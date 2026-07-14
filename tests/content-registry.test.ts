@@ -12,7 +12,7 @@ describe('Phase 0 content registry', () => {
       'teng_yao',
       'yao_lang',
     ]);
-    expect(yanwuGroundMap.waves).toHaveLength(4);
+    expect(yanwuGroundMap.waves).toHaveLength(5); // 1-5 finale spec: 5 waves (see roadmap ch.4 關卡結構)
   });
 
   it('builds a playable BattleEngine from real content with a valid initial intent', () => {
