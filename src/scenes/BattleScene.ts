@@ -6,7 +6,7 @@ import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
 import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, registry } from '../../content/registry';
 import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
-import type { RunOutcome } from '../../core/battle/types';
+import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
 import { levelSelectUrl } from './levelNav';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚' };
@@ -454,6 +454,7 @@ export class BattleScene extends Phaser.Scene {
       this.armedSkillId = null;
       const res = this.engine.useSkill(this.selectedUnit, skillId, dir);
       if (!res.ok) this.cameras.main.shake(80, 0.002);
+      else this.playHitFeedback(this.engine.getLastEvents());
     } else {
       const res = this.engine.moveUnit(this.selectedUnit, dir);
       if (!res.ok) this.cameras.main.shake(80, 0.002);
@@ -506,6 +507,7 @@ export class BattleScene extends Phaser.Scene {
       this.armedSkillId = null;
       const res = this.engine.useSkill(this.selectedUnit, skillId, dir);
       if (!res.ok) this.cameras.main.shake(80, 0.002);
+      else this.playHitFeedback(this.engine.getLastEvents());
       this.render();
       return;
     }
@@ -528,6 +530,7 @@ export class BattleScene extends Phaser.Scene {
   private handleEndTurn() {
     if (this.engine.getSnapshot().outcome) return;
     this.engine.endTurn();
+    this.playHitFeedback(this.engine.getLastEvents());
     this.armedSkillId = null;
     this.render();
   }
@@ -543,6 +546,96 @@ export class BattleScene extends Phaser.Scene {
     this.engine.resetLevel();
     this.armedSkillId = null;
     this.render();
+  }
+
+  // ---------------------------------------------------------------------
+  // Hit feedback (juice) — see design/roadmap.md ch.4 打擊感.
+  // Turned engine.getLastEvents() into screen shake / floating numbers /
+  // hit flash. Deliberately does NOT touch any number's underlying scale
+  // (roadmap ch.5 decided against inflating damage values) — the punch is
+  // entirely presentation, layered on top of the same small numbers.
+  // ---------------------------------------------------------------------
+
+  private playHitFeedback(events: TurnEvent[]) {
+    if (events.length === 0) return;
+    const snap = this.engine.getSnapshot();
+    for (const event of events) {
+      const pos = this.positionForCombatTarget(event.target, snap);
+      if (!pos) continue;
+      if (event.kind === 'damage') {
+        if (event.blocked) {
+          this.spawnFloatingText(pos, i18n.t('ui.blocked'), '#4cc9f0');
+        } else if (event.amount > 0) {
+          this.spawnFloatingText(pos, `-${event.amount}`, '#ff4d4d');
+          this.flashSprite(event.target, 0xff6666);
+          // Bigger hits shake harder — capped so a multi-hit combo turn
+          // doesn't nauseate the camera. Small hits still get a token shake:
+          // "did anything happen" should never be ambiguous.
+          const intensity = Math.min(0.014, 0.0035 + event.amount * 0.0018);
+          this.cameras.main.shake(140, intensity);
+        }
+      } else if (event.kind === 'shield') {
+        this.spawnFloatingText(pos, `+${event.amount} 🛡`, '#4cc9f0');
+      } else if (event.kind === 'heal') {
+        this.spawnFloatingText(pos, `+${event.amount}`, '#70e000');
+        this.flashSprite(event.target, 0x70e000);
+      }
+      // push: the position change itself is the feedback — no extra marker.
+    }
+  }
+
+  private positionForCombatTarget(target: CombatTarget, snap: BattleSnapshot): { px: number; py: number } | null {
+    if (target.kind === 'base') {
+      const tiles = snap.baseTiles;
+      if (tiles.length === 0) return null;
+      const centers = tiles.map((t) => this.tileCenter(t.x, t.y));
+      const px = centers.reduce((s, c) => s + c.px, 0) / centers.length;
+      const py = centers.reduce((s, c) => s + c.py, 0) / centers.length;
+      return { px, py: py - TILE / 2 - 8 };
+    }
+    if (target.kind === 'player') {
+      const p = snap.players[target.unitIndex];
+      if (!p) return null;
+      const c = this.tileCenter(p.position.x, p.position.y);
+      return { px: c.px, py: c.py - TILE / 2 - 8 };
+    }
+    // Monster targets: look up against the FULL list (not just hp>0), since
+    // a damage event's own hit can be the one that just killed it — the
+    // impact should still land at its last position, not silently vanish.
+    const m = snap.monsters.find((x) => x.instanceId === target.instanceId);
+    if (!m) return null;
+    const c = this.tileCenter(m.position.x, m.position.y);
+    return { px: c.px, py: c.py - TILE / 2 - 8 };
+  }
+
+  private flashSprite(target: CombatTarget, color: number) {
+    let sprite: Phaser.GameObjects.Text | undefined;
+    if (target.kind === 'player') sprite = this.playerSprites[target.unitIndex];
+    else if (target.kind === 'monster') sprite = this.monsterSprites.get(target.instanceId);
+    if (!sprite) return; // base has no single sprite to tint — shake/number alone carry it
+    sprite.setTint(color);
+    this.time.delayedCall(120, () => sprite?.clearTint());
+  }
+
+  private spawnFloatingText(pos: { px: number; py: number }, text: string, color: string) {
+    const obj = this.add
+      .text(pos.px, pos.py, text, {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color,
+        stroke: '#000000',
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setDepth(6);
+    this.tweens.add({
+      targets: obj,
+      y: pos.py - 40,
+      alpha: 0,
+      duration: 700,
+      ease: 'Cubic.Out',
+      onComplete: () => obj.destroy(),
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -800,29 +893,9 @@ export class BattleScene extends Phaser.Scene {
     this.damagePreviewMarkers.forEach((o) => o.destroy());
     this.damagePreviewMarkers = [];
     for (const preview of outcomePending ? [] : this.engine.getAttackPreviews()) {
-      const target = preview.target;
-      let pos: { px: number; py: number } | null = null;
-      if (target.kind === 'base') {
-        const tiles = snap.baseTiles;
-        if (tiles.length > 0) {
-          const centers = tiles.map((t) => this.tileCenter(t.x, t.y));
-          const px = centers.reduce((s, c) => s + c.px, 0) / centers.length;
-          const py = centers.reduce((s, c) => s + c.py, 0) / centers.length;
-          pos = { px, py: py - TILE / 2 - 8 };
-        }
-      } else if (target.kind === 'player') {
-        const p = snap.players[target.unitIndex];
-        if (p && p.hp > 0) {
-          const c = this.tileCenter(p.position.x, p.position.y);
-          pos = { px: c.px, py: c.py - TILE / 2 - 8 };
-        }
-      } else {
-        const m = livingMonsters.find((x) => x.instanceId === target.instanceId);
-        if (m) {
-          const c = this.tileCenter(m.position.x, m.position.y);
-          pos = { px: c.px, py: c.py - TILE / 2 - 8 };
-        }
-      }
+      // Preview targets are always alive (they're resolved live off currentIntents,
+      // which only exist for hp>0 monsters), so the unfiltered lookup is safe here.
+      const pos = this.positionForCombatTarget(preview.target, snap);
       if (!pos) continue;
       const marker = this.add
         .text(pos.px, pos.py, `-${preview.damage}`, {
