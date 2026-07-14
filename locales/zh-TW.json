@@ -59,6 +59,7 @@
   "ui.last_wave_reminder": "最後一波了！不用殺光——撐到倒數結束、陣還活著就贏。",
 
   "ui.confirm": "確認",
+  "ui.blocked": "格擋！",
   "ui.reset_level": "重置關卡",
   "ui.outcome_defeat": "陣被攻破！從第一波重新開始",
   "ui.outcome_victory": "撐住了！全部波次守住",

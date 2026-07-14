@@ -59,6 +59,7 @@
   "ui.last_wave_reminder": "Final wave! You don't need to kill everything — survive the countdown with the base alive and you win.",
 
   "ui.confirm": "Confirm",
+  "ui.blocked": "Blocked!",
   "ui.reset_level": "Reset Level",
   "ui.outcome_defeat": "The base fell! Restarting from wave 1.",
   "ui.outcome_victory": "Held the line! Every wave survived.",
