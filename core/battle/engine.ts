@@ -11,13 +11,14 @@ import type { AiCondition, AiRule, AiTarget, EffectPrimitive, MapDef, MonsterDef
 import type {
   ActionResult,
   AttackPreview,
-  AttackPreviewTarget,
   BattleSnapshot,
+  CombatTarget,
   ContentRegistry,
   MonsterIntent,
   MonsterUnitState,
   PlayerUnitState,
   RunOutcome,
+  TurnEvent,
 } from './types';
 
 /** Damage a player takes when shoved into a hazard tile — monsters shoved in die outright instead. */
@@ -29,7 +30,7 @@ type ResolvedTarget =
   | { kind: 'monster'; unit: MonsterUnitState }
   | { kind: 'base' };
 
-function sameAttackPreviewTarget(a: AttackPreviewTarget, b: AttackPreviewTarget): boolean {
+function sameCombatTarget(a: CombatTarget, b: CombatTarget): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'player' && b.kind === 'player') return a.unitIndex === b.unitIndex;
   if (a.kind === 'monster' && b.kind === 'monster') return a.instanceId === b.instanceId;
@@ -74,6 +75,8 @@ export class BattleEngine {
   private turnsLeftInWave = 0;
 
   private currentIntents: MonsterIntent[] = [];
+  /** What the most recent moveUnit/useSkill/endTurn call actually did — see getLastEvents(). */
+  private pendingEvents: TurnEvent[] = [];
   private history: HistoryEntry[] = [];
   /** Snapshot at the moment a fresh player turn begins — restored wholesale by resetTurn(). */
   private turnStartSnapshot: HistoryEntry | null = null;
@@ -117,6 +120,18 @@ export class BattleEngine {
     return this.currentIntents.map((i) => ({ ...i }));
   }
 
+  /**
+   * What the most recent successful moveUnit()/useSkill()/endTurn() call
+   * actually did (damage dealt, pushes, shields, heals) — not a forecast
+   * like getAttackPreviews(), the real thing that was applied. BattleScene
+   * reads this right after each call to drive hit feedback (shake, floating
+   * numbers, flash). Cleared and repopulated at the start of every one of
+   * those three calls, so it always reflects only the most recent one.
+   */
+  getLastEvents(): TurnEvent[] {
+    return this.pendingEvents.map((e) => ({ ...e }));
+  }
+
   // ---------------------------------------------------------------------
   // Player actions
   // ---------------------------------------------------------------------
@@ -130,6 +145,7 @@ export class BattleEngine {
     const next = add(unit.position, MOVE_VECTORS[dir]);
     if (!this.isWalkable(next) || this.isOccupied(next)) return { ok: false, reason: 'blocked' };
 
+    this.pendingEvents = []; // plain movement has no combat events of its own
     this.pushHistory();
     unit.position = next;
     unit.ap -= 1;
@@ -145,6 +161,7 @@ export class BattleEngine {
     if (!skill) return { ok: false, reason: 'unknown-skill' };
     if (unit.ap < skill.mpCost) return { ok: false, reason: 'not-enough-ap' };
 
+    this.pendingEvents = [];
     this.pushHistory();
     const dirVec = MOVE_VECTORS[dir];
     for (const effect of skill.effects) {
@@ -175,6 +192,7 @@ export class BattleEngine {
     this.players = this.turnStartSnapshot.players.map((p) => ({ ...p, position: { ...p.position } }));
     this.monsters = this.turnStartSnapshot.monsters.map((m) => ({ ...m, position: { ...m.position } }));
     this.history = [];
+    this.pendingEvents = []; // whatever this turn had done is undone — nothing left to show feedback for
   }
 
   /** Called at the moment a fresh player turn begins (constructor, resetRun, and every endTurn branch that starts a new turn). */
@@ -192,6 +210,7 @@ export class BattleEngine {
   endTurn(): void {
     if (this.pendingOutcome) return; // must confirmOutcome() before playing on
 
+    this.pendingEvents = [];
     for (const intent of this.currentIntents) {
       const monster = this.monsters.find((m) => m.instanceId === intent.instanceId);
       if (!monster || monster.hp <= 0) continue; // died during the player's turn
@@ -304,6 +323,7 @@ export class BattleEngine {
     this.turnNumber = 1;
     this.pendingOutcome = null;
     this.history = [];
+    this.pendingEvents = [];
     this.baseHp = this.baseMaxHp;
     this.turnsLeftInWave = this.map.waves[0].turns;
 
@@ -342,7 +362,7 @@ export class BattleEngine {
         // Standing on a spawn tile is a risk, not a free block: the monster
         // gets one ambush hit in as it forces its way in, then still takes
         // the nearest free tile (units never share a cell).
-        this.dealDamage(occupant, this.ambushDamageFor(def));
+        this.dealDamageWithEvent(occupant, this.ambushDamageFor(def));
       }
       const pos = this.findFreeSpawnTile(spawn.spawn, claimed, avoidMonsters);
       claimed.add(`${pos.x},${pos.y}`);
@@ -470,9 +490,9 @@ export class BattleEngine {
    */
   getAttackPreviews(): AttackPreview[] {
     const previews: AttackPreview[] = [];
-    const addPreview = (target: AttackPreviewTarget, amount: number) => {
+    const addPreview = (target: CombatTarget, amount: number) => {
       if (amount <= 0) return;
-      const existing = previews.find((p) => sameAttackPreviewTarget(p.target, target));
+      const existing = previews.find((p) => sameCombatTarget(p.target, target));
       if (existing) existing.damage += amount;
       else previews.push({ target, damage: amount });
     };
@@ -484,7 +504,7 @@ export class BattleEngine {
     // endTurn() does for real: the first N hits (N = current shield) land as
     // 0, everything after that lands at full damage.
     const shieldRemaining = new Map<string, number>();
-    const targetKey = (t: AttackPreviewTarget): string =>
+    const targetKey = (t: CombatTarget): string =>
       t.kind === 'base' ? 'base' : t.kind === 'player' ? `player:${t.unitIndex}` : `monster:${t.instanceId}`;
 
     for (const intent of this.currentIntents) {
@@ -502,7 +522,7 @@ export class BattleEngine {
           addPreview({ kind: 'base' }, effect.amount); // push/shield/heal are no-ops on the base — nothing to block
           continue;
         }
-        const previewTarget: AttackPreviewTarget =
+        const previewTarget: CombatTarget =
           target.kind === 'player'
             ? { kind: 'player', unitIndex: this.players.indexOf(target.unit) }
             : { kind: 'monster', instanceId: target.unit.instanceId };
@@ -627,26 +647,43 @@ export class BattleEngine {
     if (target.kind === 'base') {
       // Only damage makes sense against the base — push/shield/heal are no-ops on it.
       if (effect.type === 'damage') {
+        const before = this.baseHp;
         this.baseHp = Math.max(0, this.baseHp - effect.amount);
+        this.pendingEvents.push({ kind: 'damage', target: { kind: 'base' }, amount: before - this.baseHp, blocked: false });
       }
       return;
     }
     const unit = target.kind === 'self' ? caster : target.unit;
+    const combatTarget = this.combatTargetFor(unit);
 
     switch (effect.type) {
       case 'damage':
-        this.dealDamage(unit, effect.amount);
+        this.dealDamageWithEvent(unit, effect.amount);
         break;
-      case 'push':
+      case 'push': {
+        const from = { ...unit.position };
         this.pushUnit(unit, caster.position, effect.amount);
+        const distance = Math.abs(unit.position.x - from.x) + Math.abs(unit.position.y - from.y);
+        if (distance > 0) this.pendingEvents.push({ kind: 'push', target: combatTarget, distance });
         break;
+      }
       case 'shield':
         unit.shield += effect.amount;
+        this.pendingEvents.push({ kind: 'shield', target: combatTarget, amount: effect.amount });
         break;
-      case 'heal':
+      case 'heal': {
+        const before = unit.hp;
         unit.hp = Math.min(unit.maxHp, unit.hp + effect.amount);
+        if (unit.hp > before) this.pendingEvents.push({ kind: 'heal', target: combatTarget, amount: unit.hp - before });
         break;
+      }
     }
+  }
+
+  /** Maps a live player/monster object to the target shape TurnEvent/AttackPreview use — instanceId for monsters, array index for players. */
+  private combatTargetFor(unit: PlayerUnitState | MonsterUnitState): CombatTarget {
+    if ('instanceId' in unit) return { kind: 'monster', instanceId: unit.instanceId };
+    return { kind: 'player', unitIndex: this.players.indexOf(unit) };
   }
 
   /** Shield fully blocks one hit (consumes one charge) rather than absorbing a damage amount. */
@@ -656,6 +693,15 @@ export class BattleEngine {
       return;
     }
     unit.hp = Math.max(0, unit.hp - amount);
+  }
+
+  /** Same as dealDamage, but also records the real outcome (HP actually lost, whether a shield ate it) for getLastEvents(). */
+  private dealDamageWithEvent(unit: PlayerUnitState | MonsterUnitState, amount: number): void {
+    const hpBefore = unit.hp;
+    const shieldBefore = unit.shield;
+    this.dealDamage(unit, amount);
+    const blocked = unit.shield < shieldBefore;
+    this.pendingEvents.push({ kind: 'damage', target: this.combatTargetFor(unit), amount: hpBefore - unit.hp, blocked });
   }
 
   private pushUnit(
@@ -680,9 +726,11 @@ export class BattleEngine {
   /** A monster shoved into a hazard tile doesn't survive; a player character takes a flat hit instead (shield can still block it). */
   private applyHazardDamage(unit: PlayerUnitState | MonsterUnitState): void {
     if ('instanceId' in unit) {
+      const hpBefore = unit.hp;
       unit.hp = 0;
+      this.pendingEvents.push({ kind: 'damage', target: this.combatTargetFor(unit), amount: hpBefore, blocked: false });
     } else {
-      this.dealDamage(unit, HAZARD_DAMAGE);
+      this.dealDamageWithEvent(unit, HAZARD_DAMAGE);
     }
   }
 
