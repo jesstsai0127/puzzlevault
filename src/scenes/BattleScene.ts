@@ -6,6 +6,7 @@ import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
 import { STARTING_SQUAD, yanwuGroundMap, registry } from '../../content/registry';
 import type { EffectType, SkillDef } from '../../core/content/types';
+import type { RunOutcome } from '../../core/battle/types';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚' };
 
@@ -106,11 +107,14 @@ export class BattleScene extends Phaser.Scene {
 
   private hudText!: Phaser.GameObjects.Text;
   private instructionText!: Phaser.GameObjects.Text;
-  private bannerText!: Phaser.GameObjects.Text;
   private skillDescText!: Phaser.GameObjects.Text;
   private skillButtons: Button[] = [];
   private endTurnButton!: Button;
   private resetTurnButton!: Button;
+  private resetLevelButton!: Button;
+  private confirmButton!: Button;
+  private outcomeOverlay!: Phaser.GameObjects.Rectangle;
+  private outcomeText!: Phaser.GameObjects.Text;
 
   private selectedUnit = 0;
   private armedSkillId: string | null = null;
@@ -186,16 +190,6 @@ export class BattleScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    this.bannerText = this.add
-      .text(boardCenterX, this.scale.height / 2, '', {
-        fontFamily: 'monospace',
-        fontSize: '32px',
-        color: '#70e000',
-        align: 'center',
-      })
-      .setOrigin(0.5)
-      .setVisible(false);
-
     this.rulesPanelText = this.add.text(this.offsetX + yanwuGroundMap.grid[0].length * TILE + 20, this.offsetY, '', {
       fontFamily: 'monospace',
       fontSize: '13px',
@@ -205,6 +199,7 @@ export class BattleScene extends Phaser.Scene {
     });
 
     this.buildBottomButtons();
+    this.buildOutcomeOverlay();
     this.setupKeyboard();
     this.render();
   }
@@ -288,6 +283,10 @@ export class BattleScene extends Phaser.Scene {
     );
     this.resetTurnButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleResetTurn());
     this.endTurnButton = this.makeButton(this.scale.width - 170, barY, 150, 40, () => this.handleEndTurn());
+    // Full manual restart — always clickable, independent of resetTurn/endTurn
+    // and of any pending outcome, so a player can bail out and start over
+    // whenever they want, not just after losing.
+    this.resetLevelButton = this.makeButton(this.scale.width - 150, 10, 130, 28, () => this.handleResetLevel());
 
     this.skillDescText = this.add.text(20, barY + 46, '', {
       fontFamily: 'monospace',
@@ -295,6 +294,40 @@ export class BattleScene extends Phaser.Scene {
       color: '#9a9aa8',
       wordWrap: { width: this.scale.width - 40 },
     });
+  }
+
+  /**
+   * Frozen-result overlay (see design/roadmap.md ch.4 "Into the Breach 式失敗回饋"):
+   * when a turn ends in a life lost / run over / win, endTurn() freezes the
+   * board on that exact position instead of resetting it — this overlay sits
+   * on top, blocks further play, and only confirmOutcome() (via the button
+   * here) advances past it.
+   */
+  private buildOutcomeOverlay() {
+    this.outcomeOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.55)
+      .setOrigin(0, 0)
+      .setDepth(10)
+      .setVisible(false);
+    this.outcomeText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2 - 40, '', {
+        fontFamily: 'monospace',
+        fontSize: '28px',
+        color: '#f1f1f6',
+        align: 'center',
+      })
+      .setOrigin(0.5)
+      .setDepth(11)
+      .setVisible(false);
+    this.confirmButton = this.makeButton(
+      this.scale.width / 2 - 90,
+      this.scale.height / 2 + 20,
+      180,
+      44,
+      () => this.handleConfirmOutcome(),
+    );
+    this.confirmButton.bg.setDepth(11).setVisible(false).disableInteractive();
+    this.confirmButton.label.setDepth(12).setVisible(false);
   }
 
   // ---------------------------------------------------------------------
@@ -346,7 +379,7 @@ export class BattleScene extends Phaser.Scene {
 
   /** Arrow keys move one step, or fire an armed skill in that direction — mirrors clicking an adjacent highlighted tile. */
   private stepFromKeyboard(dir: CardinalDir) {
-    if (this.engine.getSnapshot().victory) return;
+    if (this.engine.getSnapshot().outcome) return;
     if (this.armedSkillId) {
       const skillId = this.armedSkillId;
       this.armedSkillId = null;
@@ -388,7 +421,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleTileClick(x: number, y: number) {
-    if (this.engine.getSnapshot().victory) return;
+    if (this.engine.getSnapshot().outcome) return;
     const key = `${x},${y}`;
 
     if (this.armedSkillId) {
@@ -424,23 +457,23 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleEndTurn() {
-    if (this.engine.getSnapshot().victory) return;
-    const before = this.engine.getSnapshot();
+    if (this.engine.getSnapshot().outcome) return;
     this.engine.endTurn();
-    const after = this.engine.getSnapshot();
     this.armedSkillId = null;
-
-    if (after.lives < before.lives) {
-      this.flashBanner(i18n.t('ui.base_fell'));
-    } else if (after.victory) {
-      this.flashBanner(i18n.t('ui.defended'));
-    }
     this.render();
   }
 
-  private flashBanner(msg: string) {
-    this.bannerText.setText(msg).setVisible(true);
-    this.time.delayedCall(1400, () => this.bannerText.setVisible(false));
+  /** Advances past whatever endTurn() froze the board on — see buildOutcomeOverlay(). */
+  private handleConfirmOutcome() {
+    this.engine.confirmOutcome();
+    this.armedSkillId = null;
+    this.render();
+  }
+
+  private handleResetLevel() {
+    this.engine.resetLevel();
+    this.armedSkillId = null;
+    this.render();
   }
 
   // ---------------------------------------------------------------------
@@ -667,7 +700,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.spawnPreviewMarkers.forEach((o) => o.destroy());
     this.spawnPreviewMarkers = [];
-    if (livingMonsters.length === 0 && !snap.victory) {
+    if (livingMonsters.length === 0 && !snap.outcome) {
       const nextWave = yanwuGroundMap.waves[snap.waveIndex + 1];
       for (const spawn of nextWave?.monsters ?? []) {
         const { px, py } = this.tileCenter(spawn.spawn.x, spawn.spawn.y);
@@ -680,6 +713,7 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
+    const outcomePending = !!snap.outcome;
     this.skillButtons.forEach((btn, i) => {
       const skillId = selected?.skillIds[i];
       const skill = skillId ? registry.skills[skillId] : undefined;
@@ -691,7 +725,7 @@ export class BattleScene extends Phaser.Scene {
         ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)} 💧${skill.mpCost}`
         : '';
       const label = notEnoughMp ? `${nameWithStats}\n${i18n.t('ui.not_enough_mp')}` : nameWithStats;
-      if (!skillId || notEnoughMp || !unitAlive) {
+      if (!skillId || notEnoughMp || !unitAlive || outcomePending) {
         btn.bg.setFillStyle(COLORS.buttonBg, 0.4);
         btn.label.setText(label);
         btn.bg.disableInteractive();
@@ -704,6 +738,12 @@ export class BattleScene extends Phaser.Scene {
     });
     this.resetTurnButton.label.setText(i18n.t('ui.reset_turn'));
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
+    this.resetLevelButton.label.setText(i18n.t('ui.reset_level'));
+    [this.resetTurnButton, this.endTurnButton].forEach((btn) => {
+      btn.bg.setFillStyle(COLORS.buttonBg, outcomePending ? 0.4 : 1);
+      if (outcomePending) btn.bg.disableInteractive();
+      else btn.bg.setInteractive({ useHandCursor: true });
+    });
 
     this.skillDescText.setText(
       (selected?.skillIds ?? [])
@@ -711,7 +751,7 @@ export class BattleScene extends Phaser.Scene {
         .join('    '),
     );
 
-    if (livingMonsters.length === 0 && !snap.victory) {
+    if (livingMonsters.length === 0 && !snap.outcome) {
       this.instructionText.setText(i18n.t('ui.wave_cleared_hint'));
     } else {
       this.instructionText.setText(
@@ -741,8 +781,21 @@ export class BattleScene extends Phaser.Scene {
     ].join('\n');
     this.rulesPanelText.setText(`${RULES_PANEL_STATIC}\n\n${liveStatus}`);
 
-    if (snap.victory) {
-      this.bannerText.setText(i18n.t('ui.defended')).setVisible(true);
+    const OUTCOME_KEY: Record<RunOutcome, string> = {
+      lifeLost: 'ui.outcome_life_lost',
+      gameOver: 'ui.outcome_game_over',
+      victory: 'ui.outcome_victory',
+    };
+    this.outcomeOverlay.setVisible(outcomePending);
+    this.outcomeText.setVisible(outcomePending);
+    this.confirmButton.bg.setVisible(outcomePending);
+    this.confirmButton.label.setVisible(outcomePending);
+    if (snap.outcome) {
+      this.outcomeText.setText(i18n.t(OUTCOME_KEY[snap.outcome]));
+      this.confirmButton.label.setText(i18n.t('ui.confirm'));
+      this.confirmButton.bg.setInteractive({ useHandCursor: true });
+    } else {
+      this.confirmButton.bg.disableInteractive();
     }
   }
 }
