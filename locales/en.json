@@ -44,7 +44,6 @@
   "ui.intent_move": "will move",
   "ui.intent_attack": "will attack",
   "ui.turn": "Turn",
-  "ui.mov": "MOV",
   "ui.instruction_idle": "Click a character, then click a highlighted tile to move, or a skill button below.",
   "ui.instruction_armed": "Click a highlighted tile to aim, or click the skill again to cancel.",
   "ui.wave_cleared_hint": "Wave cleared! Reinforcements haven't arrived yet — ending the turn just advances the clock, not the wave.",
@@ -52,7 +51,7 @@
   "ui.base_hp": "Base HP",
   "ui.turns_left": "Turns left",
 
-  "ui.not_enough_mp": "Not enough Qi",
+  "ui.not_enough_ap": "Not enough AP",
   "ui.next_wave_in": "Next wave in",
   "ui.turns_suffix": "turns",
   "ui.last_wave_hold": "Final wave! Hold the line!",

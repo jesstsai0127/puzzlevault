@@ -44,7 +44,6 @@
   "ui.intent_move": "將會移動",
   "ui.intent_attack": "將會攻擊",
   "ui.turn": "回合",
-  "ui.mov": "移動",
   "ui.instruction_idle": "點選角色，再點選亮起的格子移動，或點下方的技能按鈕。",
   "ui.instruction_armed": "點選亮起的格子瞄準施放，或再點一次技能取消。",
   "ui.wave_cleared_hint": "這波已清空！但增援還沒到——按「結束回合」只會讓時鐘往下走，不會馬上進入下一波。",
@@ -52,7 +51,7 @@
   "ui.base_hp": "陣血",
   "ui.turns_left": "本波剩餘回合",
 
-  "ui.not_enough_mp": "真氣不足",
+  "ui.not_enough_ap": "行動點不足",
   "ui.next_wave_in": "下一波還有",
   "ui.turns_suffix": "回合",
   "ui.last_wave_hold": "最後一波！撐住",
