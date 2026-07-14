@@ -114,9 +114,12 @@ export class BattleScene extends Phaser.Scene {
   private confirmButton!: Button;
   private outcomeOverlay!: Phaser.GameObjects.Rectangle;
   private outcomeText!: Phaser.GameObjects.Text;
+  private lastWaveBanner!: Phaser.GameObjects.Text;
 
   private selectedUnit = 0;
   private armedSkillId: string | null = null;
+  /** Set once the reminder banner has fired for this run — see render()'s isLastWave check. */
+  private announcedLastWave = false;
   private reachable: Map<string, CardinalDir[]> = new Map();
   private targetable: Map<string, CardinalDir> = new Map();
 
@@ -148,6 +151,7 @@ export class BattleScene extends Phaser.Scene {
     this.spawnPreviewMarkers = [];
     this.selectedUnit = 0;
     this.armedSkillId = null;
+    this.announcedLastWave = false;
   }
 
   preload() {
@@ -375,6 +379,24 @@ export class BattleScene extends Phaser.Scene {
     );
     this.confirmButton.bg.setDepth(11).setVisible(false).disableInteractive();
     this.confirmButton.label.setDepth(12).setVisible(false);
+
+    // One-shot reminder the instant the final wave arrives — the static
+    // rules panel already explains "outlast the clock, no kill requirement,"
+    // but that line sits in a wall of text at the start and players don't
+    // carry it into the moment it actually matters. Doesn't block input
+    // (unlike the outcome overlay); just a toast that fades on its own.
+    this.lastWaveBanner = this.add
+      .text(this.scale.width / 2, 150, '', {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: '#ffd166',
+        align: 'center',
+        backgroundColor: '#1b1b22',
+        padding: { x: 16, y: 10 },
+      })
+      .setOrigin(0.5)
+      .setDepth(9)
+      .setVisible(false);
   }
 
   // ---------------------------------------------------------------------
@@ -877,8 +899,17 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const isLastWave = snap.waveIndex === this.map.waves.length - 1;
+    if (isLastWave && !this.announcedLastWave) {
+      this.announcedLastWave = true;
+      this.lastWaveBanner.setText(i18n.t('ui.last_wave_reminder')).setVisible(true);
+      this.time.delayedCall(3000, () => this.lastWaveBanner.setVisible(false));
+    }
+    // The last wave's countdown IS the win condition (outlast it with the
+    // base alive, no kill requirement) — hiding the number here was the bug:
+    // a player watching "撐住" with no digits has no way to see victory
+    // coming, so it reads as sudden/arbitrary instead of an outlastable clock.
     const waveCountdown = isLastWave
-      ? i18n.t('ui.last_wave_hold')
+      ? `${i18n.t('ui.last_wave_hold')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`
       : `${i18n.t('ui.next_wave_in')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`;
 
     this.hudText.setText(
