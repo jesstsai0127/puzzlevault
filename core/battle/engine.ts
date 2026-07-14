@@ -10,6 +10,8 @@ import type { CardinalDir, Vec2 } from '../geometry';
 import type { AiCondition, AiRule, AiTarget, EffectPrimitive, MapDef, MonsterDef, TargetMode } from '../content/types';
 import type {
   ActionResult,
+  AttackPreview,
+  AttackPreviewTarget,
   BattleSnapshot,
   ContentRegistry,
   MonsterIntent,
@@ -27,10 +29,16 @@ type ResolvedTarget =
   | { kind: 'monster'; unit: MonsterUnitState }
   | { kind: 'base' };
 
+function sameAttackPreviewTarget(a: AttackPreviewTarget, b: AttackPreviewTarget): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'player' && b.kind === 'player') return a.unitIndex === b.unitIndex;
+  if (a.kind === 'monster' && b.kind === 'monster') return a.instanceId === b.instanceId;
+  return a.kind === 'base' && b.kind === 'base';
+}
+
 interface HistoryEntry {
   players: PlayerUnitState[];
   monsters: MonsterUnitState[];
-  movementUsed: number;
 }
 
 /**
@@ -54,9 +62,6 @@ export class BattleEngine {
 
   private players: PlayerUnitState[] = [];
   private monsters: MonsterUnitState[] = [];
-  /** Shared squad-wide movement budget — the sum of every squad member's own actionPoints. */
-  private movementMax = 0;
-  private movementUsed = 0;
   private waveIndex = 0;
   private turnNumber = 1;
   /** Set by endTurn() the instant a loss/win happens; the board is frozen on that turn's result until confirmOutcome() is called. */
@@ -100,7 +105,6 @@ export class BattleEngine {
       waveIndex: this.waveIndex,
       turnNumber: this.turnNumber,
       outcome: this.pendingOutcome,
-      movement: { used: this.movementUsed, max: this.movementMax },
       baseHp: this.baseHp,
       baseMaxHp: this.baseMaxHp,
       baseTiles: this.baseTiles.map((t) => ({ ...t })),
@@ -121,14 +125,14 @@ export class BattleEngine {
     if (this.pendingOutcome) return { ok: false, reason: 'outcome-pending' };
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
-    if (this.movementUsed >= this.movementMax) return { ok: false, reason: 'no-movement-left' };
+    if (unit.ap < 1) return { ok: false, reason: 'not-enough-ap' };
 
     const next = add(unit.position, MOVE_VECTORS[dir]);
     if (!this.isWalkable(next) || this.isOccupied(next)) return { ok: false, reason: 'blocked' };
 
     this.pushHistory();
     unit.position = next;
-    this.movementUsed += 1;
+    unit.ap -= 1;
     return { ok: true };
   }
 
@@ -139,7 +143,7 @@ export class BattleEngine {
     if (!unit.skillIds.includes(skillId)) return { ok: false, reason: 'unknown-skill' };
     const skill = this.registry.skills[skillId];
     if (!skill) return { ok: false, reason: 'unknown-skill' };
-    if (unit.mp < skill.mpCost) return { ok: false, reason: 'not-enough-mp' };
+    if (unit.ap < skill.mpCost) return { ok: false, reason: 'not-enough-ap' };
 
     this.pushHistory();
     const dirVec = MOVE_VECTORS[dir];
@@ -147,7 +151,7 @@ export class BattleEngine {
       const target = this.resolveTarget(unit.position, dirVec, skill.range, effect.target, true);
       this.applyEffect(effect, target, unit);
     }
-    unit.mp -= skill.mpCost;
+    unit.ap -= skill.mpCost;
     return { ok: true };
   }
 
@@ -156,7 +160,6 @@ export class BattleEngine {
     if (!prev) return false;
     this.players = prev.players;
     this.monsters = prev.monsters;
-    this.movementUsed = prev.movementUsed;
     return true;
   }
 
@@ -171,7 +174,6 @@ export class BattleEngine {
     if (this.pendingOutcome || !this.turnStartSnapshot) return;
     this.players = this.turnStartSnapshot.players.map((p) => ({ ...p, position: { ...p.position } }));
     this.monsters = this.turnStartSnapshot.monsters.map((m) => ({ ...m, position: { ...m.position } }));
-    this.movementUsed = this.turnStartSnapshot.movementUsed;
     this.history = [];
   }
 
@@ -180,7 +182,6 @@ export class BattleEngine {
     this.turnStartSnapshot = {
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
       monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
-      movementUsed: this.movementUsed,
     };
   }
 
@@ -196,9 +197,12 @@ export class BattleEngine {
       if (!monster || monster.hp <= 0) continue; // died during the player's turn
 
       if (intent.kind === 'move') {
-        if (this.isWalkable(intent.to) && !this.isOccupied(intent.to)) {
-          monster.position = intent.to;
-        }
+        // Re-walk toward the telegraphed aim point using the board AS IT IS
+        // RIGHT NOW, not the destination computed back when the turn began —
+        // a monster killed earlier in this same loop no longer blocks the
+        // ones behind it. The aim itself (where it's headed) is locked in
+        // from the telegraph; only how far it actually gets is live.
+        monster.position = this.resolveMoveDestination(monster, intent);
       } else {
         const skill = this.registry.skills[intent.skillId];
         if (!skill) continue;
@@ -220,9 +224,11 @@ export class BattleEngine {
     if (this.baseHp <= 0) {
       // Freeze right here on the position that killed the base — the board
       // isn't touched until the player calls confirmOutcome(), so what they
-      // see is the actual losing turn, not an already-reset wave 1.
+      // see is the actual losing turn, not an already-reset wave 1. Deliberately
+      // NOT clearing currentIntents: the frozen screen should still show which
+      // monsters' telegraphed attacks just landed, so the player can review
+      // exactly what killed them instead of staring at a blank board.
       this.pendingOutcome = 'defeat';
-      this.currentIntents = [];
       return;
     }
 
@@ -283,11 +289,10 @@ export class BattleEngine {
     this.startFreshTurn();
   }
 
-  /** Resets the squad's shared movement and every living unit's mp, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
+  /** Refills every living unit's own AP, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
   private startFreshTurn(): void {
-    this.movementUsed = 0;
     for (const p of this.players) {
-      if (p.hp > 0) p.mp = p.maxMp;
+      if (p.hp > 0) p.ap = p.maxAp;
     }
     this.currentIntents = this.computeIntents();
     this.captureTurnStart();
@@ -296,6 +301,7 @@ export class BattleEngine {
   /** Reset players (full HP), base HP, and respawn wave 1's monsters (fresh HP) — the only reset state this game has. */
   private resetRun(): void {
     this.waveIndex = 0;
+    this.turnNumber = 1;
     this.pendingOutcome = null;
     this.history = [];
     this.baseHp = this.baseMaxHp;
@@ -310,16 +316,11 @@ export class BattleEngine {
         hp: def.maxHp,
         maxHp: def.maxHp,
         shield: 0,
-        mp: def.maxMp,
-        maxMp: def.maxMp,
+        ap: def.actionPoints,
+        maxAp: def.actionPoints,
         skillIds: def.skillIds,
       };
     });
-    this.movementMax = this.squadCharacterIds.reduce(
-      (sum, charId) => sum + this.registry.characters[charId].actionPoints,
-      0,
-    );
-    this.movementUsed = 0;
 
     this.monsters = this.spawnWave(0);
     this.currentIntents = this.computeIntents();
@@ -418,12 +419,12 @@ export class BattleEngine {
           return { kind: 'skill', instanceId: m.instanceId, skillId: rule.action.skillId, direction: dir };
         }
         const aim = this.resolveAimPoint(rule.action.target, m.position);
-        if (!aim) return { kind: 'move', instanceId: m.instanceId, to: { ...m.position } };
+        if (!aim) return { kind: 'move', instanceId: m.instanceId, to: { ...m.position }, aim: null };
         if (rule.action.kind === 'moveAway') {
           const dir = oppositeDir(stepDirectionToward(m.position, aim));
           const to = add(m.position, MOVE_VECTORS[dir]);
           const dest = this.isWalkable(to) && !this.isOccupied(to) ? to : { ...m.position };
-          return { kind: 'move', instanceId: m.instanceId, to: dest };
+          return { kind: 'move', instanceId: m.instanceId, to: dest, aim, away: true };
         }
         // moveToward the aim point. If a hero is standing on the immediate step
         // toward the aim (blocking the lane to the base), the monster claws
@@ -437,11 +438,85 @@ export class BattleEngine {
         if (attackSkillId) {
           return { kind: 'skill', instanceId: m.instanceId, skillId: attackSkillId, direction: stepDir };
         }
-        return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange) };
+        return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange), aim };
       }
     }
     // validateMonsterDef guarantees a trailing unconditional 'always' rule.
     throw new Error(`monster ${m.instanceId}: no aiRule matched (missing fallback?)`);
+  }
+
+  /**
+   * Re-resolves a move intent's actual destination against the board AS IT
+   * IS at resolution time (see endTurn()) — the telegraphed `aim`/`away` are
+   * fixed, but a monster killed earlier in the same endTurn no longer blocks
+   * the tile behind it, so whoever's left can now walk into the gap.
+   */
+  private resolveMoveDestination(m: MonsterUnitState, intent: Extract<MonsterIntent, { kind: 'move' }>): Vec2 {
+    if (!intent.aim) return { ...m.position };
+    if (intent.away) {
+      const dir = oppositeDir(stepDirectionToward(m.position, intent.aim));
+      const to = add(m.position, MOVE_VECTORS[dir]);
+      return this.isWalkable(to) && !this.isOccupied(to) ? to : { ...m.position };
+    }
+    const def = this.registry.monsters[m.monsterId];
+    return this.multiStepToward(m.position, intent.aim, def.moveRange);
+  }
+
+  /**
+   * Aggregates every currently-telegraphed skill intent's damage by target,
+   * resolved against the board RIGHT NOW — so a player repositioning mid-turn
+   * to dodge a monster's line of fire sees the preview total update live,
+   * same spirit as the intent arrows themselves (full information, no hidden math).
+   */
+  getAttackPreviews(): AttackPreview[] {
+    const previews: AttackPreview[] = [];
+    const addPreview = (target: AttackPreviewTarget, amount: number) => {
+      if (amount <= 0) return;
+      const existing = previews.find((p) => sameAttackPreviewTarget(p.target, target));
+      if (existing) existing.damage += amount;
+      else previews.push({ target, damage: amount });
+    };
+
+    // A shield fully blocks one hit rather than reducing its amount (see
+    // dealDamage). To preview the REAL total — not a number that lies about
+    // what a shielded hero is actually about to lose — walk each target's
+    // shield charges down in the same order intents will resolve in, same as
+    // endTurn() does for real: the first N hits (N = current shield) land as
+    // 0, everything after that lands at full damage.
+    const shieldRemaining = new Map<string, number>();
+    const targetKey = (t: AttackPreviewTarget): string =>
+      t.kind === 'base' ? 'base' : t.kind === 'player' ? `player:${t.unitIndex}` : `monster:${t.instanceId}`;
+
+    for (const intent of this.currentIntents) {
+      if (intent.kind !== 'skill') continue;
+      const monster = this.monsters.find((m) => m.instanceId === intent.instanceId && m.hp > 0);
+      if (!monster) continue;
+      const skill = this.registry.skills[intent.skillId];
+      if (!skill) continue;
+      const dirVec = MOVE_VECTORS[intent.direction];
+      for (const effect of skill.effects) {
+        if (effect.type !== 'damage') continue;
+        const target = this.resolveTarget(monster.position, dirVec, skill.range, effect.target, false);
+        if (!target || target.kind === 'self') continue; // a monster hitting itself isn't a player-facing threat preview
+        if (target.kind === 'base') {
+          addPreview({ kind: 'base' }, effect.amount); // push/shield/heal are no-ops on the base — nothing to block
+          continue;
+        }
+        const previewTarget: AttackPreviewTarget =
+          target.kind === 'player'
+            ? { kind: 'player', unitIndex: this.players.indexOf(target.unit) }
+            : { kind: 'monster', instanceId: target.unit.instanceId };
+        const key = targetKey(previewTarget);
+        if (!shieldRemaining.has(key)) shieldRemaining.set(key, target.unit.shield);
+        const remaining = shieldRemaining.get(key)!;
+        if (remaining > 0) {
+          shieldRemaining.set(key, remaining - 1); // this hit is fully blocked, consumes a charge
+          continue;
+        }
+        addPreview(previewTarget, effect.amount);
+      }
+    }
+    return previews;
   }
 
   /** The skill a monster attacks with: the skillId of its first useSkill rule, else its first skill. */
@@ -652,7 +727,6 @@ export class BattleEngine {
     this.history.push({
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
       monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
-      movementUsed: this.movementUsed,
     });
   }
 }
