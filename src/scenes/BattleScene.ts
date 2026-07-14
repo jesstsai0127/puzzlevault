@@ -4,9 +4,10 @@ import type { CardinalDir } from '../../core/geometry';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { STARTING_SQUAD, yanwuGroundMap, registry } from '../../content/registry';
-import type { EffectType, SkillDef } from '../../core/content/types';
+import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, registry } from '../../content/registry';
+import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { RunOutcome } from '../../core/battle/types';
+import { levelSelectUrl } from './levelNav';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚' };
 
@@ -81,6 +82,7 @@ interface Button {
 
 export class BattleScene extends Phaser.Scene {
   private engine!: BattleEngine;
+  private map!: MapDef;
   private offsetX = 0;
   private offsetY = 0;
 
@@ -108,6 +110,7 @@ export class BattleScene extends Phaser.Scene {
   private endTurnButton!: Button;
   private resetTurnButton!: Button;
   private resetLevelButton!: Button;
+  private backToLevelSelectButton!: Button;
   private confirmButton!: Button;
   private outcomeOverlay!: Phaser.GameObjects.Rectangle;
   private outcomeText!: Phaser.GameObjects.Text;
@@ -121,6 +124,32 @@ export class BattleScene extends Phaser.Scene {
     super('BattleScene');
   }
 
+  /**
+   * Phaser scene-data hook — receives { mapId } from main.ts's boot-time
+   * game.scene.start('BattleScene', { mapId }) when the URL names a level
+   * (?map=...). Switching levels goes through a real page navigation (see
+   * levelNav.ts), not a same-page scene.start() round-trip, so this only
+   * ever runs once per page load in normal use — but the caches below are
+   * still reset defensively: Phaser CAN reuse a scene instance across
+   * restarts, and if that ever happens again, a fresh engine's monster
+   * instanceIds collide with the previous run's (the spawn counter restarts
+   * at 0 each time), so a stale map-keyed cache entry would get silently
+   * reused instead of a fresh game object being created.
+   */
+  init(data: { mapId?: string }) {
+    this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
+    this.tileHighlights = [];
+    this.monsterSprites = new Map();
+    this.monsterHpBars = new Map();
+    this.monsterHpTexts = new Map();
+    this.intentMarkers = [];
+    this.reachableCostMarkers = [];
+    this.damagePreviewMarkers = [];
+    this.spawnPreviewMarkers = [];
+    this.selectedUnit = 0;
+    this.armedSkillId = null;
+  }
+
   preload() {
     // Phase 1 renders every actor as a text glyph (see HERO_GLYPHS/MONSTER_GLYPH
     // above) instead of an image sprite — nothing to preload yet.
@@ -128,7 +157,7 @@ export class BattleScene extends Phaser.Scene {
 
   create() {
     this.cameras.main.setBackgroundColor(COLORS.bg);
-    this.engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
+    this.engine = new BattleEngine(this.map, STARTING_SQUAD, registry);
 
     // Left-align the board so the right side has a wide column for the rules panel.
     this.offsetX = 40;
@@ -187,7 +216,7 @@ export class BattleScene extends Phaser.Scene {
       color: '#f1f1f6',
     });
 
-    const boardCenterX = this.offsetX + (yanwuGroundMap.grid[0].length * TILE) / 2;
+    const boardCenterX = this.offsetX + (this.map.grid[0].length * TILE) / 2;
     this.instructionText = this.add
       .text(boardCenterX, this.offsetY - 34, '', {
         fontFamily: 'monospace',
@@ -197,7 +226,7 @@ export class BattleScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    this.rulesPanelText = this.add.text(this.offsetX + yanwuGroundMap.grid[0].length * TILE + 20, this.offsetY, '', {
+    this.rulesPanelText = this.add.text(this.offsetX + this.map.grid[0].length * TILE + 20, this.offsetY, '', {
       fontFamily: 'monospace',
       fontSize: '13px',
       color: '#c9c9d6',
@@ -205,7 +234,7 @@ export class BattleScene extends Phaser.Scene {
       // breaks on whitespace by default, and Chinese sentences have none —
       // without it, a long line silently overflows the box width instead of
       // wrapping, which reads as "text got clipped" at the panel's right edge.
-      wordWrap: { width: this.scale.width - (this.offsetX + yanwuGroundMap.grid[0].length * TILE) - 40, useAdvancedWrap: true },
+      wordWrap: { width: this.scale.width - (this.offsetX + this.map.grid[0].length * TILE) - 40, useAdvancedWrap: true },
       lineSpacing: 4,
     });
 
@@ -221,7 +250,7 @@ export class BattleScene extends Phaser.Scene {
 
   private drawStaticTiles() {
     const baseTileCenters: Array<{ px: number; py: number }> = [];
-    yanwuGroundMap.grid.forEach((row, y) => {
+    this.map.grid.forEach((row, y) => {
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
         const color = ch === '#' ? COLORS.wall : ch === '~' ? COLORS.hazard : ch === 'B' ? COLORS.base : COLORS.floor;
@@ -253,7 +282,7 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private buildTileHighlights() {
-    yanwuGroundMap.grid.forEach((row, y) => {
+    this.map.grid.forEach((row, y) => {
       const rowArr: Phaser.GameObjects.Rectangle[] = [];
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
@@ -297,7 +326,14 @@ export class BattleScene extends Phaser.Scene {
     // Full manual restart — always clickable, independent of resetTurn/endTurn
     // and of any pending outcome, so a player can bail out and start over
     // whenever they want, not just after losing.
-    this.resetLevelButton = this.makeButton(this.scale.width - 150, 10, 130, 28, () => this.handleResetLevel());
+    this.resetLevelButton = this.makeButton(this.scale.width - 290, 10, 130, 28, () => this.handleResetLevel());
+    // Lets a playtester hop back to the level list — see LevelSelectScene /
+    // design/roadmap.md ch.5. Goes through a real navigation (see levelNav.ts)
+    // rather than scene.start(), which stopped routing pointer events after a
+    // second start()/create() cycle in testing.
+    this.backToLevelSelectButton = this.makeButton(this.scale.width - 150, 10, 130, 28, () => {
+      window.location.href = levelSelectUrl();
+    });
 
     this.skillDescText = this.add.text(20, barY + 46, '', {
       fontFamily: 'monospace',
@@ -493,13 +529,13 @@ export class BattleScene extends Phaser.Scene {
 
   /** A real wall or a base tile blocks movement / a skill's line of sight — a shot flies over a hazard tile. */
   private isWallAt(x: number, y: number): boolean {
-    const row = yanwuGroundMap.grid[y];
+    const row = this.map.grid[y];
     if (!row || x < 0 || x >= row.length) return true;
     return row[x] === '#' || row[x] === 'B';
   }
 
   private isHazardAt(x: number, y: number): boolean {
-    const row = yanwuGroundMap.grid[y];
+    const row = this.map.grid[y];
     if (!row || x < 0 || x >= row.length) return false;
     return row[x] === '~';
   }
@@ -586,7 +622,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.reachableCostMarkers.forEach((o) => o.destroy());
     this.reachableCostMarkers = [];
-    yanwuGroundMap.grid.forEach((row, y) => {
+    this.map.grid.forEach((row, y) => {
       row.split('').forEach((_ch, x) => {
         const rect = this.tileHighlights[y][x];
         const key = `${x},${y}`;
@@ -782,7 +818,7 @@ export class BattleScene extends Phaser.Scene {
     this.spawnPreviewMarkers.forEach((o) => o.destroy());
     this.spawnPreviewMarkers = [];
     if (livingMonsters.length === 0 && !snap.outcome) {
-      const nextWave = yanwuGroundMap.waves[snap.waveIndex + 1];
+      const nextWave = this.map.waves[snap.waveIndex + 1];
       for (const spawn of nextWave?.monsters ?? []) {
         const { px, py } = this.tileCenter(spawn.spawn.x, spawn.spawn.y);
         const ghost = this.add
@@ -819,6 +855,7 @@ export class BattleScene extends Phaser.Scene {
     this.resetTurnButton.label.setText(i18n.t('ui.reset_turn'));
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
     this.resetLevelButton.label.setText(i18n.t('ui.reset_level'));
+    this.backToLevelSelectButton.label.setText(i18n.t('ui.select_level'));
     [this.resetTurnButton, this.endTurnButton].forEach((btn) => {
       btn.bg.setFillStyle(COLORS.buttonBg, outcomePending ? 0.4 : 1);
       if (outcomePending) btn.bg.disableInteractive();
@@ -839,13 +876,13 @@ export class BattleScene extends Phaser.Scene {
       );
     }
 
-    const isLastWave = snap.waveIndex === yanwuGroundMap.waves.length - 1;
+    const isLastWave = snap.waveIndex === this.map.waves.length - 1;
     const waveCountdown = isLastWave
       ? i18n.t('ui.last_wave_hold')
       : `${i18n.t('ui.next_wave_in')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`;
 
     this.hudText.setText(
-      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}`,
+      `${i18n.t(this.map.nameKey)}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
@@ -853,7 +890,7 @@ export class BattleScene extends Phaser.Scene {
     const selectedAp = selected ? `${selected.ap}/${selected.maxAp}` : '-';
     const liveStatus = [
       `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
-      `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}`,
+      `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}`,
       waveCountdown,
       `AP ${selectedAp}`,
     ].join('\n');
