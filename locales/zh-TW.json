@@ -56,6 +56,7 @@
   "ui.next_wave_in": "下一波還有",
   "ui.turns_suffix": "回合",
   "ui.last_wave_hold": "最後一波！撐住",
+  "ui.last_wave_reminder": "最後一波了！不用殺光——撐到倒數結束、陣還活著就贏。",
 
   "ui.confirm": "確認",
   "ui.reset_level": "重置關卡",

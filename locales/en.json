@@ -55,7 +55,8 @@
   "ui.not_enough_ap": "Not enough AP",
   "ui.next_wave_in": "Next wave in",
   "ui.turns_suffix": "turns",
-  "ui.last_wave_hold": "Final wave! Hold the line!",
+  "ui.last_wave_hold": "Final wave! Hold for",
+  "ui.last_wave_reminder": "Final wave! You don't need to kill everything — survive the countdown with the base alive and you win.",
 
   "ui.confirm": "Confirm",
   "ui.reset_level": "Reset Level",
