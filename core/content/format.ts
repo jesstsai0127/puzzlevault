@@ -71,7 +71,6 @@ export function validateCharacterDef(def: CharacterDef): string[] {
   if (!def.spriteRef) problems.push('missing spriteRef');
   if (!(def.maxHp > 0)) problems.push('maxHp must be > 0');
   if (!(def.actionPoints > 0)) problems.push('actionPoints must be > 0');
-  if (!(def.maxMp > 0)) problems.push('maxMp must be > 0');
   if (!Array.isArray(def.skillIds) || def.skillIds.length === 0) problems.push('character has no skills');
   return problems;
 }
