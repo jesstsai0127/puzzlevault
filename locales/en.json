@@ -29,6 +29,7 @@
   "monster.yao_lang.name": "Demon Wolf",
 
   "map.yanwu_ground.name": "Sparring Grounds",
+  "map.demo2_pincer.name": "Sparring Grounds II - Pincer",
 
   "ui.hp": "HP",
   "ui.wave": "Wave",
@@ -59,5 +60,7 @@
   "ui.confirm": "Confirm",
   "ui.reset_level": "Reset Level",
   "ui.outcome_defeat": "The base fell! Restarting from wave 1.",
-  "ui.outcome_victory": "Held the line! Every wave survived."
+  "ui.outcome_victory": "Held the line! Every wave survived.",
+
+  "ui.select_level": "Select Level"
 }

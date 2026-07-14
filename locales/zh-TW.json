@@ -29,6 +29,7 @@
   "monster.yao_lang.name": "妖狼",
 
   "map.yanwu_ground.name": "演武場",
+  "map.demo2_pincer.name": "演武場二・雙面夾擊",
 
   "ui.hp": "生命值",
   "ui.wave": "波次",
@@ -59,5 +60,7 @@
   "ui.confirm": "確認",
   "ui.reset_level": "重置關卡",
   "ui.outcome_defeat": "陣被攻破！從第一波重新開始",
-  "ui.outcome_victory": "撐住了！全部波次守住"
+  "ui.outcome_victory": "撐住了！全部波次守住",
+
+  "ui.select_level": "選擇關卡"
 }
