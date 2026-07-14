@@ -13,9 +13,9 @@ export interface PlayerUnitState {
   hp: number;
   maxHp: number;
   shield: number;
-  /** This character's own mana — skills draw from it, independent of the squad's shared movement points. */
-  mp: number;
-  maxMp: number;
+  /** This character's own per-turn action points — moving and casting skills both draw from this one pool. */
+  ap: number;
+  maxAp: number;
   skillIds: string[];
 }
 
@@ -29,8 +29,15 @@ export interface MonsterUnitState {
 }
 
 export type MonsterIntent =
-  | { kind: 'move'; instanceId: string; to: Vec2 }
+  | { kind: 'move'; instanceId: string; to: Vec2; aim: Vec2 | null; away?: boolean }
   | { kind: 'skill'; instanceId: string; skillId: string; direction: CardinalDir };
+
+/** A skill intent's damage, aggregated per target so a target locked by multiple monsters shows one combined preview number. */
+export type AttackPreviewTarget = { kind: 'base' } | { kind: 'player'; unitIndex: number } | { kind: 'monster'; instanceId: string };
+export interface AttackPreview {
+  target: AttackPreviewTarget;
+  damage: number;
+}
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
 
@@ -49,8 +56,6 @@ export interface BattleSnapshot {
   turnNumber: number;
   /** Set the instant a turn resolves into a loss/win; null while play continues. See RunOutcome. */
   outcome: RunOutcome | null;
-  /** Shared squad-wide movement budget — either player can spend from it, resets every turn. */
-  movement: { used: number; max: number };
   /** Shared HP pool for the base ("陣") — reaching 0 is defeat and restarts the level from wave 1. */
   baseHp: number;
   baseMaxHp: number;
