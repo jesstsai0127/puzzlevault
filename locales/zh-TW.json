@@ -51,12 +51,16 @@
   "ui.wave_cleared_hint": "這波已清空！但增援還沒到——按「結束回合」只會讓時鐘往下走，不會馬上進入下一波。",
 
   "ui.base_hp": "陣血",
-  "ui.defended": "守住了！",
-  "ui.base_fell": "陣被攻破",
   "ui.turns_left": "本波剩餘回合",
 
   "ui.not_enough_mp": "真氣不足",
   "ui.next_wave_in": "下一波還有",
   "ui.turns_suffix": "回合",
-  "ui.last_wave_hold": "最後一波！撐住"
+  "ui.last_wave_hold": "最後一波！撐住",
+
+  "ui.confirm": "確認",
+  "ui.reset_level": "重置關卡",
+  "ui.outcome_life_lost": "陣被攻破！扣一條命，這一波重新開始",
+  "ui.outcome_game_over": "生命數用完了，從第一波重新開始",
+  "ui.outcome_victory": "撐住了！全部波次守住"
 }

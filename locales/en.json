@@ -51,12 +51,16 @@
   "ui.wave_cleared_hint": "Wave cleared! Reinforcements haven't arrived yet — ending the turn just advances the clock, not the wave.",
 
   "ui.base_hp": "Base HP",
-  "ui.defended": "Defended!",
-  "ui.base_fell": "The base fell",
   "ui.turns_left": "Turns left",
 
   "ui.not_enough_mp": "Not enough Qi",
   "ui.next_wave_in": "Next wave in",
   "ui.turns_suffix": "turns",
-  "ui.last_wave_hold": "Final wave! Hold the line!"
+  "ui.last_wave_hold": "Final wave! Hold the line!",
+
+  "ui.confirm": "Confirm",
+  "ui.reset_level": "Reset Level",
+  "ui.outcome_life_lost": "The base fell! Lost a life — this wave restarts.",
+  "ui.outcome_game_over": "Out of lives — restarting from wave 1.",
+  "ui.outcome_victory": "Held the line! Every wave survived."
 }
