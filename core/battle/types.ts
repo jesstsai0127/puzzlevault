@@ -34,13 +34,21 @@ export type MonsterIntent =
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
 
+/**
+ * A turn just ended in a life lost, the run running out of lives entirely, or
+ * a win — the board freezes on the position that caused it until the player
+ * calls confirmOutcome(), so they see exactly what happened before it resets.
+ */
+export type RunOutcome = 'lifeLost' | 'gameOver' | 'victory';
+
 export interface BattleSnapshot {
   players: PlayerUnitState[];
   monsters: MonsterUnitState[];
   waveIndex: number;
   lives: number;
   turnNumber: number;
-  victory: boolean;
+  /** Set the instant a turn resolves into a loss/win; null while play continues. See RunOutcome. */
+  outcome: RunOutcome | null;
   /** Shared squad-wide movement budget — either player can spend from it, resets every turn. */
   movement: { used: number; max: number };
   /** Shared HP pool for the base ("陣") — reaching 0 costs a life and resets the wave. */
