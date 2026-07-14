@@ -15,13 +15,6 @@ function effectSummary(skill: SkillDef): string {
   return skill.effects.map((e) => `${EFFECT_ICON[e.type]}${e.amount}`).join(' ');
 }
 
-/** A monster's threat at a glance — its first skill's numeric effects, shown whether or not it's currently telegraphed. */
-function monsterAttackSummary(monsterId: string): string {
-  const def = registry.monsters[monsterId];
-  const skill = registry.skills[def?.skillIds[0]];
-  return skill ? effectSummary(skill) : '';
-}
-
 const TILE = 80;
 
 const COLORS = {
@@ -61,9 +54,11 @@ const RULES_PANEL_STATIC = [
   '',
   '俠客擋在妖物往陣的路上，妖物會改打俠客——用身體擋路要付出血量代價，要衡量值不值得。',
   '',
-  '移動點（上方『移動 X/Y』）：兩名俠客共用，走一步花 1 點。',
+  '行動點 💧：每位俠客自己的一本帳，每回合 4 點——走一步花 1 點、技能費用標在按鈕上的『💧數字』，同一池點數，不分開算。',
   '',
-  '真氣 💧：每個俠客自己的，施展技能花按鈕上標的『💧數字』，跟移動點分開算；真氣用完就放不出那招，但還能移動。',
+  '行動點用完的俠客圖示會變暗，表示這回合他沒事可做了。',
+  '',
+  '鍵盤：方向鍵移動／瞄準、1・2 選技能、Q 換人、Z 重置本回合、Enter 結束回合。',
   '',
   '不用殺光——只要撐過每一波、陣還活著就贏。',
 ].join('\n');
@@ -93,13 +88,14 @@ export class BattleScene extends Phaser.Scene {
   private playerSprites: Phaser.GameObjects.Text[] = [];
   private playerHpBars: Phaser.GameObjects.Rectangle[] = [];
   private playerHpTexts: Phaser.GameObjects.Text[] = [];
-  private playerMpTexts: Phaser.GameObjects.Text[] = [];
+  private playerApTexts: Phaser.GameObjects.Text[] = [];
   private playerShieldIcons: Phaser.GameObjects.Arc[] = [];
   private monsterSprites: Map<string, Phaser.GameObjects.Text> = new Map();
   private monsterHpBars: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private monsterHpTexts: Map<string, Phaser.GameObjects.Text> = new Map();
-  private monsterAtkTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private intentMarkers: Phaser.GameObjects.GameObject[] = [];
+  private reachableCostMarkers: Phaser.GameObjects.GameObject[] = [];
+  private damagePreviewMarkers: Phaser.GameObjects.GameObject[] = [];
   private spawnPreviewMarkers: Phaser.GameObjects.GameObject[] = [];
   private selectionRing!: Phaser.GameObjects.Rectangle;
   private baseHpText?: Phaser.GameObjects.Text;
@@ -154,7 +150,18 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(2)
         .setInteractive({ useHandCursor: true });
-      sprite.on('pointerdown', () => this.selectUnit(i));
+      sprite.on('pointerdown', () => {
+        // A self-target skill's only valid tile IS the caster's own square,
+        // which the sprite sits on top of — without this, clicking it while
+        // armed just re-selects the unit and silently disarms the skill
+        // instead of casting it (self-cast had no other way to click "yes").
+        if (this.armedSkillId && i === this.selectedUnit) {
+          const pos = this.engine.getSnapshot().players[i].position;
+          this.handleTileClick(pos.x, pos.y);
+        } else {
+          this.selectUnit(i);
+        }
+      });
       return sprite;
     });
     this.playerHpBars = squad.map(() => this.add.rectangle(0, 0, TILE - 20, 6, COLORS.hpBarFill).setDepth(2));
@@ -164,7 +171,7 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(3),
     );
-    this.playerMpTexts = squad.map(() =>
+    this.playerApTexts = squad.map(() =>
       this.add
         .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#4cc9f0', stroke: '#000000', strokeThickness: 3 })
         .setOrigin(0.5)
@@ -194,7 +201,11 @@ export class BattleScene extends Phaser.Scene {
       fontFamily: 'monospace',
       fontSize: '13px',
       color: '#c9c9d6',
-      wordWrap: { width: this.scale.width - (this.offsetX + yanwuGroundMap.grid[0].length * TILE) - 40 },
+      // useAdvancedWrap is required for CJK text: Phaser's wordWrap only ever
+      // breaks on whitespace by default, and Chinese sentences have none —
+      // without it, a long line silently overflows the box width instead of
+      // wrapping, which reads as "text got clipped" at the panel's right edge.
+      wordWrap: { width: this.scale.width - (this.offsetX + yanwuGroundMap.grid[0].length * TILE) - 40, useAdvancedWrap: true },
       lineSpacing: 4,
     });
 
@@ -292,7 +303,7 @@ export class BattleScene extends Phaser.Scene {
       fontFamily: 'monospace',
       fontSize: '13px',
       color: '#9a9aa8',
-      wordWrap: { width: this.scale.width - 40 },
+      wordWrap: { width: this.scale.width - 40, useAdvancedWrap: true },
     });
   }
 
@@ -409,7 +420,7 @@ export class BattleScene extends Phaser.Scene {
     if (!unit || unit.hp <= 0) return;
     const skillId = unit.skillIds[skillIndex];
     const skill = skillId ? registry.skills[skillId] : undefined;
-    if (!skillId || !skill || unit.mp < skill.mpCost) return;
+    if (!skillId || !skill || unit.ap < skill.mpCost) return;
     this.armedSkillId = this.armedSkillId === skillId ? null : skillId;
     this.render();
   }
@@ -507,7 +518,7 @@ export class BattleScene extends Phaser.Scene {
     const snap = this.engine.getSnapshot();
     const unit = snap.players[unitIndex];
     if (!unit || unit.hp <= 0) return result;
-    const budget = snap.movement.max - snap.movement.used;
+    const budget = unit.ap;
     if (budget <= 0) return result;
 
     const start = unit.position;
@@ -568,10 +579,13 @@ export class BattleScene extends Phaser.Scene {
   private render() {
     const snap = this.engine.getSnapshot();
     const selected = snap.players[this.selectedUnit];
+    const outcomePending = !!snap.outcome;
 
     this.reachable = this.armedSkillId ? new Map() : this.computeReachable(this.selectedUnit);
     this.targetable = this.armedSkillId ? this.computeTargetable(this.selectedUnit, this.armedSkillId) : new Map();
 
+    this.reachableCostMarkers.forEach((o) => o.destroy());
+    this.reachableCostMarkers = [];
     yanwuGroundMap.grid.forEach((row, y) => {
       row.split('').forEach((_ch, x) => {
         const rect = this.tileHighlights[y][x];
@@ -580,6 +594,22 @@ export class BattleScene extends Phaser.Scene {
           rect.setFillStyle(COLORS.targetable, 0.35);
         } else if (this.reachable.has(key)) {
           rect.setFillStyle(COLORS.reachable, 0.25);
+          // Steps to get here == AP it'll cost — the highlight alone answers
+          // "can I get there," not "what will it cost me," and AP now pays
+          // for skills too so spending it carelessly on distance bites later.
+          const steps = this.reachable.get(key)!.length;
+          const { px, py } = this.tileCenter(x, y);
+          const cost = this.add
+            .text(px, py, `${steps}`, {
+              fontFamily: 'monospace',
+              fontSize: '13px',
+              color: '#4cc9f0',
+              stroke: '#000000',
+              strokeThickness: 3,
+            })
+            .setOrigin(0.5)
+            .setDepth(1);
+          this.reachableCostMarkers.push(cost);
         } else {
           rect.setFillStyle(0xffffff, 0);
         }
@@ -588,15 +618,20 @@ export class BattleScene extends Phaser.Scene {
 
     snap.players.forEach((p, i) => {
       const { px, py } = this.tileCenter(p.position.x, p.position.y);
-      this.playerSprites[i].setPosition(px, py).setAlpha(p.hp > 0 ? 1 : 0.25);
+      // Dead → 0.25 (barely there). Alive but out of AP → 0.5 ("nothing left
+      // to do this turn" — AP now pays for both movement and skills, so
+      // ap===0 means truly nothing, not just "out of one of two resources").
+      // Alive with AP left → fully lit.
+      const alpha = p.hp <= 0 ? 0.25 : p.ap === 0 ? 0.5 : 1;
+      this.playerSprites[i].setPosition(px, py).setAlpha(alpha);
       const bar = this.playerHpBars[i];
       const ratio = Math.max(0, p.hp / p.maxHp);
       bar.setPosition(px, py + TILE / 2 - 10).setSize((TILE - 20) * ratio, 6);
       bar.setFillStyle(ratio > 0.34 ? COLORS.hpBarFill : COLORS.hpBarFillLow);
       this.playerHpTexts[i].setPosition(px, py + TILE / 2 - 20).setText(`${Math.max(0, p.hp)}/${p.maxHp}`);
-      this.playerMpTexts[i]
+      this.playerApTexts[i]
         .setPosition(px - TILE / 2 + 14, py - TILE / 2 + 12)
-        .setText(`${p.mp}/${p.maxMp}`)
+        .setText(`${p.ap}/${p.maxAp}`)
         .setVisible(p.hp > 0);
       const shieldIcon = this.playerShieldIcons[i];
       shieldIcon.setPosition(px + TILE / 2 - 12, py - TILE / 2 + 12).setVisible(p.shield > 0);
@@ -617,11 +652,9 @@ export class BattleScene extends Phaser.Scene {
         sprite.destroy();
         this.monsterHpBars.get(id)?.destroy();
         this.monsterHpTexts.get(id)?.destroy();
-        this.monsterAtkTexts.get(id)?.destroy();
         this.monsterSprites.delete(id);
         this.monsterHpBars.delete(id);
         this.monsterHpTexts.delete(id);
-        this.monsterAtkTexts.delete(id);
       }
     }
     livingMonsters.forEach((m) => {
@@ -650,16 +683,6 @@ export class BattleScene extends Phaser.Scene {
         this.monsterHpTexts.set(m.instanceId, hpText);
       }
       hpText.setPosition(px, py - TILE / 2 + 20).setText(`${m.hp}/${m.maxHp}`);
-
-      let atkText = this.monsterAtkTexts.get(m.instanceId);
-      if (!atkText) {
-        atkText = this.add
-          .text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px', color: '#ffd166', stroke: '#000000', strokeThickness: 3 })
-          .setOrigin(0.5)
-          .setDepth(3);
-        this.monsterAtkTexts.set(m.instanceId, atkText);
-      }
-      atkText.setPosition(px, py + TILE / 2 - 10).setText(monsterAttackSummary(m.monsterId));
     });
 
     this.intentMarkers.forEach((o) => o.destroy());
@@ -682,6 +705,16 @@ export class BattleScene extends Phaser.Scene {
         else if (intent.to.y > m.position.y) dir = 'down';
         else dir = 'up';
         label = DIR_ARROW[dir];
+        // Destination-tile outline — the arrow alone only says "which way,"
+        // not "how far" or "does it actually get there" (a monster whose
+        // path is currently blocked telegraphs a direction but won't move).
+        const dest = this.tileCenter(intent.to.x, intent.to.y);
+        const destMarker = this.add
+          .rectangle(dest.px, dest.py, TILE - 14, TILE - 14)
+          .setStrokeStyle(2, 0x8a8a9a, 0.8)
+          .setFillStyle(0x000000, 0)
+          .setDepth(1);
+        this.intentMarkers.push(destMarker);
       }
       if (!dir) continue;
       const v = DIR_VECTORS[dir];
@@ -696,6 +729,54 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(2);
       this.intentMarkers.push(marker);
+    }
+
+    // Combined damage a target is about to take THIS turn, from however many
+    // monsters are currently locked onto it (e.g. two ghosts each telegraphing
+    // ⚔2 on the base show one "-4" here) — resolved live off the current
+    // board, so it updates the instant a player's move changes a line of fire.
+    // Suppressed once an outcome is frozen: currentIntents at that point
+    // describes an attack that ALREADY happened (kept around so the intent
+    // arrows still show what killed you), and re-previewing it as a future
+    // "-N" would misleadingly imply it's still about to land.
+    this.damagePreviewMarkers.forEach((o) => o.destroy());
+    this.damagePreviewMarkers = [];
+    for (const preview of outcomePending ? [] : this.engine.getAttackPreviews()) {
+      const target = preview.target;
+      let pos: { px: number; py: number } | null = null;
+      if (target.kind === 'base') {
+        const tiles = snap.baseTiles;
+        if (tiles.length > 0) {
+          const centers = tiles.map((t) => this.tileCenter(t.x, t.y));
+          const px = centers.reduce((s, c) => s + c.px, 0) / centers.length;
+          const py = centers.reduce((s, c) => s + c.py, 0) / centers.length;
+          pos = { px, py: py - TILE / 2 - 8 };
+        }
+      } else if (target.kind === 'player') {
+        const p = snap.players[target.unitIndex];
+        if (p && p.hp > 0) {
+          const c = this.tileCenter(p.position.x, p.position.y);
+          pos = { px: c.px, py: c.py - TILE / 2 - 8 };
+        }
+      } else {
+        const m = livingMonsters.find((x) => x.instanceId === target.instanceId);
+        if (m) {
+          const c = this.tileCenter(m.position.x, m.position.y);
+          pos = { px: c.px, py: c.py - TILE / 2 - 8 };
+        }
+      }
+      if (!pos) continue;
+      const marker = this.add
+        .text(pos.px, pos.py, `-${preview.damage}`, {
+          fontFamily: 'monospace',
+          fontSize: '17px',
+          color: '#ff4d4d',
+          stroke: '#000000',
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setDepth(4);
+      this.damagePreviewMarkers.push(marker);
     }
 
     this.spawnPreviewMarkers.forEach((o) => o.destroy());
@@ -713,19 +794,18 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    const outcomePending = !!snap.outcome;
     this.skillButtons.forEach((btn, i) => {
       const skillId = selected?.skillIds[i];
       const skill = skillId ? registry.skills[skillId] : undefined;
       const unitAlive = (selected?.hp ?? 0) > 0;
       // Distinguished from "unit dead" / "no skill" so a player can tell
       // "not enough Qi" apart from a click that simply didn't land.
-      const notEnoughMp = !!skill && unitAlive && selected!.mp < skill.mpCost;
+      const notEnoughAp = !!skill && unitAlive && selected!.ap < skill.mpCost;
       const nameWithStats = skill
         ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)} 💧${skill.mpCost}`
         : '';
-      const label = notEnoughMp ? `${nameWithStats}\n${i18n.t('ui.not_enough_mp')}` : nameWithStats;
-      if (!skillId || notEnoughMp || !unitAlive || outcomePending) {
+      const label = notEnoughAp ? `${nameWithStats}\n${i18n.t('ui.not_enough_ap')}` : nameWithStats;
+      if (!skillId || notEnoughAp || !unitAlive || outcomePending) {
         btn.bg.setFillStyle(COLORS.buttonBg, 0.4);
         btn.label.setText(label);
         btn.bg.disableInteractive();
@@ -764,20 +844,18 @@ export class BattleScene extends Phaser.Scene {
       ? i18n.t('ui.last_wave_hold')
       : `${i18n.t('ui.next_wave_in')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`;
 
-    const movText = `   ${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`;
     this.hudText.setText(
-      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
+      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
 
-    const selectedMp = selected ? `${selected.mp}/${selected.maxMp}` : '-';
+    const selectedAp = selected ? `${selected.ap}/${selected.maxAp}` : '-';
     const liveStatus = [
       `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
       `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}`,
       waveCountdown,
-      `${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`,
-      `MP ${selectedMp}`,
+      `AP ${selectedAp}`,
     ].join('\n');
     this.rulesPanelText.setText(`${RULES_PANEL_STATIC}\n\n${liveStatus}`);
 
