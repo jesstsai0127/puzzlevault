@@ -1,0 +1,55 @@
+{
+  "formatVersion": 1,
+  "id": "demo2_pincer",
+  "nameKey": "map.demo2_pincer.name",
+  "grid": [
+    "#########",
+    "# ~     #",
+    "#   B   #",
+    "#   B   #",
+    "#     ~ #",
+    "#########"
+  ],
+  "baseHp": 8,
+  "playerStarts": [
+    { "x": 4, "y": 1 },
+    { "x": 4, "y": 4 }
+  ],
+  "waves": [
+    {
+      "turns": 3,
+      "monsters": [
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } }
+      ]
+    },
+    {
+      "turns": 3,
+      "monsters": [
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 2 } }
+      ]
+    },
+    {
+      "turns": 3,
+      "monsters": [
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 1 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 4 } }
+      ]
+    },
+    {
+      "turns": 4,
+      "monsters": [
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 1 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 4 } }
+      ]
+    }
+  ]
+}
