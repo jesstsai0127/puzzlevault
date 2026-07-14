@@ -15,6 +15,7 @@ import type {
   MonsterIntent,
   MonsterUnitState,
   PlayerUnitState,
+  RunOutcome,
 } from './types';
 
 const STARTING_LIVES = 3;
@@ -60,7 +61,8 @@ export class BattleEngine {
   private waveIndex = 0;
   private lives = STARTING_LIVES;
   private turnNumber = 1;
-  private victory = false;
+  /** Set by endTurn() the instant a loss/win happens; the board is frozen on that turn's result until confirmOutcome() is called. */
+  private pendingOutcome: RunOutcome | null = null;
 
   /** All 'B' tiles on the map — computed once, the grid never changes at runtime. */
   private baseTiles: Vec2[] = [];
@@ -100,7 +102,7 @@ export class BattleEngine {
       waveIndex: this.waveIndex,
       lives: this.lives,
       turnNumber: this.turnNumber,
-      victory: this.victory,
+      outcome: this.pendingOutcome,
       movement: { used: this.movementUsed, max: this.movementMax },
       baseHp: this.baseHp,
       baseMaxHp: this.baseMaxHp,
@@ -119,6 +121,7 @@ export class BattleEngine {
   // ---------------------------------------------------------------------
 
   moveUnit(unitIndex: number, dir: CardinalDir): ActionResult {
+    if (this.pendingOutcome) return { ok: false, reason: 'outcome-pending' };
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
     if (this.movementUsed >= this.movementMax) return { ok: false, reason: 'no-movement-left' };
@@ -133,6 +136,7 @@ export class BattleEngine {
   }
 
   useSkill(unitIndex: number, skillId: string, dir: CardinalDir): ActionResult {
+    if (this.pendingOutcome) return { ok: false, reason: 'outcome-pending' };
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
     if (!unit.skillIds.includes(skillId)) return { ok: false, reason: 'unknown-skill' };
@@ -167,7 +171,7 @@ export class BattleEngine {
    * endTurn can touch it), so it needn't be part of the snapshot.
    */
   resetTurn(): void {
-    if (!this.turnStartSnapshot) return;
+    if (this.pendingOutcome || !this.turnStartSnapshot) return;
     this.players = this.turnStartSnapshot.players.map((p) => ({ ...p, position: { ...p.position } }));
     this.monsters = this.turnStartSnapshot.monsters.map((m) => ({ ...m, position: { ...m.position } }));
     this.movementUsed = this.turnStartSnapshot.movementUsed;
@@ -188,6 +192,8 @@ export class BattleEngine {
   // ---------------------------------------------------------------------
 
   endTurn(): void {
+    if (this.pendingOutcome) return; // must confirmOutcome() before playing on
+
     for (const intent of this.currentIntents) {
       const monster = this.monsters.find((m) => m.instanceId === intent.instanceId);
       if (!monster || monster.hp <= 0) continue; // died during the player's turn
@@ -212,20 +218,24 @@ export class BattleEngine {
     // to snapshot it; clearing history here is enough.
     this.history = [];
     this.turnNumber += 1;
+    this.monsters = this.monsters.filter((m) => m.hp > 0);
 
     if (this.baseHp <= 0) {
-      this.handleBaseDestroyed();
+      // Freeze right here on the position that killed the base — lives/board
+      // aren't touched until the player calls confirmOutcome(), so what they
+      // see is the actual losing turn, not an already-reset fresh wave.
+      this.pendingOutcome = this.lives - 1 > 0 ? 'lifeLost' : 'gameOver';
+      this.currentIntents = [];
       return;
     }
 
-    this.monsters = this.monsters.filter((m) => m.hp > 0);
     this.turnsLeftInWave -= 1;
 
     const isLastWave = this.waveIndex === this.map.waves.length - 1;
     if (isLastWave && (this.monsters.length === 0 || this.turnsLeftInWave <= 0)) {
       // Victory: outlasted the final assault's clock, or cleared the board
       // after the last wave arrived. The base is alive (checked above).
-      this.victory = true;
+      this.pendingOutcome = 'victory';
       this.currentIntents = [];
     } else if (!isLastWave && this.turnsLeftInWave <= 0) {
       // Reinforce: the clock ran out before the last wave — survivors PERSIST
@@ -244,14 +254,30 @@ export class BattleEngine {
   // Wave / run lifecycle
   // ---------------------------------------------------------------------
 
-  /** The base ("陣") hit 0 HP — costs a life and resets the current wave with base HP full again. */
-  private handleBaseDestroyed(): void {
-    this.lives -= 1;
-    if (this.lives > 0) {
+  /**
+   * Applies whatever endTurn() froze (life lost / run over / victory) and
+   * moves the board past it. Player-called, on their own timing, so the
+   * losing or winning position stays on screen until they've actually seen
+   * it instead of being silently swapped out underneath the result banner.
+   */
+  confirmOutcome(): void {
+    const outcome = this.pendingOutcome;
+    if (!outcome) return;
+    this.pendingOutcome = null;
+    if (outcome === 'lifeLost') {
+      this.lives -= 1;
       this.resetToWave(this.waveIndex, this.lives);
-    } else {
+    } else if (outcome === 'gameOver') {
       this.resetToWave(0, STARTING_LIVES);
+    } else {
+      this.resetLevel();
     }
+  }
+
+  /** Manual full restart, available any time — not gated on a loss/win. Wipes the run back to wave 0 with full lives. */
+  resetLevel(): void {
+    this.pendingOutcome = null;
+    this.resetToWave(0, STARTING_LIVES);
   }
 
   /** Reinforcement clock hit zero before the last wave: add the next wave's monsters on top of any survivors. */
@@ -282,7 +308,7 @@ export class BattleEngine {
   private resetToWave(waveIndex: number, lives: number): void {
     this.waveIndex = waveIndex;
     this.lives = lives;
-    this.victory = false;
+    this.pendingOutcome = null;
     this.history = [];
     this.baseHp = this.baseMaxHp;
     this.turnsLeftInWave = this.map.waves[waveIndex].turns;
