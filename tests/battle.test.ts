@@ -272,6 +272,36 @@ describe('BattleEngine: player actions', () => {
     engine.endTurn();
     expect(engine.undo()).toBe(false);
   });
+
+  it('resetTurn reverts every action taken this turn back to the turn-start snapshot in one call', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    const before = engine.getSnapshot();
+    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, 'right');
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself, spending mp
+    expect(engine.getSnapshot().movement.used).toBe(2);
+    expect(engine.getSnapshot().players[1].mp).toBe(3);
+
+    engine.resetTurn();
+
+    const after = engine.getSnapshot();
+    expect(after.players[0].position).toEqual(before.players[0].position);
+    expect(after.movement).toEqual({ used: 0, max: 8 });
+    expect(after.players[1].mp).toBe(4);
+    expect(after.players[1].shield).toBe(0);
+  });
+
+  it('resetTurn only reaches back to the start of the CURRENT turn, not earlier turns', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, 'right');
+    engine.endTurn(); // this turn's moves are now locked in as the new turn-start baseline
+    const afterEndTurn = engine.getSnapshot().players[0].position;
+
+    engine.moveUnit(0, 'right');
+    engine.resetTurn();
+
+    expect(engine.getSnapshot().players[0].position).toEqual(afterEndTurn); // not all the way back to game start
+  });
 });
 
 describe('BattleEngine: turn resolution', () => {
@@ -289,46 +319,79 @@ describe('BattleEngine: turn resolution', () => {
   });
 });
 
-describe('BattleEngine: wave clear and victory', () => {
-  it('clearing a wave advances to the next wave and resets per-turn budgets', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
-    engine.useSkill(0, 'strike', 'right'); // kills wave-0's only monster
+describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
+  it('clearing a non-final wave early does NOT advance — it waits for the clock, but still resets per-turn budgets', () => {
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry); // wave 0 has AMPLE_TURNS left
+    engine.useSkill(0, 'strike', 'right'); // kills wave-0's only monster, well before the clock
     engine.endTurn();
     const snap = engine.getSnapshot();
-    expect(snap.waveIndex).toBe(1);
-    expect(snap.monsters).toHaveLength(1);
-    expect(snap.monsters[0].position).toEqual({ x: 6, y: 1 });
-    expect(snap.players[0].hp).toBe(6); // no full-heal between waves, but also took no damage here
+    expect(snap.waveIndex).toBe(0); // did NOT advance — the clock hasn't elapsed
+    expect(snap.monsters).toHaveLength(0); // board is clear, but that's just a breather
+    expect(snap.movement).toEqual({ used: 0, max: 8 }); // still a fresh round every turn
+    expect(snap.players[0].mp).toBe(4);
     expect(snap.victory).toBe(false);
   });
 
-  it('relocates a spawn to the nearest free tile and ambushes the player standing on it', () => {
+  it('reinforcing adds the next wave on top of survivors — count grows, survivors are not cleared', () => {
     const map: MapDef = {
       ...twoWaveMap(),
       waves: [
-        twoWaveMap().waves[0],
+        { turns: 1, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }, // far away, won't be killed or reach anything in 1 turn
+        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] },
+      ],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    const survivorId = engine.getSnapshot().monsters[0].instanceId;
+    engine.endTurn(); // wave-0's 1-turn clock elapses -> reinforce into wave 1
+    const snap = engine.getSnapshot();
+    expect(snap.waveIndex).toBe(1);
+    expect(snap.monsters).toHaveLength(2); // wave-0 survivor + wave-1 reinforcement, not just 1
+    expect(snap.monsters.some((m) => m.instanceId === survivorId)).toBe(true); // the original survivor is still there
+  });
+
+  it('reinforcing relocates a spawn away from an occupied tile and ambushes the player standing on it', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      waves: [
+        { ...twoWaveMap().waves[0], turns: 1 }, // clock elapses after a single endTurn
         { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 1, y: 1 } }] }, // li_yan's own tile
       ],
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.useSkill(0, 'strike', 'right'); // kills wave-0's monster
-    engine.endTurn(); // advances to wave 1
+    engine.useSkill(0, 'strike', 'right'); // kills wave-0's monster (no survivors going into the reinforcement)
+    engine.endTurn(); // clock elapses -> reinforce into wave 1
     const snap = engine.getSnapshot();
     expect(snap.waveIndex).toBe(1);
+    expect(snap.monsters).toHaveLength(1);
     expect(snap.monsters[0].position).not.toEqual({ x: 1, y: 1 }); // not on top of li_yan
     const p = snap.monsters[0].position;
     expect(grid[p.y][p.x]).toBe(' '); // still a valid floor tile
     expect(snap.players[0].hp).toBe(5); // ghost_claw's 1 damage as an ambush hit before relocating
   });
 
-  it('clearing the final wave sets victory', () => {
+  it('clearing the only (last) wave immediately sets victory', () => {
     const map = twoWaveMap();
-    map.waves = [map.waves[0]]; // only one wave
+    map.waves = [map.waves[0]]; // only one wave, so it's also the last wave
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.useSkill(0, 'strike', 'right');
     engine.endTurn();
     expect(engine.getSnapshot().victory).toBe(true);
     expect(engine.getIntents()).toEqual([]);
+  });
+
+  it("outlasting the last wave's clock with the base alive is victory, even with monsters still on the board", () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      // 5 tiles from the players, moveRange 1 — cannot possibly arrive within 2 turns.
+      waves: [{ turns: 2, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.endTurn(); // turn 1 of 2
+    expect(engine.getSnapshot().victory).toBe(false);
+    engine.endTurn(); // turn 2 of 2: clock elapses, monster still alive, base intact -> victory
+    const snap = engine.getSnapshot();
+    expect(snap.victory).toBe(true);
+    expect(snap.monsters.length).toBeGreaterThan(0); // you did NOT have to kill it
   });
 });
 
@@ -443,6 +506,37 @@ describe('BattleEngine: new AI behaviors', () => {
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     engine.endTurn(); // hound moves toward li_yan
     expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 4, y: 1 }); // 2 tiles this turn, not 1
+  });
+
+  it('a base-seeking monster attacks a hero blocking its path, not the base', () => {
+    const baseSeeker: MonsterDef = {
+      ...yinGhost,
+      id: 'base_seeker',
+      aiRules: [
+        { when: { kind: 'targetInRange', target: 'nearestBaseTile', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
+        { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } },
+      ],
+    };
+    const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, base_seeker: baseSeeker } };
+    // base at (1,2); li_yan blocks at (3,2), directly between the ghost (4,2) and the base.
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'blocker-test',
+      nameKey: 'map.blocker.name',
+      grid: ['########', '#      #', '#B     #', '#      #', '########'],
+      baseHp: 8,
+      playerStarts: [{ x: 3, y: 2 }, { x: 6, y: 3 }],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_seeker', spawn: { x: 4, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
+    // The ghost isn't adjacent to the base (a hero is in the way), so it claws the blocker.
+    expect(engine.getIntents()).toEqual([
+      { kind: 'skill', instanceId: expect.any(String), skillId: 'ghost_claw', direction: 'left' },
+    ]);
+    engine.endTurn();
+    const snap = engine.getSnapshot();
+    expect(snap.players[0].hp).toBe(5); // li_yan ate 1 claw for blocking the lane
+    expect(snap.baseHp).toBe(8); // base untouched — the hero absorbed the hit
   });
 });
 
@@ -563,7 +657,7 @@ describe('BattleEngine: Phase 1 base defense', () => {
     expect(engine.getSnapshot().baseHp).toBe(7);
   });
 
-  it('surviving the wave turn budget with monsters still alive advances the wave', () => {
+  it('the clock running out reinforces (adds wave 1 on top of the still-alive wave-0 survivor)', () => {
     const map: MapDef = {
       formatVersion: 1,
       id: 'test-clock',
@@ -577,19 +671,20 @@ describe('BattleEngine: Phase 1 base defense', () => {
       waves: [
         // 5 tiles from the base, moveRange 1 — cannot possibly arrive within 2 turns.
         { turns: 2, monsters: [{ monsterId: 'base_ghost', spawn: { x: 6, y: 1 } }] },
-        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 6, y: 1 } }] },
+        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 5, y: 2 } }] },
       ],
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // turn 1 of 2: just closing the distance
     expect(engine.getSnapshot().waveIndex).toBe(0);
-    engine.endTurn(); // turn 2 of 2: clock runs out — wave survived despite the ghost still being alive
+    engine.endTurn(); // turn 2 of 2: clock runs out — reinforce, not a clean advance
     const snap = engine.getSnapshot();
-    expect(snap.waveIndex).toBe(1); // you did NOT have to kill it
+    expect(snap.waveIndex).toBe(1);
+    expect(snap.monsters).toHaveLength(2); // wave-0's still-alive ghost PLUS wave-1's reinforcement
     expect(snap.baseHp).toBe(8); // it never got close enough to land a hit
   });
 
-  it('clearing all monsters before the turn budget also advances the wave (early clear)', () => {
+  it('clearing all monsters before the turn budget does NOT advance a non-final wave — it waits for the clock', () => {
     const map: MapDef = {
       formatVersion: 1,
       id: 'test-early-clear',
@@ -601,15 +696,20 @@ describe('BattleEngine: Phase 1 base defense', () => {
         { x: 4, y: 2 },
       ],
       waves: [
-        { turns: 10, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] }, // a big turn budget, deliberately not exhausted
+        { turns: 3, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] },
         { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] },
       ],
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    expect(engine.getSnapshot().turnsLeftInWave).toBe(10); // plenty of clock left
+    expect(engine.getSnapshot().turnsLeftInWave).toBe(3);
     engine.useSkill(0, 'strike', 'right'); // kills the only monster well before the budget runs out
-    engine.endTurn();
-    expect(engine.getSnapshot().waveIndex).toBe(1); // advanced by clearing, not by the clock
+    engine.endTurn(); // turnsLeftInWave: 3 -> 2, board is clear, but this is not the last wave
+    expect(engine.getSnapshot().waveIndex).toBe(0); // did NOT advance just because it's clear
+    expect(engine.getSnapshot().monsters).toHaveLength(0);
+
+    engine.endTurn(); // 2 -> 1
+    engine.endTurn(); // 1 -> 0: clock finally elapses -> reinforce
+    expect(engine.getSnapshot().waveIndex).toBe(1); // advanced by the clock, not by the earlier clear
   });
 
   it("a monster's path to the base is blocked by a hero standing in the only lane", () => {

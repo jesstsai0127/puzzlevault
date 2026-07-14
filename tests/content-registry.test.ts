@@ -19,11 +19,12 @@ describe('Phase 0 content registry', () => {
     const engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
     const snap = engine.getSnapshot();
     expect(snap.players).toHaveLength(2);
-    expect(snap.monsters).toHaveLength(1);
+    expect(snap.monsters).toHaveLength(2);
 
-    // Wave 1's ghost spawns 5 tiles from li_yan — out of ghost_claw's range(1),
-    // so its only matching aiRule is the unconditional 'moveToward' fallback.
+    // Wave 1's ghosts spawn 4+ tiles from either hero — out of ghost_claw's
+    // range(1), so their only matching aiRule is the unconditional 'moveToward' fallback.
     expect(engine.getIntents()).toEqual([
+      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object) },
       { kind: 'move', instanceId: expect.any(String), to: expect.any(Object) },
     ]);
   });
