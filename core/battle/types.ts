@@ -32,12 +32,27 @@ export type MonsterIntent =
   | { kind: 'move'; instanceId: string; to: Vec2; aim: Vec2 | null; away?: boolean }
   | { kind: 'skill'; instanceId: string; skillId: string; direction: CardinalDir };
 
+/** Identifies who/what an effect landed on — shared by AttackPreview (pre-resolution) and TurnEvent (post-resolution). */
+export type CombatTarget = { kind: 'base' } | { kind: 'player'; unitIndex: number } | { kind: 'monster'; instanceId: string };
+
 /** A skill intent's damage, aggregated per target so a target locked by multiple monsters shows one combined preview number. */
-export type AttackPreviewTarget = { kind: 'base' } | { kind: 'player'; unitIndex: number } | { kind: 'monster'; instanceId: string };
 export interface AttackPreview {
-  target: AttackPreviewTarget;
+  target: CombatTarget;
   damage: number;
 }
+
+/**
+ * Something that actually happened during useSkill()/endTurn() — the record
+ * BattleScene consumes to drive hit feedback (screen shake, floating damage
+ * numbers, hit flash) and, later, a combat-log panel. Distinct from
+ * AttackPreview, which is a forecast computed BEFORE resolution; a TurnEvent
+ * is what was actually applied.
+ */
+export type TurnEvent =
+  | { kind: 'damage'; target: CombatTarget; amount: number; blocked: boolean }
+  | { kind: 'push'; target: CombatTarget; distance: number }
+  | { kind: 'shield'; target: CombatTarget; amount: number }
+  | { kind: 'heal'; target: CombatTarget; amount: number };
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
 
