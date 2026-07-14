@@ -32,7 +32,6 @@
 
   "ui.hp": "生命值",
   "ui.wave": "波次",
-  "ui.lives": "生命數",
   "ui.end_turn": "結束回合",
   "ui.undo": "復原",
   "ui.reset_turn": "重置本回合",
@@ -60,7 +59,6 @@
 
   "ui.confirm": "確認",
   "ui.reset_level": "重置關卡",
-  "ui.outcome_life_lost": "陣被攻破！扣一條命，這一波重新開始",
-  "ui.outcome_game_over": "生命數用完了，從第一波重新開始",
+  "ui.outcome_defeat": "陣被攻破！從第一波重新開始",
   "ui.outcome_victory": "撐住了！全部波次守住"
 }

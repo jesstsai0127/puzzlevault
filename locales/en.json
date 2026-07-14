@@ -32,7 +32,6 @@
 
   "ui.hp": "HP",
   "ui.wave": "Wave",
-  "ui.lives": "Lives",
   "ui.end_turn": "End Turn",
   "ui.undo": "Undo",
   "ui.reset_turn": "Reset Turn",
@@ -60,7 +59,6 @@
 
   "ui.confirm": "Confirm",
   "ui.reset_level": "Reset Level",
-  "ui.outcome_life_lost": "The base fell! Lost a life — this wave restarts.",
-  "ui.outcome_game_over": "Out of lives — restarting from wave 1.",
+  "ui.outcome_defeat": "The base fell! Restarting from wave 1.",
   "ui.outcome_victory": "Held the line! Every wave survived."
 }
