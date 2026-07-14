@@ -1,5 +1,6 @@
 import { parseCharacterDef, parseMapDef, parseMonsterDef, parseSkillDef } from '../core/content';
 import type { ContentRegistry } from '../core/battle/types';
+import type { MapDef } from '../core/content/types';
 
 import swordQi from './skills/sword_qi.json';
 import palmWave from './skills/palm_wave.json';
@@ -21,6 +22,7 @@ import tengYao from './monsters/teng_yao.json';
 import yaoLang from './monsters/yao_lang.json';
 
 import yanwuGround from './maps/yanwu_ground.json';
+import demo2Pincer from './maps/demo2_pincer.json';
 
 // Builtin content goes through the same parse+validate path that downloaded
 // content packs will use in Phase 2 — one format, one code path.
@@ -37,5 +39,16 @@ export const registry: ContentRegistry = {
 };
 
 export const yanwuGroundMap = parseMapDef(yanwuGround);
+
+// Each playable level is its own map file — demo1 (yanwu_ground) is the
+// baseline control; demo2/demo3 test one mechanic apiece so different
+// playtesters can be pointed at different levels without their feedback
+// tangling together (see design/roadmap.md ch.5).
+export const maps: Record<string, MapDef> = {
+  demo1: yanwuGroundMap,
+  demo2: parseMapDef(demo2Pincer),
+};
+
+export const DEFAULT_MAP_ID = 'demo1';
 
 export const STARTING_SQUAD = ['li_yan', 'su_qing'];
