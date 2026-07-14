@@ -808,3 +808,99 @@ describe('BattleEngine: getAttackPreviews', () => {
     expect(engine.getAttackPreviews()).toEqual([]); // 0 real damage — nothing worth showing
   });
 });
+
+describe('BattleEngine: getLastEvents', () => {
+  it('a plain move produces no events', () => {
+    const engine = new BattleEngine(roomyMapModule(), ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, 'down');
+    expect(engine.getLastEvents()).toEqual([]);
+  });
+
+  it("useSkill records the real damage dealt, keyed to the target it actually hit", () => {
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    const targetId = engine.getSnapshot().monsters[0].instanceId;
+    engine.useSkill(0, 'strike', 'right'); // adjacent ghost, kills it (2 dmg, maxHp 2)
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'damage', target: { kind: 'monster', instanceId: targetId }, amount: 2, blocked: false },
+    ]);
+  });
+
+  it('a shield-blocked hit records amount 0 and blocked: true, not the nominal skill damage', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 1, y: 2 }, // li_yan out of range
+        { x: 1, y: 1 }, // su_qing (unit 1) adjacent to the ghost at (2,1)
+      ],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself
+    engine.endTurn(); // the telegraphed ghost_claw resolves against the shield
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'damage', target: { kind: 'player', unitIndex: 1 }, amount: 0, blocked: true },
+    ]);
+  });
+
+  it("pushing a target into a wall records only the distance actually covered, not the skill's nominal amount", () => {
+    const map = twoWaveMap();
+    map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the x=6 floor edge (x=7 is wall)
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, 'right'); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
+    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, 'right');
+    const targetId = engine.getSnapshot().monsters[0].instanceId;
+    engine.useSkill(0, 'push_skill', 'right'); // push_skill's amount is 2, but the wall at x=7 stops it after 1
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'push', target: { kind: 'monster', instanceId: targetId }, distance: 1 },
+    ]);
+  });
+
+  it('casting a shield records a shield event', () => {
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    engine.useSkill(1, 'shield_skill', 'down');
+    expect(engine.getLastEvents()).toEqual([{ kind: 'shield', target: { kind: 'player', unitIndex: 1 }, amount: 1 }]);
+  });
+
+  it('a monster attacking the base during endTurn records a base damage event', () => {
+    const baseSeekingGhost: MonsterDef = {
+      ...yinGhost,
+      id: 'base_ghost',
+      aiRules: [
+        { when: { kind: 'targetInRange', target: 'nearestBaseTile', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
+        { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } },
+      ],
+    };
+    const baseRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, base_ghost: baseSeekingGhost } };
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'test-base-event',
+      nameKey: 'map.testbaseevent.name',
+      grid: ['########', '#B     #', '#B     #', '########'],
+      baseHp: 8,
+      playerStarts: [{ x: 4, y: 1 }, { x: 4, y: 2 }],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], baseRegistry);
+    engine.endTurn(); // the ghost is adjacent to the base tile (1,1) and attacks it
+    expect(engine.getLastEvents()).toEqual([{ kind: 'damage', target: { kind: 'base' }, amount: 1, blocked: false }]);
+  });
+
+  it('getLastEvents only reflects the MOST RECENT call, not everything accumulated this turn', () => {
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    engine.useSkill(0, 'strike', 'right'); // kills the ghost — one damage event
+    expect(engine.getLastEvents()).toHaveLength(1);
+    engine.moveUnit(1, 'right'); // a no-op-for-events action right after
+    expect(engine.getLastEvents()).toEqual([]); // the earlier damage event is gone, not accumulated
+  });
+
+  function roomyMapModule(): MapDef {
+    return {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 1, y: 1 },
+        { x: 6, y: 2 },
+      ],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
+    };
+  }
+});
