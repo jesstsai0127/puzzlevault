@@ -8,4 +8,8 @@ new Phaser.Game({
   parent: 'game',
   backgroundColor: '#14141a',
   scene: [BattleScene],
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
 });
