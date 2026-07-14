@@ -766,7 +766,7 @@ export class BattleScene extends Phaser.Scene {
 
     const movText = `   ${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`;
     this.hudText.setText(
-      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${waveCountdown}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
+      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
@@ -782,8 +782,7 @@ export class BattleScene extends Phaser.Scene {
     this.rulesPanelText.setText(`${RULES_PANEL_STATIC}\n\n${liveStatus}`);
 
     const OUTCOME_KEY: Record<RunOutcome, string> = {
-      lifeLost: 'ui.outcome_life_lost',
-      gameOver: 'ui.outcome_game_over',
+      defeat: 'ui.outcome_defeat',
       victory: 'ui.outcome_victory',
     };
     this.outcomeOverlay.setVisible(outcomePending);
