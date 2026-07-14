@@ -24,8 +24,8 @@ describe('Phase 0 content registry', () => {
     // Wave 1's ghosts spawn 4+ tiles from either hero — out of ghost_claw's
     // range(1), so their only matching aiRule is the unconditional 'moveToward' fallback.
     expect(engine.getIntents()).toEqual([
-      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object) },
-      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object) },
+      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object), aim: expect.any(Object) },
+      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object), aim: expect.any(Object) },
     ]);
   });
 

@@ -74,7 +74,6 @@ const li_yan: CharacterDef = {
   spriteRef: 'char_li_yan',
   maxHp: 6,
   actionPoints: 4,
-  maxMp: 4,
   skillIds: ['strike', 'push_skill'],
 };
 
@@ -85,7 +84,6 @@ const su_qing: CharacterDef = {
   spriteRef: 'char_su_qing',
   maxHp: 5,
   actionPoints: 4,
-  maxMp: 4,
   skillIds: ['ranged_skill', 'shield_skill'],
 };
 
@@ -183,42 +181,36 @@ describe('BattleEngine: player actions', () => {
     expect(engine.getSnapshot().monsters[0].hp).toBe(0);
   });
 
-  it('the shared movement pool exhausts after 8 total moves across the squad, not per-unit', () => {
+  it("each character's AP pool is independent — exhausting one unit's AP does not block the other", () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right'); // li_yan (1,1) -> (5,1)
-    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'left'); // back to (1,1)
-    expect(engine.getSnapshot().movement).toEqual({ used: 8, max: 8 });
-    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'no-movement-left' });
-    expect(engine.moveUnit(1, 'right')).toEqual({ ok: false, reason: 'no-movement-left' }); // shared, not per-unit
+    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right'); // li_yan: 4 AP -> 0
+    expect(engine.getSnapshot().players[0].ap).toBe(0);
+    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'not-enough-ap' });
+    expect(engine.moveUnit(1, 'left')).toEqual({ ok: true }); // su_qing's own AP untouched
+    expect(engine.getSnapshot().players[1].ap).toBe(3);
   });
 
-  it('mp and the shared movement pool are independent — exhausting one does not block the other', () => {
+  it('movement and skills draw from the same AP pool — casting can exhaust the AP moving would need', () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right');
-    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'left'); // shared movement pool now exhausted
-    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // mp untouched by movement
-    expect(engine.getSnapshot().players[0].mp).toBe(2); // maxMp 4 - strike's mpCost 2
-
-    const res = engine.useSkill(0, 'strike', 'right'); // now mp 2, still enough for one more cast
-    expect(res).toEqual({ ok: true });
-    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'not-enough-mp' }); // mp is 0
-    expect(engine.moveUnit(1, 'right')).toEqual({ ok: false, reason: 'no-movement-left' }); // still shared/exhausted
+    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, 'right'); // li_yan: 4 AP -> 2
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // strike costs 2 AP, exactly what's left
+    expect(engine.getSnapshot().players[0].ap).toBe(0);
+    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'not-enough-ap' }); // same pool, now empty
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'not-enough-ap' });
   });
 
-  it('resets the shared movement pool and every unit\'s mp at the start of every turn, not only when a wave clears', () => {
+  it("resets every unit's own AP at the start of every turn, not only when a wave clears", () => {
     // Monster starts 5 tiles from li_yan, so a couple of moves won't clear the wave.
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, 'down');
     engine.moveUnit(0, 'right');
-    engine.useSkill(0, 'strike', 'right'); // whiffs (no monster in range yet), still costs mp
-    expect(engine.getSnapshot().movement).toEqual({ used: 2, max: 8 });
-    expect(engine.getSnapshot().players[0].mp).toBe(2); // maxMp 4 - strike's mpCost 2
+    expect(engine.getSnapshot().players[0].ap).toBe(2); // maxAp 4 - 2 moves
 
     engine.endTurn();
 
     expect(engine.getSnapshot().monsters.length).toBeGreaterThan(0); // sanity: wave still active
-    expect(engine.getSnapshot().movement).toEqual({ used: 0, max: 8 }); // fresh budget for the new turn
-    expect(engine.getSnapshot().players[0].mp).toBe(4); // mp fully restored too
+    expect(engine.getSnapshot().players[0].ap).toBe(4); // fresh AP for the new turn
   });
 
   it('push moves the target away from the caster, stopping at a wall', () => {
@@ -257,14 +249,14 @@ describe('BattleEngine: player actions', () => {
     expect(suQing2.hp).toBe(5); // fully blocked, no HP lost
   });
 
-  it('undo restores the pre-action snapshot (including the shared movement pool); history clears after endTurn', () => {
+  it("undo restores the pre-action snapshot (including the mover's own AP); history clears after endTurn", () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     const before = engine.getSnapshot().players[0].position;
     engine.moveUnit(0, 'down');
-    expect(engine.getSnapshot().movement.used).toBe(1);
+    expect(engine.getSnapshot().players[0].ap).toBe(3);
     expect(engine.undo()).toBe(true);
     expect(engine.getSnapshot().players[0].position).toEqual(before);
-    expect(engine.getSnapshot().movement.used).toBe(0); // shared pool restored too
+    expect(engine.getSnapshot().players[0].ap).toBe(4); // AP restored too
     expect(engine.undo()).toBe(false);
 
     engine.moveUnit(0, 'down');
@@ -277,16 +269,16 @@ describe('BattleEngine: player actions', () => {
     const before = engine.getSnapshot();
     engine.moveUnit(0, 'right');
     engine.moveUnit(0, 'right');
-    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself, spending mp
-    expect(engine.getSnapshot().movement.used).toBe(2);
-    expect(engine.getSnapshot().players[1].mp).toBe(3);
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself, spending AP
+    expect(engine.getSnapshot().players[0].ap).toBe(2);
+    expect(engine.getSnapshot().players[1].ap).toBe(3);
 
     engine.resetTurn();
 
     const after = engine.getSnapshot();
     expect(after.players[0].position).toEqual(before.players[0].position);
-    expect(after.movement).toEqual({ used: 0, max: 8 });
-    expect(after.players[1].mp).toBe(4);
+    expect(after.players[0].ap).toBe(4);
+    expect(after.players[1].ap).toBe(4);
     expect(after.players[1].shield).toBe(0);
   });
 
@@ -326,8 +318,7 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     const snap = engine.getSnapshot();
     expect(snap.waveIndex).toBe(0); // did NOT advance — the clock hasn't elapsed
     expect(snap.monsters).toHaveLength(0); // board is clear, but that's just a breather
-    expect(snap.movement).toEqual({ used: 0, max: 8 }); // still a fresh round every turn
-    expect(snap.players[0].mp).toBe(4);
+    expect(snap.players[0].ap).toBe(4); // still a fresh round every turn
     expect(snap.outcome).toBeNull();
   });
 
@@ -459,6 +450,14 @@ describe('BattleEngine: base destruction and defeat', () => {
     expect(snap.monsters).toHaveLength(2); // wave respawned
   });
 
+  it('a frozen defeat keeps the intents that just resolved, so the UI can still show what killed the base', () => {
+    const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('defeat');
+    expect(engine.getIntents()).toHaveLength(2); // NOT cleared, unlike the victory branch
+    expect(engine.getIntents().every((i) => i.kind === 'skill')).toBe(true); // both ghosts attacked
+  });
+
   it('resetLevel() is a manual full restart, available at any time mid-run — including with a defeat still pending', () => {
     const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // baseHp 2 -> 0, pendingOutcome set
@@ -469,6 +468,15 @@ describe('BattleEngine: base destruction and defeat', () => {
     expect(snap.outcome).toBeNull();
     expect(snap.waveIndex).toBe(0);
     expect(snap.baseHp).toBe(2);
+  });
+
+  it('a defeat confirmed on turn 7+ resets turnNumber back to 1, not just the board', () => {
+    const engine = new BattleEngine(baseAssaultMap(), ['li_yan', 'su_qing'], baseRegistry);
+    engine.endTurn(); // turn 1 -> defeat immediately (2 ghosts x 1 dmg = baseHp 2 -> 0)
+    engine.confirmOutcome();
+    engine.endTurn(); // turn 2 -> defeat again
+    engine.confirmOutcome();
+    expect(engine.getSnapshot().turnNumber).toBe(1); // not 3 — a fresh run starts the count over
   });
 });
 
@@ -494,7 +502,7 @@ describe('BattleEngine: new AI behaviors', () => {
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     expect(engine.getIntents()).toEqual([
-      { kind: 'move', instanceId: expect.any(String), to: { x: 3, y: 1 } }, // steps further away, not toward
+      { kind: 'move', instanceId: expect.any(String), to: { x: 3, y: 1 }, aim: { x: 1, y: 1 }, away: true }, // steps further away, not toward
     ]);
   });
 
@@ -746,5 +754,57 @@ describe('BattleEngine: Phase 1 base defense', () => {
     const snap = engine.getSnapshot();
     expect(snap.monsters[0].position).toEqual({ x: 3, y: 1 }); // did not pass through the hero's tile
     expect(snap.baseHp).toBe(8); // never got close enough to attack
+  });
+});
+
+describe('BattleEngine: getAttackPreviews', () => {
+  function twoGhostsOnSuQingMap(): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'test-preview',
+      nameKey: 'map.testpreview.name',
+      grid,
+      baseHp: 8,
+      playerStarts: [
+        { x: 1, y: 2 }, // li_yan, far from both ghosts — su_qing is the nearest player
+        { x: 4, y: 1 }, // su_qing, flanked by a ghost on each side
+      ],
+      waves: [
+        {
+          turns: AMPLE_TURNS,
+          monsters: [
+            { monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } },
+            { monsterId: 'yin_ghost', spawn: { x: 5, y: 1 } },
+          ],
+        },
+      ],
+    };
+  }
+
+  it('aggregates multiple monsters telegraphing the same target into one combined total', () => {
+    const engine = new BattleEngine(twoGhostsOnSuQingMap(), ['li_yan', 'su_qing'], registry);
+    // both ghosts are adjacent to su_qing (unit 1) and neither is adjacent to li_yan
+    const previews = engine.getAttackPreviews();
+    expect(previews).toEqual([{ target: { kind: 'player', unitIndex: 1 }, damage: 2 }]); // 1 dmg x 2 ghosts
+  });
+
+  it("a shielded target's preview reflects the REAL damage after the shield blocks one hit, not the naive sum", () => {
+    const engine = new BattleEngine(twoGhostsOnSuQingMap(), ['li_yan', 'su_qing'], registry);
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself — 1 charge, blocks exactly one hit
+    const previews = engine.getAttackPreviews();
+    // First hit in intent order is fully blocked (shield consumes its charge, 0 dmg);
+    // the second lands at full damage — so the combined preview is 1, not 2 or 0.
+    expect(previews).toEqual([{ target: { kind: 'player', unitIndex: 1 }, damage: 1 }]);
+  });
+
+  it('a fully-shielded target (enough charges to eat every hit) is omitted from the preview entirely', () => {
+    // su_qing (unit 1) faces only one ghost this time, so one shield charge blocks it completely.
+    const map: MapDef = {
+      ...twoGhostsOnSuQingMap(),
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.useSkill(1, 'shield_skill', 'down');
+    expect(engine.getAttackPreviews()).toEqual([]); // 0 real damage — nothing worth showing
   });
 });

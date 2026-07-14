@@ -64,7 +64,6 @@ const liYanCharacter = {
   spriteRef: 'char_li_yan',
   maxHp: 6,
   actionPoints: 4,
-  maxMp: 4,
   skillIds: ['sword_qi', 'palm_wave'],
 };
 
