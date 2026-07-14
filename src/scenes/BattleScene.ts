@@ -58,6 +58,12 @@ const RULES_PANEL_STATIC = [
   '',
   '點角色→點亮起的格子移動；點技能→點目標施放。用『排雲掌』把妖物推開或推進深淵 ▽。',
   '',
+  '俠客擋在妖物往陣的路上，妖物會改打俠客——用身體擋路要付出血量代價，要衡量值不值得。',
+  '',
+  '移動點（上方『移動 X/Y』）：兩名俠客共用，走一步花 1 點。',
+  '',
+  '真氣 💧：每個俠客自己的，施展技能花按鈕上標的『💧數字』，跟移動點分開算；真氣用完就放不出那招，但還能移動。',
+  '',
   '不用殺光——只要撐過每一波、陣還活著就贏。',
 ].join('\n');
 
@@ -104,7 +110,7 @@ export class BattleScene extends Phaser.Scene {
   private skillDescText!: Phaser.GameObjects.Text;
   private skillButtons: Button[] = [];
   private endTurnButton!: Button;
-  private undoButton!: Button;
+  private resetTurnButton!: Button;
 
   private selectedUnit = 0;
   private armedSkillId: string | null = null;
@@ -245,8 +251,12 @@ export class BattleScene extends Phaser.Scene {
       const rowArr: Phaser.GameObjects.Rectangle[] = [];
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
+        // Same footprint as the static tile rect (drawStaticTiles' TILE - 2) —
+        // a smaller overlay left a permanent unpainted border where the
+        // static color always showed through, which could look like a
+        // leftover tint bleeding onto a tile that should be fully clear.
         const rect = this.add
-          .rectangle(px, py, TILE - 4, TILE - 4, 0xffffff, 0)
+          .rectangle(px, py, TILE - 2, TILE - 2, 0xffffff, 0)
           .setDepth(1);
         if (ch !== '#' && ch !== 'B') {
           rect.setInteractive({ useHandCursor: true });
@@ -276,7 +286,7 @@ export class BattleScene extends Phaser.Scene {
     this.skillButtons = [0, 1].map((i) =>
       this.makeButton(20 + i * 210, barY, 200, 40, () => this.toggleSkill(i)),
     );
-    this.undoButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleUndo());
+    this.resetTurnButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleResetTurn());
     this.endTurnButton = this.makeButton(this.scale.width - 170, barY, 150, 40, () => this.handleEndTurn());
 
     this.skillDescText = this.add.text(20, barY + 46, '', {
@@ -325,7 +335,7 @@ export class BattleScene extends Phaser.Scene {
           break;
         case 'z':
         case 'Z':
-          this.handleUndo();
+          this.handleResetTurn();
           break;
         case 'Enter':
           this.handleEndTurn();
@@ -371,8 +381,8 @@ export class BattleScene extends Phaser.Scene {
     this.render();
   }
 
-  private handleUndo() {
-    this.engine.undo();
+  private handleResetTurn() {
+    this.engine.resetTurn();
     this.armedSkillId = null;
     this.render();
   }
@@ -383,7 +393,13 @@ export class BattleScene extends Phaser.Scene {
 
     if (this.armedSkillId) {
       const dir = this.targetable.get(key);
-      if (!dir) return;
+      if (!dir) {
+        // Armed but clicked a tile the skill can't reach — same "that didn't
+        // work" feedback as an engine-rejected action, so a miss never looks
+        // like the click silently failed to register.
+        this.cameras.main.shake(80, 0.002);
+        return;
+      }
       const skillId = this.armedSkillId;
       this.armedSkillId = null;
       const res = this.engine.useSkill(this.selectedUnit, skillId, dir);
@@ -393,7 +409,10 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const path = this.reachable.get(key);
-    if (!path) return;
+    if (!path) {
+      this.cameras.main.shake(80, 0.002); // clicked a tile out of movement range
+      return;
+    }
     for (const dir of path) {
       const res = this.engine.moveUnit(this.selectedUnit, dir);
       if (!res.ok) {
@@ -664,13 +683,17 @@ export class BattleScene extends Phaser.Scene {
     this.skillButtons.forEach((btn, i) => {
       const skillId = selected?.skillIds[i];
       const skill = skillId ? registry.skills[skillId] : undefined;
+      const unitAlive = (selected?.hp ?? 0) > 0;
+      // Distinguished from "unit dead" / "no skill" so a player can tell
+      // "not enough Qi" apart from a click that simply didn't land.
+      const notEnoughMp = !!skill && unitAlive && selected!.mp < skill.mpCost;
       const nameWithStats = skill
         ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)} 💧${skill.mpCost}`
         : '';
-      const notEnoughMp = !skill || (selected?.mp ?? 0) < skill.mpCost;
-      if (!skillId || notEnoughMp || (selected?.hp ?? 0) <= 0) {
+      const label = notEnoughMp ? `${nameWithStats}\n${i18n.t('ui.not_enough_mp')}` : nameWithStats;
+      if (!skillId || notEnoughMp || !unitAlive) {
         btn.bg.setFillStyle(COLORS.buttonBg, 0.4);
-        btn.label.setText(nameWithStats);
+        btn.label.setText(label);
         btn.bg.disableInteractive();
       } else {
         const armed = this.armedSkillId === skillId;
@@ -679,7 +702,7 @@ export class BattleScene extends Phaser.Scene {
         btn.bg.setInteractive({ useHandCursor: true });
       }
     });
-    this.undoButton.label.setText(i18n.t('ui.undo'));
+    this.resetTurnButton.label.setText(i18n.t('ui.reset_turn'));
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
 
     this.skillDescText.setText(
@@ -696,9 +719,14 @@ export class BattleScene extends Phaser.Scene {
       );
     }
 
+    const isLastWave = snap.waveIndex === yanwuGroundMap.waves.length - 1;
+    const waveCountdown = isLastWave
+      ? i18n.t('ui.last_wave_hold')
+      : `${i18n.t('ui.next_wave_in')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`;
+
     const movText = `   ${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`;
     this.hudText.setText(
-      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
+      `${i18n.t('map.yanwu_ground.name')}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}   ${waveCountdown}   ${i18n.t('ui.lives')} ${snap.lives}   ${i18n.t('ui.turn')} ${snap.turnNumber}${movText}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
@@ -707,7 +735,7 @@ export class BattleScene extends Phaser.Scene {
     const liveStatus = [
       `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
       `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${yanwuGroundMap.waves.length}`,
-      `${i18n.t('ui.turns_left')} ${snap.turnsLeftInWave}/${snap.waveTurns}`,
+      waveCountdown,
       `${i18n.t('ui.mov')} ${snap.movement.max - snap.movement.used}/${snap.movement.max}`,
       `MP ${selectedMp}`,
     ].join('\n');
