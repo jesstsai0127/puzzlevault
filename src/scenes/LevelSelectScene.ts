@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { maps, tutorials } from '../../content/registry';
+import { maps, tutorials, LEVEL_GROUPS } from '../../content/registry';
 import { MAP_QUERY_PARAM, TUTORIAL_QUERY_PARAM } from './levelNav';
 
 const i18n = new I18n(en, zhTW);
@@ -67,10 +67,32 @@ export class LevelSelectScene extends Phaser.Scene {
       label.setDepth(1);
     });
 
-    const mapIds = Object.keys(maps);
+    // Difficulty tiers (LEVEL_GROUPS, content/registry.ts) are a pure
+    // selection-screen grouping on top of `maps` — the easy/hard mapIds they
+    // reference are real entries in `maps` (so autoplay-harness etc. can
+    // still address them directly by id) but must NOT also get their own
+    // top-level row here, or demo1's three difficulty variants would show up
+    // as four confusing entries (one generic + three tiered). Hide them from
+    // the normal per-map loop below; the group's own row (rendered right
+    // after) is what surfaces them.
+    const tieredMapIds = new Set(LEVEL_GROUPS.flatMap((g) => [g.easy, g.hard].filter((id): id is string => !!id)));
+    const mapIds = Object.keys(maps).filter((id) => !tieredMapIds.has(id));
+    const groupByNormalMapId = new Map(LEVEL_GROUPS.map((g) => [g.normal, g]));
+
+    const goToMap = (mapId: string) => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(TUTORIAL_QUERY_PARAM);
+      url.searchParams.set(MAP_QUERY_PARAM, mapId);
+      window.location.href = url.toString();
+    };
+
     mapIds.forEach((mapId, i) => {
       const map = maps[mapId];
       const y = 220 + (tutorialIds.length + i) * 70;
+      const group = groupByNormalMapId.get(mapId);
+
+      // The main row button always targets this map's own "normal" entry —
+      // demo2/3/4 (no group) behave exactly as before.
       const bg = this.add
         .rectangle(this.scale.width / 2, y, 360, 50, 0x2a2a35)
         .setStrokeStyle(1, 0x3a3a46)
@@ -84,13 +106,39 @@ export class LevelSelectScene extends Phaser.Scene {
         .setOrigin(0.5);
       bg.on('pointerover', () => bg.setFillStyle(0x3a3a46));
       bg.on('pointerout', () => bg.setFillStyle(0x2a2a35));
-      bg.on('pointerdown', () => {
-        const url = new URL(window.location.href);
-        url.searchParams.delete(TUTORIAL_QUERY_PARAM);
-        url.searchParams.set(MAP_QUERY_PARAM, mapId);
-        window.location.href = url.toString();
-      });
+      bg.on('pointerdown', () => goToMap(mapId));
       label.setDepth(1);
+
+      if (!group) return;
+
+      // Difficulty-tier buttons: small, color-coded, stacked to the right of
+      // the main row so demo1's easy/normal/hard choice reads as one level
+      // with three doors, not three separate levels.
+      const tierX = this.scale.width / 2 + 260;
+      const tiers: { key: 'easy' | 'normal' | 'hard'; mapId?: string; color: number; hoverColor: number }[] = [
+        { key: 'easy', mapId: group.easy, color: 0x1f3a2e, hoverColor: 0x2e5a44 },
+        { key: 'normal', mapId: group.normal, color: 0x2a2a35, hoverColor: 0x3a3a46 },
+        { key: 'hard', mapId: group.hard, color: 0x3a1f1f, hoverColor: 0x5a2e2e },
+      ];
+      tiers.forEach((tier, ti) => {
+        if (!tier.mapId) return;
+        const tx = tierX + ti * 90;
+        const tierBg = this.add
+          .rectangle(tx, y, 80, 50, tier.color)
+          .setStrokeStyle(1, tier.hoverColor)
+          .setInteractive({ useHandCursor: true });
+        const tierLabel = this.add
+          .text(tx, y, i18n.t(`ui.difficulty_${tier.key}`), {
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            color: '#f1f1f6',
+          })
+          .setOrigin(0.5);
+        tierBg.on('pointerover', () => tierBg.setFillStyle(tier.hoverColor));
+        tierBg.on('pointerout', () => tierBg.setFillStyle(tier.color));
+        tierBg.on('pointerdown', () => goToMap(tier.mapId!));
+        tierLabel.setDepth(1);
+      });
     });
   }
 }
