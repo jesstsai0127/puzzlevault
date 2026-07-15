@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "tut_healer",
+  "nameKey": "tutorial.tut_healer.name",
+  "map": {
+    "formatVersion": 1,
+    "id": "tut_healer_map",
+    "nameKey": "tutorial.tut_healer.mapName",
+    "grid": ["#####", "#   #", "#  B#", "#   #", "#####"],
+    "baseHp": 5,
+    "playerStarts": [
+      { "x": 1, "y": 3 },
+      { "x": 1, "y": 1 }
+    ],
+    "waves": [
+      {
+        "turns": 5,
+        "monsters": [{ "monsterId": "jiangshi", "spawn": { "x": 2, "y": 3 } }]
+      }
+    ],
+    "squadCharacterIds": ["li_yan", "bai_zhi"]
+  },
+  "script": [
+    { "textKey": "tutorial.tut_healer.step1" },
+    { "textKey": "tutorial.tut_healer.step2", "action": { "type": "endTurn" } },
+    { "textKey": "tutorial.tut_healer.step3" },
+    { "textKey": "tutorial.tut_healer.step4", "action": { "type": "move", "unitIndex": 1, "dir": "down" } },
+    { "textKey": "tutorial.tut_healer.step5", "action": { "type": "useSkill", "unitIndex": 1, "skillId": "minor_heal", "dir": "down" } },
+    { "textKey": "tutorial.tut_healer.step6" }
+  ]
+}
