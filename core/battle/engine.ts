@@ -594,10 +594,42 @@ export class BattleEngine {
   private multiStepToward(start: Vec2, target: Vec2, maxSteps: number): Vec2 {
     let pos = { ...start };
     for (let i = 0; i < maxSteps; i++) {
-      const dir = stepDirectionToward(pos, target);
-      const next = add(pos, MOVE_VECTORS[dir]);
-      if (!this.isWalkable(next) || this.isOccupied(next)) break;
-      pos = next;
+      const dx = target.x - pos.x;
+      const dy = target.y - pos.y;
+      if (dx === 0 && dy === 0) break;
+
+      const primaryDir = stepDirectionToward(pos, target);
+      const primaryNext = add(pos, MOVE_VECTORS[primaryDir]);
+      if (this.isWalkable(primaryNext) && !this.isOccupied(primaryNext)) {
+        pos = primaryNext;
+        continue;
+      }
+
+      // The greedy axis is blocked (wall/hazard/unit) — try the other axis
+      // before giving up on this step. Without this fallback, a hazard tile
+      // sitting exactly on the tied/near-tied diagonal permanently walls a
+      // monster off with zero progress every turn, even though a clear path
+      // exists one axis over.
+      const horizontal = primaryDir === 'left' || primaryDir === 'right';
+      const secondaryDir: CardinalDir | null = horizontal
+        ? dy === 0
+          ? null
+          : dy > 0
+            ? 'down'
+            : 'up'
+        : dx === 0
+          ? null
+          : dx > 0
+            ? 'right'
+            : 'left';
+      if (secondaryDir) {
+        const secondaryNext = add(pos, MOVE_VECTORS[secondaryDir]);
+        if (this.isWalkable(secondaryNext) && !this.isOccupied(secondaryNext)) {
+          pos = secondaryNext;
+          continue;
+        }
+      }
+      break; // both axes blocked (or no secondary axis toward the target) — genuinely stuck
     }
     return pos;
   }
