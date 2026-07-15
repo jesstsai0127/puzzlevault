@@ -27,6 +27,9 @@ const HAZARD_DAMAGE = 3;
 /** Damage dealt to a pushed unit (and whatever it collides with) when a shove can't complete its full distance. */
 const PUSH_COLLISION_DAMAGE = 1;
 
+/** Flat, unavoidable damage to any living unit still standing on a poison-mist ('*') tile at endTurn() — see applyPoisonMistDamage(). */
+const POISON_MIST_DAMAGE = 1;
+
 type ResolvedTarget =
   | { kind: 'self' }
   | { kind: 'player'; unit: PlayerUnitState }
@@ -199,7 +202,7 @@ export class BattleEngine {
     this.pushHistory();
     const dirVec = MOVE_VECTORS[dir];
     for (const effect of skill.effects) {
-      const target = this.resolveTarget(unit.position, dirVec, skill.range, effect.target, true);
+      const target = this.resolveTarget(unit.position, dirVec, skill.range, effect.target, true, effect.type === 'heal');
       this.applyEffect(effect, target, unit);
     }
     unit.ap -= skill.mpCost;
@@ -261,11 +264,19 @@ export class BattleEngine {
         if (!skill) continue;
         const dirVec = MOVE_VECTORS[intent.direction];
         for (const effect of skill.effects) {
-          const target = this.resolveTarget(monster.position, dirVec, skill.range, effect.target, false);
+          const target = this.resolveTarget(monster.position, dirVec, skill.range, effect.target, false, effect.type === 'heal');
           this.applyEffect(effect, target, monster);
         }
       }
     }
+
+    // Poison mist: flat, shield-bypassing damage to any living unit — player
+    // or monster, deliberately both directions — still standing on a '*'
+    // tile once this turn's moves/attacks have resolved. Checked here (after
+    // intents move units, before the dead are swept) so a monster whose
+    // telegraphed move just carried it onto the mist takes the tick the same
+    // turn, same as a player who ended their turn standing on it.
+    this.applyPoisonMistDamage();
 
     // Base HP only ever changes above (a monster's stored intent resolving),
     // never during the player's own turn — so undo/pushHistory doesn't need
@@ -675,30 +686,44 @@ export class BattleEngine {
   // Effect resolution
   // ---------------------------------------------------------------------
 
+  /**
+   * `targetsAllies` flips WHICH side's units this ray can land on — false
+   * (damage/push/shield's usual case) means a player's shot only ever finds
+   * a monster and a monster's shot only ever finds a player, same as before;
+   * true (heal) means a player's cast only ever finds a fellow player and a
+   * monster's cast only ever finds a fellow monster. applyEffect()'s heal
+   * case has no ally/enemy check of its own — this is the one place that
+   * decides who a heal can legally land on, so a healer can never be aimed
+   * at a monster (see computeTargetable() in BattleScene for the matching UI
+   * restriction that keeps the player from even trying).
+   */
   private resolveTarget(
     casterPos: Vec2,
     dir: Vec2,
     range: number,
     mode: TargetMode,
     casterIsPlayer: boolean,
+    targetsAllies = false,
   ): ResolvedTarget | null {
     if (mode === 'self') return { kind: 'self' };
 
+    const searchPlayers = targetsAllies ? casterIsPlayer : !casterIsPlayer;
     for (let step = 1; step <= range; step++) {
       const p = add(casterPos, { x: dir.x * step, y: dir.y * step });
       // A monster's shot reaching its own base tile hits the base; a
       // player's shot never targets the base — it just stops there instead.
+      // A heal ray never targets the base either (nothing to apply there).
       if (this.isBaseTile(p)) {
-        return casterIsPlayer ? null : { kind: 'base' };
+        return casterIsPlayer || targetsAllies ? null : { kind: 'base' };
       }
-      // A shot's line of sight is only blocked by real walls — it flies over hazard tiles.
+      // A shot's line of sight is only blocked by real walls — it flies over hazard AND poison-mist tiles.
       if (this.isWall(p)) return null;
-      if (casterIsPlayer) {
-        const m = this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
-        if (m) return { kind: 'monster', unit: m };
-      } else {
+      if (searchPlayers) {
         const pl = this.players.find((x) => x.hp > 0 && equalsVec2(x.position, p));
         if (pl) return { kind: 'player', unit: pl };
+      } else {
+        const m = this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
+        if (m) return { kind: 'monster', unit: m };
       }
     }
     return null;
@@ -797,6 +822,32 @@ export class BattleEngine {
     }
   }
 
+  /**
+   * Poison mist: every living unit — player AND monster, deliberately both
+   * directions, unlike the abyss hazard which only kills monsters — standing
+   * on a '*' tile takes a flat tick. Bypasses shield entirely (a shield
+   * charge blocks a hit, not a terrain effect) and goes through the same
+   * dealDamage-adjacent path as everything else so it lands in getLastEvents()
+   * for the UI's floating-number feedback. A unit ticked to 0 HP here dies
+   * through the ordinary path: monsters are swept by the hp>0 filter right
+   * after this runs, players just sit at hp<=0 same as any other death.
+   */
+  private applyPoisonMistDamage(): void {
+    for (const p of this.players) {
+      if (p.hp > 0 && this.isPoisonMist(p.position)) this.applyUnblockableDamage(p, POISON_MIST_DAMAGE);
+    }
+    for (const m of this.monsters) {
+      if (m.hp > 0 && this.isPoisonMist(m.position)) this.applyUnblockableDamage(m, POISON_MIST_DAMAGE);
+    }
+  }
+
+  /** Like dealDamageWithEvent, but a shield charge does NOT block it — used by poison mist, which is a terrain tick, not a combat hit. */
+  private applyUnblockableDamage(unit: PlayerUnitState | MonsterUnitState, amount: number): void {
+    const hpBefore = unit.hp;
+    unit.hp = Math.max(0, unit.hp - amount);
+    this.pendingEvents.push({ kind: 'damage', target: this.combatTargetFor(unit), amount: hpBefore - unit.hp, blocked: false });
+  }
+
   /** A monster shoved into a hazard tile doesn't survive; a player character takes a flat hit instead (shield can still block it). */
   private applyHazardDamage(unit: PlayerUnitState | MonsterUnitState): void {
     if ('instanceId' in unit) {
@@ -812,11 +863,11 @@ export class BattleEngine {
   // Grid helpers
   // ---------------------------------------------------------------------
 
-  /** Normal movement: only plain floor is walkable — hazard and base tiles block it same as a wall. */
+  /** Normal movement: plain floor AND poison mist are walkable — hazard and base tiles block it same as a wall. */
   private isWalkable(p: Vec2): boolean {
     const row = this.map.grid[p.y];
     if (row === undefined || p.x < 0 || p.x >= row.length) return false;
-    return row[p.x] === ' ';
+    return row[p.x] === ' ' || row[p.x] === '*';
   }
 
   /** Line-of-sight blocking: a real wall or a base tile (or out of bounds) stops a shot — hazard tiles don't. */
@@ -836,6 +887,12 @@ export class BattleEngine {
     const row = this.map.grid[p.y];
     if (row === undefined || p.x < 0 || p.x >= row.length) return false;
     return row[p.x] === '~';
+  }
+
+  private isPoisonMist(p: Vec2): boolean {
+    const row = this.map.grid[p.y];
+    if (row === undefined || p.x < 0 || p.x >= row.length) return false;
+    return row[p.x] === '*';
   }
 
   private isOccupied(p: Vec2): boolean {
