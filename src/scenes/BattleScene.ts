@@ -488,23 +488,32 @@ export class BattleScene extends Phaser.Scene {
     }
     const step = tutorial.script[index];
     this.tutorialNarrationText?.setText(i18n.t(step.textKey));
-    if (step.action) {
-      this.applyTutorialAction(step.action);
+    if (step.action && !this.applyTutorialAction(step.action)) {
+      // The scripted action was rejected by the engine (e.g. a stale script
+      // no longer matches its map) — stop here instead of silently playing
+      // narration for something that never happened on screen.
+      console.warn(`[tutorial] step ${index} action failed, stopping playback:`, step.action);
+      this.render();
+      return;
     }
     this.render();
     this.time.delayedCall(TUTORIAL_STEP_PAUSE_MS, () => this.playTutorialStep(index + 1));
   }
 
-  private applyTutorialAction(action: NonNullable<TutorialStep['action']>) {
+  /** Returns whether the action was accepted by the engine. */
+  private applyTutorialAction(action: NonNullable<TutorialStep['action']>): boolean {
     if (action.type === 'move') {
       const res = this.engine.moveUnit(action.unitIndex, action.dir);
       if (res.ok) this.playHitFeedback(this.engine.getLastEvents());
+      return res.ok;
     } else if (action.type === 'useSkill') {
       const res = this.engine.useSkill(action.unitIndex, action.skillId, action.dir);
       if (res.ok) this.playHitFeedback(this.engine.getLastEvents());
-    } else if (action.type === 'endTurn') {
+      return res.ok;
+    } else {
       this.engine.endTurn();
       this.playHitFeedback(this.engine.getLastEvents());
+      return true;
     }
   }
 
