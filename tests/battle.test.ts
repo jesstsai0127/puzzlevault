@@ -672,6 +672,201 @@ describe('BattleEngine: hazard terrain', () => {
   });
 });
 
+describe('BattleEngine: poison mist terrain', () => {
+  // poison mist '*' at (4,2); base tile ('B') at (1,3) — mirrors the hazard
+  // fixture's layout so these tests exercise the same shape of map.
+  const mistGrid = ['########', '#      #', '#   *  #', '#B     #', '########'];
+
+  it('a player standing on poison mist takes flat damage on endTurn, recorded in getLastEvents', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'mist-player',
+      nameKey: 'map.mistplayer.name',
+      grid: mistGrid,
+      baseHp: 8,
+      // li_yan starts right next to the mist tile and steps onto it.
+      playerStarts: [{ x: 3, y: 2 }, { x: 1, y: 1 }],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, 'right'); // (3,2) -> (4,2), onto the mist
+    expect(engine.getSnapshot().players[0].position).toEqual({ x: 4, y: 2 });
+    const hpBefore = engine.getSnapshot().players[0].hp;
+
+    engine.endTurn();
+
+    expect(engine.getSnapshot().players[0].hp).toBe(hpBefore - 1);
+    expect(engine.getLastEvents()).toContainEqual({
+      kind: 'damage',
+      target: { kind: 'player', unitIndex: 0 },
+      amount: 1,
+      blocked: false,
+    });
+  });
+
+  it('a monster standing on poison mist also takes flat damage on endTurn (bidirectional — not just a player hazard)', () => {
+    // This suite's local yinGhost fixture (top of file) hunts nearestPlayer,
+    // not the base. li_yan sits directly adjacent (range 1) to the mist tile
+    // the ghost spawns on, so targetInRange is already satisfied at spawn —
+    // its intent is useSkill (stationary), not moveToward. That matters
+    // here: a moveToward intent would walk it OFF the mist tile before the
+    // end-of-turn poison tick checks its position.
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'mist-monster',
+      nameKey: 'map.mistmonster.name',
+      grid: ['#######', '#     #', '#    *#', '#B    #', '#######'],
+      baseHp: 8,
+      playerStarts: [{ x: 4, y: 2 }, { x: 1, y: 3 }], // li_yan adjacent to the mist tile; su_qing out of the way
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }] }], // spawns directly on the mist tile
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    const targetId = engine.getSnapshot().monsters[0].instanceId;
+    const hpBefore = engine.getSnapshot().monsters[0].hp;
+    expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 5, y: 2 }); // still on the mist tile
+    expect(engine.getIntents()).toEqual([
+      { kind: 'skill', instanceId: targetId, skillId: 'ghost_claw', direction: 'left' },
+    ]); // stationary (attacks li_yan), confirming it won't step off the mist this turn
+
+    engine.endTurn();
+
+    const monster = engine.getSnapshot().monsters.find((m) => m.instanceId === targetId);
+    expect(monster?.hp).toBe(hpBefore - 1);
+    expect(engine.getLastEvents()).toContainEqual({
+      kind: 'damage',
+      target: { kind: 'monster', instanceId: targetId },
+      amount: 1,
+      blocked: false,
+    });
+  });
+
+  it('poison mist damage bypasses shield — the charge is not consumed and full damage still lands', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'mist-shield',
+      nameKey: 'map.mistshield.name',
+      grid: mistGrid,
+      baseHp: 8,
+      playerStarts: [{ x: 1, y: 1 }, { x: 3, y: 2 }], // su_qing (unit 1) starts adjacent to the mist tile
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }], // far away, won't attack this turn
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself — 1 charge
+    engine.moveUnit(1, 'right'); // su_qing (3,2) -> (4,2), onto the mist, shield still up
+    expect(engine.getSnapshot().players[1].shield).toBe(1);
+    const hpBefore = engine.getSnapshot().players[1].hp;
+
+    engine.endTurn();
+
+    const suQing = engine.getSnapshot().players[1];
+    expect(suQing.shield).toBe(1); // charge untouched — mist isn't a combat hit
+    expect(suQing.hp).toBe(hpBefore - 1); // full damage still landed
+  });
+
+  it("a skill's line of sight flies over a poison-mist tile instead of stopping at it", () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'mist-sightline',
+      nameKey: 'map.mistsightline.name',
+      grid: mistGrid,
+      baseHp: 8,
+      playerStarts: [{ x: 1, y: 1 }, { x: 2, y: 2 }], // su_qing at (2,2), mist at (4,2) between it and the monster
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    const res = engine.useSkill(1, 'ranged_skill', 'right'); // range 3: (3,2) floor, (4,2) mist, (5,2) monster
+    expect(res).toEqual({ ok: true });
+    expect(engine.getSnapshot().monsters[0].hp).toBe(0); // maxHp 2 - 2 damage landed, the ray wasn't blocked by the mist
+  });
+});
+
+describe('BattleEngine: heal targeting (bai_zhi-style skills — allies only, never a monster)', () => {
+  const minorHeal: SkillDef = {
+    formatVersion: 1,
+    id: 'minor_heal',
+    nameKey: 'skill.minor_heal.name',
+    descKey: 'skill.minor_heal.desc',
+    range: 3,
+    mpCost: 1,
+    effects: [{ type: 'heal', amount: 2, target: 'firstInLine' }],
+  };
+  const baiZhi: CharacterDef = {
+    formatVersion: 1,
+    id: 'bai_zhi',
+    nameKey: 'character.bai_zhi.name',
+    spriteRef: 'char_bai_zhi',
+    maxHp: 5,
+    actionPoints: 4,
+    skillIds: ['minor_heal'],
+  };
+  const healRegistry: ContentRegistry = {
+    characters: { ...registry.characters, bai_zhi: baiZhi },
+    skills: { ...registry.skills, minor_heal: minorHeal },
+    monsters: registry.monsters,
+  };
+
+  it('heal cast by a player only lands on a fellow player, never the monster in the same line', () => {
+    // Line of fire from bai_zhi (1,1) rightward: a monster at (2,1) sits
+    // WITHIN range, but li_yan (the only ally) is at (6,1) — past this
+    // skill's range 3. If heal ignored ally/enemy, the ray would land on the
+    // in-range monster; the correct behavior is to find nothing at all.
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'heal-target',
+      nameKey: 'map.healtarget.name',
+      grid: ['#########', '#       #', '#########'],
+      baseHp: 8,
+      playerStarts: [{ x: 1, y: 1 }, { x: 6, y: 1 }], // bai_zhi at (1,1); li_yan far at (6,1), out of range 3
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }] }], // monster IS within range 3, ally is not
+    };
+    const engine = new BattleEngine(map, ['bai_zhi', 'li_yan'], healRegistry);
+    const monsterHpBefore = engine.getSnapshot().monsters[0].hp;
+    const res = engine.useSkill(0, 'minor_heal', 'right');
+    expect(res).toEqual({ ok: true }); // the action itself succeeds (AP spent) even if the ray finds nobody
+    expect(engine.getSnapshot().monsters[0].hp).toBe(monsterHpBefore); // the monster in the line took NO heal-as-damage and gained no HP either
+    expect(engine.getLastEvents()).toEqual([]); // no target resolved -> no event
+  });
+
+  it('heal cast by a player finds and heals a fellow player standing past a monster in the same line, jumping over it', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'heal-past-monster',
+      nameKey: 'map.healpastmonster.name',
+      grid: ['########', '#      #', '#      #', '#B     #', '########'],
+      baseHp: 8,
+      // bai_zhi (1,1) -> yin_ghost at (3,1) -> li_yan (ally) at (4,1): all
+      // within heal's range 3, and deliberately NOT equidistant from the
+      // ghost (li_yan is 1 tile away, bai_zhi is 2) so this suite's local
+      // yinGhost fixture (hunts nearestPlayer, ties broken toward whichever
+      // player sorts first) unambiguously targets li_yan, not bai_zhi. It's
+      // already in range at turn start, so the FIRST endTurn lands its
+      // ghost_claw hit on li_yan before bai_zhi ever acts — giving a real,
+      // non-full HP target to heal, not a synthetic mutation.
+      playerStarts: [{ x: 1, y: 1 }, { x: 4, y: 1 }],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] }],
+    };
+    const engine = new BattleEngine(map, ['bai_zhi', 'li_yan'], healRegistry);
+    // Two turns of ghost_claw (1 dmg each) so li_yan is down exactly 2 HP —
+    // enough for the heal's full nominal amount to land without clipping
+    // against maxHp, which would understate the healed amount below.
+    engine.endTurn();
+    engine.endTurn();
+    const hurtHp = engine.getSnapshot().players[1].hp;
+    expect(hurtHp).toBeLessThan(engine.getSnapshot().players[1].maxHp);
+    const monsterId = engine.getSnapshot().monsters[0].instanceId;
+
+    const res = engine.useSkill(0, 'minor_heal', 'right'); // bai_zhi heals through the jiangshi standing in the line
+    expect(res).toEqual({ ok: true });
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'heal', target: { kind: 'player', unitIndex: 1 }, amount: 2 },
+    ]);
+    expect(engine.getSnapshot().players[1].hp).toBe(hurtHp + 2);
+    // The monster standing directly in the ray's path took no heal-as-damage and gained no HP.
+    const monster = engine.getSnapshot().monsters.find((m) => m.instanceId === monsterId);
+    expect(monster?.hp).toBe(engine.getSnapshot().monsters.find((m) => m.instanceId === monsterId)!.maxHp);
+  });
+});
+
 describe('BattleEngine: Phase 1 base defense', () => {
   // A monster that targets the base instead of the nearest player — mirrors
   // content/monsters/yin_ghost.json's real Phase 1 aiRules.
