@@ -5,7 +5,7 @@ import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry, tutoria
 
 describe('Phase 0 content registry', () => {
   it('parses all builtin content without throwing', () => {
-    expect(Object.keys(registry.characters)).toEqual(['li_yan', 'su_qing', 'bai_zhi']);
+    expect(Object.keys(registry.characters)).toEqual(['li_yan', 'su_qing', 'bai_zhi', 'ling_er']);
     expect(Object.keys(registry.monsters)).toEqual([
       'yin_ghost',
       'jiangshi',
