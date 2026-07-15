@@ -81,4 +81,34 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
     expect(snap.monsters).toHaveLength(2);
     expect(snap.baseTiles.length).toBeGreaterThan(0);
   });
+
+  it("demo2's later waves include yuan_ling, giving it a second monster archetype (not just yin_ghost)", () => {
+    const demo2 = maps.demo2;
+    const allMonsterIds = new Set(demo2.waves.flatMap((w) => w.monsters.map((m) => m.monsterId)));
+    expect(allMonsterIds.has('yin_ghost')).toBe(true);
+    expect(allMonsterIds.has('yuan_ling')).toBe(true);
+  });
+
+  it('no monster on demo2 ever gets stuck with a move intent that goes nowhere (regression: hazard tiles sat directly in the greedy spawn path)', () => {
+    // Playing purely passively (no player actions) still cycles through
+    // defeat -> confirm -> retry, which is enough to walk every spawn
+    // pattern across all four waves multiple times.
+    const engine = new BattleEngine(maps.demo2, STARTING_SQUAD, registry);
+    for (let i = 0; i < 60; i++) {
+      const snap = engine.getSnapshot();
+      if (snap.outcome) {
+        engine.confirmOutcome();
+        continue;
+      }
+      for (const intent of engine.getIntents()) {
+        if (intent.kind !== 'move') continue;
+        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+        // A move intent whose destination equals its current position means
+        // resolveMoveDestination() couldn't take a single step — the classic
+        // symptom of a hazard tile sitting directly on the greedy path.
+        expect(m && (m.position.x !== intent.to.x || m.position.y !== intent.to.y)).toBe(true);
+      }
+      engine.endTurn();
+    }
+  });
 });
