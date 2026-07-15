@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
-import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry } from '../content/registry';
+import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry, tutorials } from '../content/registry';
 
 describe('Phase 0 content registry', () => {
   it('parses all builtin content without throwing', () => {
@@ -110,5 +110,62 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
       }
       engine.endTurn();
     }
+  });
+});
+
+describe('tutorials registry (scripted teaching levels)', () => {
+  it('parses all three builtin tutorials without throwing, each with a non-empty script', () => {
+    expect(Object.keys(tutorials)).toEqual(['tut_ap_cost', 'tut_opportunity_attack', 'tut_push_into_abyss']);
+    for (const tutorial of Object.values(tutorials)) {
+      expect(tutorial.script.length).toBeGreaterThan(0);
+      expect(tutorial.map.playerStarts.length).toBeGreaterThanOrEqual(STARTING_SQUAD.length);
+    }
+  });
+
+  it('builds a playable BattleEngine from each tutorial map and can replay its whole script without throwing', () => {
+    for (const tutorial of Object.values(tutorials)) {
+      const engine = new BattleEngine(tutorial.map, STARTING_SQUAD, registry);
+      for (const step of tutorial.script) {
+        if (!step.action) continue;
+        if (step.action.type === 'move') {
+          engine.moveUnit(step.action.unitIndex, step.action.dir);
+        } else if (step.action.type === 'useSkill') {
+          engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
+        } else {
+          engine.endTurn();
+        }
+      }
+      expect(engine.getSnapshot()).toBeDefined();
+    }
+  });
+
+  it('tut_push_into_abyss actually kills the ghost by pushing it into the hazard tile', () => {
+    const tutorial = tutorials.tut_push_into_abyss;
+    const engine = new BattleEngine(tutorial.map, STARTING_SQUAD, registry);
+    expect(engine.getSnapshot().monsters).toHaveLength(1);
+    const pushStep = tutorial.script.find((s) => s.action?.type === 'useSkill');
+    expect(pushStep?.action).toBeDefined();
+    const action = pushStep!.action!;
+    if (action.type === 'useSkill') {
+      engine.useSkill(action.unitIndex, action.skillId, action.dir);
+    }
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
+  });
+
+  it('tut_opportunity_attack script actually triggers a counter-hit on Li Yan when they retreat', () => {
+    const tutorial = tutorials.tut_opportunity_attack;
+    const engine = new BattleEngine(tutorial.map, STARTING_SQUAD, registry);
+    for (const step of tutorial.script) {
+      if (!step.action) continue;
+      if (step.action.type === 'move') engine.moveUnit(step.action.unitIndex, step.action.dir);
+      else if (step.action.type === 'useSkill') engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
+      else engine.endTurn();
+    }
+    const liYan = engine.getSnapshot().players[0];
+    // li_yan has 6 max HP; the ghost's ghost_claw deals 2 — a full-HP hero
+    // ending below max after a script with no monster-initiated turn (no
+    // endTurn was scripted) means the only thing that could have hit them
+    // is the disengage opportunity attack in the retreat step.
+    expect(liYan.hp).toBeLessThan(liYan.maxHp);
   });
 });
