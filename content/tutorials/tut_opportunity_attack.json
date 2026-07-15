@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "tut_opportunity_attack",
+  "nameKey": "tutorial.tut_opportunity_attack.name",
+  "map": {
+    "formatVersion": 1,
+    "id": "tut_opportunity_attack_map",
+    "nameKey": "tutorial.tut_opportunity_attack.mapName",
+    "grid": ["#####", "#   #", "#B  #", "#   #", "#####"],
+    "baseHp": 5,
+    "playerStarts": [
+      { "x": 2, "y": 1 },
+      { "x": 3, "y": 1 }
+    ],
+    "waves": [
+      {
+        "turns": 5,
+        "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 3 } }]
+      }
+    ]
+  },
+  "script": [
+    { "textKey": "tutorial.tut_opportunity_attack.step1" },
+    { "textKey": "tutorial.tut_opportunity_attack.step2", "action": { "type": "move", "unitIndex": 0, "dir": "down" } },
+    { "textKey": "tutorial.tut_opportunity_attack.step3" },
+    { "textKey": "tutorial.tut_opportunity_attack.step4", "action": { "type": "useSkill", "unitIndex": 0, "skillId": "sword_qi", "dir": "down" } },
+    { "textKey": "tutorial.tut_opportunity_attack.step5" },
+    { "textKey": "tutorial.tut_opportunity_attack.step6", "action": { "type": "move", "unitIndex": 0, "dir": "up" } },
+    { "textKey": "tutorial.tut_opportunity_attack.step7" }
+  ]
+}
