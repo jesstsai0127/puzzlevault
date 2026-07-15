@@ -1,0 +1,194 @@
+#!/usr/bin/env node
+
+import fs from 'fs';
+import path from 'path';
+import { BattleEngine } from '../core/battle/engine';
+import { registry, maps, STARTING_SQUAD } from '../content/registry';
+import type { CardinalDir } from '../core/geometry';
+
+interface Command {
+  kind: 'move' | 'skill' | 'endTurn';
+  unitIndex?: number;
+  dir?: CardinalDir;
+  skillId?: string;
+}
+
+function printBoard(engine: BattleEngine, mapId: string): void {
+  const snap = engine.getSnapshot();
+  const intents = engine.getIntents();
+  const previews = engine.getAttackPreviews();
+
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(
+    `Turn ${snap.turnNumber} | Wave ${snap.waveIndex + 1} | Turns left in wave: ${snap.turnsLeftInWave} | Base HP: ${snap.baseHp}/${snap.baseMaxHp}`,
+  );
+  console.log(`${'='.repeat(60)}`);
+
+  // Print grid with units
+  const grid = maps[mapId].grid.map((row) => row.split(''));
+  const width = grid[0]?.length ?? 0;
+  const height = grid.length;
+
+  for (let y = 0; y < height; y++) {
+    let line = '';
+    for (let x = 0; x < width; x++) {
+      const cell = grid[y][x];
+      const player = snap.players.find((p) => p.hp > 0 && p.position.x === x && p.position.y === y);
+      const monster = snap.monsters.find((m) => m.hp > 0 && m.position.x === x && m.position.y === y);
+
+      if (player) {
+        line += player.characterId === 'li_yan' ? 'A' : 'B';
+      } else if (monster) {
+        const monId = monster.monsterId;
+        line += monId === 'yin_ghost' ? 'Y' : 'U'; // Y for yin_ghost, U for yuan_ling
+      } else if (cell === '#') {
+        line += '#';
+      } else if (cell === 'B') {
+        line += 'b';
+      } else if (cell === '~') {
+        line += '~';
+      } else {
+        line += '.';
+      }
+    }
+    console.log(line);
+  }
+
+  // Print player state
+  console.log('\nPlayers:');
+  for (let i = 0; i < snap.players.length; i++) {
+    const p = snap.players[i];
+    if (p.hp > 0) {
+      console.log(
+        `  [${i}] ${p.characterId.padEnd(10)} HP: ${p.hp}/${p.maxHp} | AP: ${p.ap}/${p.maxAp} | Pos: (${p.position.x},${p.position.y})`,
+      );
+    }
+  }
+
+  // Print monster state with intents
+  console.log('\nMonsters & Intents:');
+  for (const m of snap.monsters) {
+    if (m.hp > 0) {
+      const intent = intents.find((i) => i.instanceId === m.instanceId);
+      let intentStr = '?';
+      if (intent?.kind === 'move') {
+        intentStr = `move to (${intent.to.x},${intent.to.y})`;
+      } else if (intent?.kind === 'skill') {
+        intentStr = `skill ${intent.skillId} dir ${intent.direction}`;
+      }
+      console.log(
+        `  ${m.monsterId.padEnd(12)} #${m.instanceId.split('#')[1]}: HP ${m.hp}/${m.maxHp} | Pos (${m.position.x},${m.position.y}) | Intent: ${intentStr}`,
+      );
+    }
+  }
+
+  // Print attack previews
+  if (previews.length > 0) {
+    console.log('\nIncoming damage preview:');
+    for (const p of previews) {
+      if (p.target.kind === 'player') {
+        const char = snap.players[p.target.unitIndex];
+        console.log(`  ${char.characterId}: ${p.damage} damage`);
+      } else if (p.target.kind === 'base') {
+        console.log(`  Base: ${p.damage} damage`);
+      }
+    }
+  }
+}
+
+function executeCommand(engine: BattleEngine, cmd: Command): boolean {
+  if (cmd.kind === 'move') {
+    if (cmd.unitIndex === undefined || !cmd.dir) return false;
+    const result = engine.moveUnit(cmd.unitIndex, cmd.dir);
+    if (!result.ok) {
+      console.warn(`  Move failed: ${result.reason}`);
+      return false;
+    }
+    const events = engine.getLastEvents();
+    console.log(
+      `  [Unit ${cmd.unitIndex}] moved ${cmd.dir} | Events: ${events.length > 0 ? JSON.stringify(events) : 'none'}`,
+    );
+    return true;
+  } else if (cmd.kind === 'skill') {
+    if (cmd.unitIndex === undefined || !cmd.skillId || !cmd.dir) return false;
+    const result = engine.useSkill(cmd.unitIndex, cmd.skillId, cmd.dir);
+    if (!result.ok) {
+      console.warn(`  Skill failed: ${result.reason}`);
+      return false;
+    }
+    const events = engine.getLastEvents();
+    console.log(`  [Unit ${cmd.unitIndex}] used ${cmd.skillId} ${cmd.dir} | Events: ${JSON.stringify(events)}`);
+    return true;
+  } else if (cmd.kind === 'endTurn') {
+    engine.endTurn();
+    const snap = engine.getSnapshot();
+    if (snap.outcome) {
+      console.log(`  Turn ended. Outcome: ${snap.outcome.toUpperCase()}`);
+      return true;
+    }
+    console.log(`  Turn ended. Ready for turn ${snap.turnNumber}.`);
+    return true;
+  }
+  return false;
+}
+
+async function main(): Promise<void> {
+  const [mapId, cmdFile] = process.argv.slice(2);
+
+  if (!mapId || !cmdFile) {
+    console.error('Usage: tsx tools/autoplay-harness.ts <mapId> <commandsFile>');
+    console.error('  mapId: demo1, demo2, etc.');
+    console.error('  commandsFile: JSON array of commands');
+    process.exit(1);
+  }
+
+  const mapDef = maps[mapId];
+  if (!mapDef) {
+    console.error(`Unknown map: ${mapId}`);
+    process.exit(1);
+  }
+
+  const cmdPath = path.resolve(cmdFile);
+  if (!fs.existsSync(cmdPath)) {
+    console.error(`Commands file not found: ${cmdPath}`);
+    process.exit(1);
+  }
+
+  const commands: Command[] = JSON.parse(fs.readFileSync(cmdPath, 'utf-8'));
+
+  console.log(`\n${'#'.repeat(60)}`);
+  console.log(`Starting autoplay: map=${mapId}, commands=${commands.length}`);
+  console.log(`${'#'.repeat(60)}`);
+
+  const engine = new BattleEngine(mapDef, STARTING_SQUAD, registry);
+  printBoard(engine, mapId);
+
+  for (let i = 0; i < commands.length; i++) {
+    const cmd = commands[i];
+    console.log(`\n[Cmd ${i + 1}/${commands.length}] ${JSON.stringify(cmd)}`);
+
+    executeCommand(engine, cmd);
+    printBoard(engine, mapId);
+
+    const snap = engine.getSnapshot();
+    if (snap.outcome) {
+      console.log(`\n${'#'.repeat(60)}`);
+      console.log(`GAME ${snap.outcome.toUpperCase()} on turn ${snap.turnNumber}`);
+      console.log(`${'#'.repeat(60)}\n`);
+      break;
+    }
+  }
+
+  const finalSnap = engine.getSnapshot();
+  if (!finalSnap.outcome) {
+    console.log(`\n${'#'.repeat(60)}`);
+    console.log(`Commands exhausted. Game still running on turn ${finalSnap.turnNumber}.`);
+    console.log(`Base HP: ${finalSnap.baseHp}/${finalSnap.baseMaxHp}`);
+    console.log(`${'#'.repeat(60)}\n`);
+  }
+}
+
+main().catch((e) => {
+  console.error('Fatal error:', e);
+  process.exit(1);
+});
