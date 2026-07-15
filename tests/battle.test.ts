@@ -904,3 +904,102 @@ describe('BattleEngine: getLastEvents', () => {
     };
   }
 });
+
+describe('BattleEngine: opportunity attacks (closes the attack-then-retreat exploit)', () => {
+  // yin_ghost's maxHp (2) dies to a single strike (2 dmg) — need a target
+  // that survives the hit to prove the retreat itself costs something.
+  const tankyGhost: MonsterDef = { ...yinGhost, id: 'tanky_ghost', maxHp: 10 };
+  const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, tanky_ghost: tankyGhost } };
+
+  function openRoomMap(monsterIds: string[]): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'test-opportunity',
+      nameKey: 'map.testopportunity.name',
+      grid: ['##########', '#        #', '#        #', '#B       #', '##########'],
+      baseHp: 8,
+      playerStarts: [
+        { x: 3, y: 1 },
+        { x: 3, y: 3 }, // out of the way, irrelevant to these scenarios
+      ],
+      waves: [
+        {
+          turns: AMPLE_TURNS,
+          monsters: monsterIds.map((monsterId, i) => ({ monsterId, spawn: { x: 2, y: 1 + i } })),
+        },
+      ],
+    };
+  }
+
+  it('retreating out of range after landing a hit provokes a free counter-attack — attack-then-disengage is no longer free', () => {
+    const engine = new BattleEngine(openRoomMap(['tanky_ghost']), ['li_yan', 'su_qing'], localRegistry);
+    engine.useSkill(0, 'strike', 'left'); // li_yan (3,1) hits the ghost at (2,1); it survives (10 - 2 = 8 hp)
+    expect(engine.getSnapshot().players[0].hp).toBe(6); // no self-damage from the attack itself
+
+    const res = engine.moveUnit(0, 'right'); // (3,1) -> (4,1): breaks adjacency with the ghost at (2,1)
+    expect(res).toEqual({ ok: true });
+    expect(engine.getSnapshot().players[0].hp).toBe(5); // ghost_claw's 1 dmg opportunity attack landed
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'damage', target: { kind: 'player', unitIndex: 0 }, amount: 1, blocked: false },
+    ]);
+  });
+
+  it('moving toward a monster you started adjacent to is rejected as blocked, not treated as a disengage', () => {
+    // On a cardinal-only single-tile grid, a step from an adjacent tile can only
+    // land at manhattan distance 0 (the monster's own tile — blocked, occupied)
+    // or distance 2 (a disengage) — there's no move that keeps distance 1, so
+    // the only "harmless move while already adjacent" case is walking INTO it.
+    const engine = new BattleEngine(openRoomMap(['tanky_ghost']), ['li_yan', 'su_qing'], localRegistry);
+    const res = engine.moveUnit(0, 'left'); // (3,1) -> (2,1): occupied by the ghost
+    expect(res).toEqual({ ok: false, reason: 'blocked' });
+    expect(engine.getSnapshot().players[0].hp).toBe(6);
+    expect(engine.getLastEvents()).toEqual([]);
+  });
+
+  it('moving without ever having been adjacent to anything provokes nothing (baseline, no false positives)', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    const res = engine.moveUnit(0, 'right');
+    expect(res).toEqual({ ok: true });
+    expect(engine.getLastEvents()).toEqual([]);
+  });
+
+  it('disengaging from two flanking monsters at once provokes a free hit from each of them', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'test-flanked',
+      nameKey: 'map.testflanked.name',
+      grid: ['######', '#    #', '#    #', '#B   #', '######'],
+      baseHp: 8,
+      playerStarts: [
+        { x: 2, y: 1 }, // flanked: ghost0 at (1,1) left, ghost1 at (3,1) right — both adjacent
+        { x: 2, y: 3 },
+      ],
+      waves: [
+        {
+          turns: AMPLE_TURNS,
+          monsters: [
+            { monsterId: 'tanky_ghost', spawn: { x: 1, y: 1 } },
+            { monsterId: 'tanky_ghost', spawn: { x: 3, y: 1 } },
+          ],
+        },
+      ],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
+    const before = engine.getSnapshot().players[0].hp;
+    const res = engine.moveUnit(0, 'down'); // (2,1) -> (2,2): breaks adjacency with BOTH flanking ghosts
+    expect(res).toEqual({ ok: true });
+    expect(engine.getSnapshot().players[0].hp).toBe(before - 2); // one ghost_claw hit from each
+    expect(engine.getLastEvents()).toHaveLength(2);
+  });
+
+  function roomyMap(): MapDef {
+    return {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 1, y: 1 },
+        { x: 6, y: 2 },
+      ],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
+    };
+  }
+});
