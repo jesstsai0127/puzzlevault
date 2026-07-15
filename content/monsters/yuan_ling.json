@@ -12,12 +12,12 @@
       "action": { "kind": "moveAway", "target": "nearestPlayer" }
     },
     {
-      "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 3 },
+      "when": { "kind": "targetInRange", "target": "nearestBaseTile", "range": 3 },
       "action": { "kind": "useSkill", "skillId": "spirit_bolt" }
     },
     {
       "when": { "kind": "always" },
-      "action": { "kind": "moveToward", "target": "nearestPlayer" }
+      "action": { "kind": "moveToward", "target": "nearestBaseTile" }
     }
   ]
 }
