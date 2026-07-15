@@ -487,7 +487,8 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
     const step = tutorial.script[index];
-    this.tutorialNarrationText?.setText(i18n.t(step.textKey));
+    const narration = i18n.t(step.textKey);
+    this.tutorialNarrationText?.setText(narration);
     if (step.action && !this.applyTutorialAction(step.action)) {
       // The scripted action was rejected by the engine (e.g. a stale script
       // no longer matches its map) — stop here instead of silently playing
@@ -496,12 +497,27 @@ export class BattleScene extends Phaser.Scene {
       this.render();
       return;
     }
+    if (this.engine.getSnapshot().outcome) {
+      // A scripted endTurn triggered a win/loss. The tutorial UI has no
+      // working confirm path (handleConfirmOutcome is disabled here), so the
+      // frozen board would soft-lock the playback — bail back to level select.
+      console.warn(`[tutorial] step ${index} triggered a run outcome, returning to level select`);
+      window.location.href = levelSelectUrl();
+      return;
+    }
     this.render();
-    this.time.delayedCall(TUTORIAL_STEP_PAUSE_MS, () => this.playTutorialStep(index + 1));
+    // A fixed pause reads fine for one-liners but truncates long closing
+    // paragraphs — scale the hold time with narration length instead.
+    const pause = Math.max(TUTORIAL_STEP_PAUSE_MS, 1200 + narration.length * 80);
+    this.time.delayedCall(pause, () => this.playTutorialStep(index + 1));
   }
 
   /** Returns whether the action was accepted by the engine. */
   private applyTutorialAction(action: NonNullable<TutorialStep['action']>): boolean {
+    if (action.type === 'move' || action.type === 'useSkill') {
+      // Keep the selection ring/highlights on the unit the script is driving.
+      this.selectedUnit = action.unitIndex;
+    }
     if (action.type === 'move') {
       const res = this.engine.moveUnit(action.unitIndex, action.dir);
       if (res.ok) this.playHitFeedback(this.engine.getLastEvents());
