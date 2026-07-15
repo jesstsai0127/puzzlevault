@@ -13,7 +13,7 @@ import type { Vec2 } from '../geometry';
 
 export const CONTENT_FORMAT_VERSION = 1;
 
-const EFFECT_TYPES = ['damage', 'push', 'shield', 'heal'];
+const EFFECT_TYPES = ['damage', 'push', 'shield', 'heal', 'taunt'];
 const TARGET_MODES = ['self', 'firstInLine'];
 const CARDINAL_DIRS = ['up', 'down', 'left', 'right'];
 const TUTORIAL_ACTION_TYPES = ['move', 'useSkill', 'endTurn'];
