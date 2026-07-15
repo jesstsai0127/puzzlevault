@@ -119,7 +119,7 @@ describe('demo3 (wolf woods) — finale mixing all three unused monster archetyp
     const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
     const snap = engine.getSnapshot();
     expect(snap.players).toHaveLength(2);
-    expect(snap.monsters).toHaveLength(2); // wave 1: two yao_lang from opposite corners
+    expect(snap.monsters).toHaveLength(1); // wave 1: a single yao_lang, introducing the speed mechanic solo
     expect(snap.baseTiles.length).toBeGreaterThan(0);
     expect(maps.demo3.waves).toHaveLength(5); // finale spec: 5 waves (roadmap ch.4 關卡結構)
   });
