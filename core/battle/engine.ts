@@ -145,11 +145,42 @@ export class BattleEngine {
     const next = add(unit.position, MOVE_VECTORS[dir]);
     if (!this.isWalkable(next) || this.isOccupied(next)) return { ok: false, reason: 'blocked' };
 
-    this.pendingEvents = []; // plain movement has no combat events of its own
+    this.pendingEvents = [];
     this.pushHistory();
+
+    // Opportunity attacks: a monster's telegraphed attack only names a
+    // DIRECTION, resolved against the board at endTurn — so without this, a
+    // hero could melee-hit a monster and then step back out of range before
+    // endTurn, making its queued counter swing at empty air. Move-in (1 AP) +
+    // melee (2 AP) + retreat (1 AP) fits exactly inside one turn's AP, which
+    // would turn "attack and disengage" into a free, repeatable, zero-risk
+    // way to grind down any melee monster — the single-dominant-strategy
+    // problem all over again, just worse. A monster still adjacent right
+    // before this step that WON'T be adjacent after it gets one free hit in,
+    // same as a real tactics game's disengage-provokes-an-attack rule.
+    const disengagedFrom = this.monsters.filter(
+      (m) => m.hp > 0 && manhattan(m.position, unit.position) === 1 && manhattan(m.position, next) > 1,
+    );
+
     unit.position = next;
     unit.ap -= 1;
+
+    for (const m of disengagedFrom) {
+      this.applyOpportunityAttack(m, unit);
+    }
+
     return { ok: true };
+  }
+
+  /** A monster whose adjacency just got broken by a retreating hero gets one free hit — damage only, no push/shield/heal side effects. */
+  private applyOpportunityAttack(monster: MonsterUnitState, target: PlayerUnitState): void {
+    const def = this.registry.monsters[monster.monsterId];
+    const skillId = this.monsterAttackSkillId(def);
+    const skill = skillId ? this.registry.skills[skillId] : undefined;
+    if (!skill) return;
+    for (const effect of skill.effects) {
+      if (effect.type === 'damage') this.dealDamageWithEvent(target, effect.amount);
+    }
   }
 
   useSkill(unitIndex: number, skillId: string, dir: CardinalDir): ActionResult {
