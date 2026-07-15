@@ -24,6 +24,9 @@ import type {
 /** Damage a player takes when shoved into a hazard tile — monsters shoved in die outright instead. */
 const HAZARD_DAMAGE = 3;
 
+/** Damage dealt to a pushed unit (and whatever it collides with) when a shove can't complete its full distance. */
+const PUSH_COLLISION_DAMAGE = 1;
+
 type ResolvedTarget =
   | { kind: 'self' }
   | { kind: 'player'; unit: PlayerUnitState }
@@ -779,9 +782,17 @@ export class BattleEngine {
       if (this.isHazard(next) && !this.isOccupied(next)) {
         unit.position = next;
         this.applyHazardDamage(unit);
-        break; // fell in — the push stops here regardless of remaining distance
+        return; // fell in — the push stops here regardless of remaining distance
       }
-      if (!this.isWalkable(next) || this.isOccupied(next)) break;
+      if (!this.isWalkable(next) || this.isOccupied(next)) {
+        // Cut short by a wall or another body before covering the full
+        // distance — land as a collision instead of a silent, feedback-less
+        // no-op (a shove that goes nowhere still used the caster's AP).
+        this.dealDamageWithEvent(unit, PUSH_COLLISION_DAMAGE);
+        const blocker = this.unitAt(next);
+        if (blocker) this.dealDamageWithEvent(blocker, PUSH_COLLISION_DAMAGE);
+        return;
+      }
       unit.position = next;
     }
   }
@@ -831,6 +842,15 @@ export class BattleEngine {
     return (
       this.players.some((u) => u.hp > 0 && equalsVec2(u.position, p)) ||
       this.monsters.some((u) => u.hp > 0 && equalsVec2(u.position, p))
+    );
+  }
+
+  /** The live player or monster standing at `p`, if any — null for an empty or wall tile. */
+  private unitAt(p: Vec2): PlayerUnitState | MonsterUnitState | null {
+    return (
+      this.players.find((u) => u.hp > 0 && equalsVec2(u.position, p)) ??
+      this.monsters.find((u) => u.hp > 0 && equalsVec2(u.position, p)) ??
+      null
     );
   }
 
