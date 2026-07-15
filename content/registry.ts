@@ -28,6 +28,8 @@ import tengYao from './monsters/teng_yao.json';
 import yaoLang from './monsters/yao_lang.json';
 
 import yanwuGround from './maps/yanwu_ground.json';
+import yanwuGroundEasy from './maps/yanwu_ground_easy.json';
+import yanwuGroundHard from './maps/yanwu_ground_hard.json';
 import demo2Pincer from './maps/demo2_pincer.json';
 import demo3WolfWoods from './maps/demo3_wolf_woods.json';
 import demo4MistHollow from './maps/demo4_mist_hollow.json';
@@ -72,12 +74,37 @@ export const yanwuGroundMap = parseMapDef(yanwuGround);
 // tangling together (see design/roadmap.md ch.5).
 export const maps: Record<string, MapDef> = {
   demo1: yanwuGroundMap,
+  yanwu_ground_easy: parseMapDef(yanwuGroundEasy),
+  yanwu_ground_hard: parseMapDef(yanwuGroundHard),
   demo2: parseMapDef(demo2Pincer),
   demo3: parseMapDef(demo3WolfWoods),
   demo4: parseMapDef(demo4MistHollow),
 };
 
 export const DEFAULT_MAP_ID = 'demo1';
+
+/**
+ * Pure UI grouping for LevelSelectScene's difficulty-tier buttons — NOT part
+ * of MapDef/format.ts. Difficulty tiers are a selection-screen concern, not
+ * battle content; keeping this out of MapDef keeps format.ts's validation
+ * scoped to actual battle data. Only demo1 (演武場) has tiers today; demo2/3/4
+ * are untouched and keep their single-button rendering in LevelSelectScene.
+ */
+export interface LevelGroup {
+  levelNameKey: string;
+  easy?: string;
+  normal: string;
+  hard?: string;
+}
+
+export const LEVEL_GROUPS: LevelGroup[] = [
+  {
+    levelNameKey: 'map.yanwu_ground.name',
+    easy: 'yanwu_ground_easy',
+    normal: 'demo1',
+    hard: 'yanwu_ground_hard',
+  },
+];
 
 export const STARTING_SQUAD = ['li_yan', 'su_qing'];
 
