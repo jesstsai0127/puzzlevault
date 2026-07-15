@@ -26,6 +26,7 @@ const COLORS = {
   floor: 0x2a2a35,
   wall: 0x111116,
   hazard: 0x2e0a14,
+  poisonMist: 0x1f2e14,
   base: 0x6b4f14,
   selected: 0xffd166,
   shield: 0x4cc9f0,
@@ -41,10 +42,11 @@ const COLORS = {
 };
 
 /** Phase 1 renders every actor as a text glyph instead of an image sprite — see design/roadmap.md ch.1/8. */
-const HERO_GLYPHS = ['🤺', '🧙'];
+const HERO_GLYPHS = ['🤺', '🧙', '💉'];
 const MONSTER_GLYPH = '👻'; // every Phase 1 monster is yin_ghost.
 const BASE_GLYPH = '🏯';
 const HAZARD_GLYPH = '▽';
+const POISON_MIST_GLYPH = '☠';
 
 /** Static Traditional-Chinese rules panel copy — placeholder-quality by design (Phase 1 is text-only, see roadmap ch.3). */
 const RULES_PANEL_STATIC = [
@@ -62,7 +64,7 @@ const RULES_PANEL_STATIC = [
   '',
   '行動點用完的俠客圖示會變暗，表示這回合他沒事可做了。',
   '',
-  '鍵盤：方向鍵移動／瞄準、1・2 選技能、Q 換人、Z 重置本回合、Enter 結束回合。',
+  '鍵盤：方向鍵移動／瞄準、1・2・3 選技能、Q 換人、Z 重置本回合、Enter 結束回合。',
   '',
   '每一波是倒數計時：歸零時下一波直接加進場，沒殺完的妖物會留著疊上去；最後一波倒數完、陣還活著就贏——不用殺光。',
 ].join('\n');
@@ -184,7 +186,10 @@ export class BattleScene extends Phaser.Scene {
 
   create() {
     this.cameras.main.setBackgroundColor(COLORS.bg);
-    this.engine = new BattleEngine(this.map, STARTING_SQUAD, registry);
+    // A map can declare its own squad (e.g. demo4's 3-hero roster) — falls
+    // back to the game's default 2-hero squad when it doesn't, so existing
+    // maps need no changes. See MapDef.squadCharacterIds.
+    this.engine = new BattleEngine(this.map, this.map.squadCharacterIds ?? STARTING_SQUAD, registry);
 
     // Left-align the board so the right side has a wide column for the rules panel.
     this.offsetX = 40;
@@ -289,10 +294,22 @@ export class BattleScene extends Phaser.Scene {
     this.map.grid.forEach((row, y) => {
       row.split('').forEach((ch, x) => {
         const { px, py } = this.tileCenter(x, y);
-        const color = ch === '#' ? COLORS.wall : ch === '~' ? COLORS.hazard : ch === 'B' ? COLORS.base : COLORS.floor;
+        const color =
+          ch === '#'
+            ? COLORS.wall
+            : ch === '~'
+              ? COLORS.hazard
+              : ch === '*'
+                ? COLORS.poisonMist
+                : ch === 'B'
+                  ? COLORS.base
+                  : COLORS.floor;
         this.add.rectangle(px, py, TILE - 2, TILE - 2, color);
         if (ch === '~') {
           this.add.text(px, py, HAZARD_GLYPH, { fontSize: '26px', color: '#ef4444' }).setOrigin(0.5).setDepth(1);
+        }
+        if (ch === '*') {
+          this.add.text(px, py, POISON_MIST_GLYPH, { fontSize: '24px', color: '#8fbf5a' }).setOrigin(0.5).setDepth(1);
         }
         if (ch === 'B') baseTileCenters.push({ px, py });
       });
@@ -354,7 +371,14 @@ export class BattleScene extends Phaser.Scene {
 
   private buildBottomButtons() {
     const barY = this.scale.height - 92;
-    this.skillButtons = [0, 1].map((i) =>
+    // Button count is driven by whichever squad member on THIS map carries
+    // the most skills, not hardcoded to 2 — a 3-hero map like demo4 has a
+    // healer whose 2 skills still fit, but a future roster with more per
+    // character shouldn't need this touched again. Floors at 2 so an
+    // all-1-skill roster still shows the layout every other map expects.
+    const squad = this.engine.getSnapshot().players;
+    const skillButtonCount = Math.max(2, ...squad.map((p) => p.skillIds.length));
+    this.skillButtons = Array.from({ length: skillButtonCount }, (_, i) =>
       this.makeButton(20 + i * 210, barY, 200, 40, () => this.toggleSkill(i)),
     );
     this.resetTurnButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleResetTurn());
@@ -565,9 +589,14 @@ export class BattleScene extends Phaser.Scene {
         case '2':
           this.toggleSkill(1);
           break;
+        case '3':
+          this.toggleSkill(2);
+          break;
         case 'q':
         case 'Q':
-          this.selectUnit(1 - this.selectedUnit);
+          // Cycles through any squad size, not just 2 — the old `1 -
+          // selectedUnit` flip only ever worked for exactly two heroes.
+          this.selectUnit((this.selectedUnit + 1) % this.engine.getSnapshot().players.length);
           break;
         case 'z':
         case 'Z':
@@ -852,6 +881,42 @@ export class BattleScene extends Phaser.Scene {
 
     if (skill.effects.every((e) => e.target === 'self')) {
       result.set(`${unit.position.x},${unit.position.y}`, 'down');
+      return result;
+    }
+
+    // A heal skill's engine-side resolveTarget() only ever lands on a living
+    // ally (see engine.ts's `targetsAllies` search) — never a monster. Mirror
+    // that restriction here so a player can't even AIM a heal at a direction
+    // that has no ally in it (which would either hit nothing or, if the UI
+    // didn't restrict it, look aimable at a monster it can never actually
+    // reach). Only the tiles up to and including the first living ally in
+    // each direction are offered — same "any tile in this direction fires
+    // the same way" convention as every other skill, just bounded to where
+    // the ally actually is instead of the skill's full nominal range.
+    const isHeal = skill.effects.some((e) => e.type === 'heal');
+    if (isHeal) {
+      for (const dir of Object.keys(DIR_VECTORS) as CardinalDir[]) {
+        const v = DIR_VECTORS[dir];
+        const tilesThisDir: Array<{ x: number; y: number }> = [];
+        let allyFound = false;
+        for (let step = 1; step <= skill.range; step++) {
+          const x = unit.position.x + v.x * step;
+          const y = unit.position.y + v.y * step;
+          if (this.isWallAt(x, y)) break;
+          tilesThisDir.push({ x, y });
+          // A monster standing in the way doesn't block a heal ray, same as
+          // hazard terrain doesn't block line of sight — keep scanning past
+          // it for a living ally further down the line.
+          const ally = snap.players.some((p, i) => i !== unitIndex && p.hp > 0 && p.position.x === x && p.position.y === y);
+          if (ally) {
+            allyFound = true;
+            break;
+          }
+        }
+        if (allyFound) {
+          for (const t of tilesThisDir) result.set(`${t.x},${t.y}`, dir);
+        }
+      }
       return result;
     }
 
