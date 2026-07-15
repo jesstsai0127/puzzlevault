@@ -13,6 +13,18 @@ interface Command {
   skillId?: string;
 }
 
+// Player glyph is assigned by SQUAD POSITION (unitIndex), not characterId —
+// works for any squad size/roster, not just the original li_yan/su_qing pair.
+const PLAYER_GLYPHS = ['A', 'B', 'C', 'D', 'E'];
+// Monster glyph by monsterId — extend as new archetypes show up in a map's waves.
+const MONSTER_GLYPHS: Record<string, string> = {
+  yin_ghost: 'Y',
+  jiangshi: 'J',
+  yuan_ling: 'U',
+  teng_yao: 'T',
+  yao_lang: 'W',
+};
+
 function printBoard(engine: BattleEngine, mapId: string): void {
   const snap = engine.getSnapshot();
   const intents = engine.getIntents();
@@ -33,20 +45,21 @@ function printBoard(engine: BattleEngine, mapId: string): void {
     let line = '';
     for (let x = 0; x < width; x++) {
       const cell = grid[y][x];
-      const player = snap.players.find((p) => p.hp > 0 && p.position.x === x && p.position.y === y);
+      const playerIndex = snap.players.findIndex((p) => p.hp > 0 && p.position.x === x && p.position.y === y);
       const monster = snap.monsters.find((m) => m.hp > 0 && m.position.x === x && m.position.y === y);
 
-      if (player) {
-        line += player.characterId === 'li_yan' ? 'A' : 'B';
+      if (playerIndex >= 0) {
+        line += PLAYER_GLYPHS[playerIndex] ?? '?';
       } else if (monster) {
-        const monId = monster.monsterId;
-        line += monId === 'yin_ghost' ? 'Y' : 'U'; // Y for yin_ghost, U for yuan_ling
+        line += MONSTER_GLYPHS[monster.monsterId] ?? '?';
       } else if (cell === '#') {
         line += '#';
       } else if (cell === 'B') {
         line += 'b';
       } else if (cell === '~') {
         line += '~';
+      } else if (cell === '*') {
+        line += '*';
       } else {
         line += '.';
       }
@@ -160,7 +173,12 @@ async function main(): Promise<void> {
   console.log(`Starting autoplay: map=${mapId}, commands=${commands.length}`);
   console.log(`${'#'.repeat(60)}`);
 
-  const engine = new BattleEngine(mapDef, STARTING_SQUAD, registry);
+  // A map can declare its own squad (e.g. demo4's 3-hero roster, see
+  // MapDef.squadCharacterIds) — falls back to the game's default 2-hero
+  // squad when it doesn't, same rule BattleScene follows.
+  const squad = mapDef.squadCharacterIds ?? STARTING_SQUAD;
+  console.log(`Squad: ${squad.join(', ')}`);
+  const engine = new BattleEngine(mapDef, squad, registry);
   printBoard(engine, mapId);
 
   for (let i = 0; i < commands.length; i++) {
