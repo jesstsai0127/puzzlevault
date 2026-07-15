@@ -16,6 +16,12 @@ const game = new Phaser.Game({
   },
 });
 
+// Debug/verification handle: background-tab test tooling needs to reach the
+// game instance (e.g. to hand-step the paused loop), and Phaser doesn't
+// register instances globally. Everything in a client-side single-player game
+// is inspectable anyway, so there's nothing to gate this behind.
+(window as unknown as { __game: Phaser.Game }).__game = game;
+
 // LevelSelectScene auto-starts (it's first in the scene list above); if the
 // URL already names a level (?map=demo2, set by LevelSelectScene's own
 // buttons or shared directly), skip straight to it instead. ?tutorial=<id>
