@@ -594,9 +594,7 @@ export class BattleScene extends Phaser.Scene {
           break;
         case 'q':
         case 'Q':
-          // Cycles through any squad size, not just 2 — the old `1 -
-          // selectedUnit` flip only ever worked for exactly two heroes.
-          this.selectUnit((this.selectedUnit + 1) % this.engine.getSnapshot().players.length);
+          this.selectNextUnit();
           break;
         case 'z':
         case 'Z':
@@ -638,6 +636,18 @@ export class BattleScene extends Phaser.Scene {
     this.selectedUnit = index;
     this.armedSkillId = null;
     this.render();
+  }
+
+  /** Cycles to the next LIVING squad member, wrapping around — a squad of 3+ with a fallen hero in the middle can't just flip index 0/1 forever like a 2-hero squad could. */
+  private selectNextUnit() {
+    const players = this.engine.getSnapshot().players;
+    for (let step = 1; step <= players.length; step++) {
+      const candidate = (this.selectedUnit + step) % players.length;
+      if (players[candidate]?.hp > 0) {
+        this.selectUnit(candidate);
+        return;
+      }
+    }
   }
 
   private toggleSkill(skillIndex: number) {
