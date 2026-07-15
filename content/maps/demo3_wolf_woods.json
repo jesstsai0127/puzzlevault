@@ -5,14 +5,14 @@
   "grid": [
     "###########",
     "#         #",
-    "#     ~   #",
+    "#   ~     #",
     "#        B#",
     "#        B#",
-    "#     ~   #",
+    "#   ~     #",
     "#         #",
     "###########"
   ],
-  "baseHp": 8,
+  "baseHp": 10,
   "playerStarts": [
     { "x": 8, "y": 3 },
     { "x": 8, "y": 4 }
@@ -21,17 +21,15 @@
     {
       "turns": 3,
       "monsters": [
-        { "monsterId": "yao_lang", "spawn": { "x": 1, "y": 1 } },
-        { "monsterId": "yao_lang", "spawn": { "x": 1, "y": 6 } }
+        { "monsterId": "yao_lang", "spawn": { "x": 3, "y": 1 } }
       ]
     },
     {
       "turns": 3,
       "monsters": [
-        { "monsterId": "teng_yao", "spawn": { "x": 5, "y": 2 } },
+        { "monsterId": "teng_yao", "spawn": { "x": 4, "y": 3 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } },
-        { "monsterId": "yao_lang", "spawn": { "x": 1, "y": 6 } }
+        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } }
       ]
     },
     {
@@ -45,8 +43,8 @@
     {
       "turns": 4,
       "monsters": [
-        { "monsterId": "teng_yao", "spawn": { "x": 8, "y": 6 } },
-        { "monsterId": "jiangshi", "spawn": { "x": 4, "y": 3 } },
+        { "monsterId": "teng_yao", "spawn": { "x": 4, "y": 4 } },
+        { "monsterId": "jiangshi", "spawn": { "x": 3, "y": 3 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } }
       ]
