@@ -34,21 +34,21 @@
     {
       "turns": 3,
       "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 1 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 4 } }
+        { "monsterId": "yuan_ling", "spawn": { "x": 1, "y": 3 } },
+        { "monsterId": "yuan_ling", "spawn": { "x": 7, "y": 2 } },
+        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } }
       ]
     },
     {
       "turns": 4,
       "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 1 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 3 } },
+        { "monsterId": "yuan_ling", "spawn": { "x": 1, "y": 2 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 2 } },
         { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 4 } }
+        { "monsterId": "yuan_ling", "spawn": { "x": 7, "y": 3 } }
       ]
     }
   ]
