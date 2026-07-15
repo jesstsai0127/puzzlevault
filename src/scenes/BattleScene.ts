@@ -64,7 +64,7 @@ const RULES_PANEL_STATIC = [
   '',
   '鍵盤：方向鍵移動／瞄準、1・2 選技能、Q 換人、Z 重置本回合、Enter 結束回合。',
   '',
-  '不用殺光——只要撐過每一波、陣還活著就贏。',
+  '每一波是倒數計時：歸零時下一波直接加進場，沒殺完的妖物會留著疊上去；最後一波倒數完、陣還活著就贏——不用殺光。',
 ].join('\n');
 
 const DIR_VECTORS: Record<CardinalDir, { x: number; y: number }> = {
