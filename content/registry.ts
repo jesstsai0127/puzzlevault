@@ -11,9 +11,12 @@ import corpseSmash from './skills/corpse_smash.json';
 import spiritBolt from './skills/spirit_bolt.json';
 import vineLash from './skills/vine_lash.json';
 import wolfBite from './skills/wolf_bite.json';
+import minorHeal from './skills/minor_heal.json';
+import majorHeal from './skills/major_heal.json';
 
 import liYan from './characters/li_yan.json';
 import suQing from './characters/su_qing.json';
+import baiZhi from './characters/bai_zhi.json';
 
 import yinGhost from './monsters/yin_ghost.json';
 import jiangshi from './monsters/jiangshi.json';
@@ -24,6 +27,7 @@ import yaoLang from './monsters/yao_lang.json';
 import yanwuGround from './maps/yanwu_ground.json';
 import demo2Pincer from './maps/demo2_pincer.json';
 import demo3WolfWoods from './maps/demo3_wolf_woods.json';
+import demo4MistHollow from './maps/demo4_mist_hollow.json';
 
 import tutApCost from './tutorials/tut_ap_cost.json';
 import tutOpportunityAttack from './tutorials/tut_opportunity_attack.json';
@@ -31,10 +35,20 @@ import tutPushIntoAbyss from './tutorials/tut_push_into_abyss.json';
 
 // Builtin content goes through the same parse+validate path that downloaded
 // content packs will use in Phase 2 — one format, one code path.
-const skills = [swordQi, palmWave, flyingSword, qiShield, ghostClaw, corpseSmash, spiritBolt, vineLash, wolfBite].map(
-  parseSkillDef,
-);
-const characters = [liYan, suQing].map(parseCharacterDef);
+const skills = [
+  swordQi,
+  palmWave,
+  flyingSword,
+  qiShield,
+  ghostClaw,
+  corpseSmash,
+  spiritBolt,
+  vineLash,
+  wolfBite,
+  minorHeal,
+  majorHeal,
+].map(parseSkillDef);
+const characters = [liYan, suQing, baiZhi].map(parseCharacterDef);
 const monsters = [yinGhost, jiangshi, yuanLing, tengYao, yaoLang].map(parseMonsterDef);
 
 export const registry: ContentRegistry = {
@@ -53,6 +67,7 @@ export const maps: Record<string, MapDef> = {
   demo1: yanwuGroundMap,
   demo2: parseMapDef(demo2Pincer),
   demo3: parseMapDef(demo3WolfWoods),
+  demo4: parseMapDef(demo4MistHollow),
 };
 
 export const DEFAULT_MAP_ID = 'demo1';
