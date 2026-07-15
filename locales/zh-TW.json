@@ -39,6 +39,8 @@
   "monster.yao_lang.name": "妖狼",
 
   "map.yanwu_ground.name": "演武場",
+  "map.yanwu_ground_easy.name": "演武場・簡單",
+  "map.yanwu_ground_hard.name": "演武場・困難",
   "map.demo2_pincer.name": "演武場二・雙面夾擊",
   "map.demo3_wolf_woods.name": "狼嚎林道",
   "map.demo4_mist_hollow.name": "毒霧幽谷",
@@ -77,6 +79,9 @@
   "ui.outcome_victory": "撐住了！全部波次守住",
 
   "ui.select_level": "選擇關卡",
+  "ui.difficulty_easy": "簡單",
+  "ui.difficulty_normal": "普通",
+  "ui.difficulty_hard": "困難",
   "ui.tutorial_label": "【教學】",
   "ui.tutorial_skip": "跳過",
 
