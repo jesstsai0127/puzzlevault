@@ -2,6 +2,7 @@
   "character.li_yan.name": "Li Yan",
   "character.su_qing.name": "Su Qing",
   "character.bai_zhi.name": "Bai Zhi",
+  "character.ling_er.name": "Ling Er",
 
   "skill.sword_qi.name": "Sword Qi Slash",
   "skill.sword_qi.desc": "Melee: a slash of condensed sword qi strikes an adjacent foe.",
@@ -26,6 +27,10 @@
   "skill.minor_heal.desc": "Restores 2 HP to the nearest ally in a straight line, up to 1 tile.",
   "skill.major_heal.name": "Greater Spring Renewal",
   "skill.major_heal.desc": "Restores 4 HP to the nearest ally in a straight line, up to 2 tiles.",
+  "skill.heavy_shield.name": "Bulwark Stance",
+  "skill.heavy_shield.desc": "Plant a heavy stance, raising a barrier that blocks the next 2 hits.",
+  "skill.taunt.name": "Provoke",
+  "skill.taunt.desc": "Jeer at a foe in a straight line, up to 3 tiles, forcing it to target you for 2 turns.",
 
   "monster.yin_ghost.name": "Yin Ghost",
   "monster.jiangshi.name": "Jiangshi",

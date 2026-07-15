@@ -2,6 +2,7 @@
   "character.li_yan.name": "李焰",
   "character.su_qing.name": "蘇晴",
   "character.bai_zhi.name": "白芷",
+  "character.ling_er.name": "靈兒",
 
   "skill.sword_qi.name": "劍氣斬",
   "skill.sword_qi.desc": "近戰：凝聚劍氣斬向相鄰的敵人。",
@@ -26,6 +27,10 @@
   "skill.minor_heal.desc": "直線治療距離內最近的隊友 2 點生命，最遠 1 格。",
   "skill.major_heal.name": "大回春",
   "skill.major_heal.desc": "直線治療距離內最近的隊友 4 點生命，最遠 2 格。",
+  "skill.heavy_shield.name": "重盾式",
+  "skill.heavy_shield.desc": "沉腰蹲盾，格擋接下來 2 次攻擊。",
+  "skill.taunt.name": "嘲諷",
+  "skill.taunt.desc": "直線挑釁一名敵人，最遠 3 格，逼它連續 2 回合只鎖定你。",
 
   "monster.yin_ghost.name": "陰魂",
   "monster.jiangshi.name": "殭屍",
