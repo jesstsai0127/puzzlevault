@@ -68,7 +68,7 @@
   "ui.tutorial_label": "【教學】",
   "ui.tutorial_skip": "跳過",
 
-  "tutorial.tut_ap_cost.name": "教學：行動點怎麼算",
+  "tutorial.tut_ap_cost.name": "行動點怎麼算",
   "tutorial.tut_ap_cost.mapName": "教學：行動點怎麼算",
   "tutorial.tut_ap_cost.step1": "每位俠客每回合都有自己的一本行動點（AP）帳，移動跟放技能都是花同一池的點數。",
   "tutorial.tut_ap_cost.step2": "李焰往前走一步——不管往哪個方向，走一步都固定扣 1 點 AP。",
@@ -77,7 +77,7 @@
   "tutorial.tut_ap_cost.step5": "劍氣斬要花 2 點 AP，不是 1 點——每個技能自己要花多少點數，按鈕上都寫得清清楚楚，出手前先看一眼。這回合李焰已經用掉 4 點裡的 3 點了。",
   "tutorial.tut_ap_cost.step6": "這就是行動點的規則：每位俠客一本帳，移動跟技能都從裡面扣。回到選關畫面。",
 
-  "tutorial.tut_opportunity_attack.name": "教學：脫離相鄰會被打",
+  "tutorial.tut_opportunity_attack.name": "脫離相鄰會被打",
   "tutorial.tut_opportunity_attack.mapName": "教學：脫離相鄰會被打",
   "tutorial.tut_opportunity_attack.step1": "來看看站在妖怪旁邊、然後突然想抽身離開會發生什麼事。",
   "tutorial.tut_opportunity_attack.step2": "李焰往前走到陰魂旁邊。",
@@ -87,7 +87,7 @@
   "tutorial.tut_opportunity_attack.step6": "李焰往後退一步，脫離了跟陰魂的相鄰狀態。",
   "tutorial.tut_opportunity_attack.step7": "看到了嗎——只要脫離跟妖怪的相鄰，它就會反手打你一下，這就是機會攻擊。想脫身之前，先想清楚要把它打死還是要承受這一下。",
 
-  "tutorial.tut_push_into_abyss.name": "教學：把敵人推進深淵",
+  "tutorial.tut_push_into_abyss.name": "把敵人推進深淵",
   "tutorial.tut_push_into_abyss.mapName": "教學：把敵人推進深淵",
   "tutorial.tut_push_into_abyss.step1": "排雲掌不只是把敵人震退 2 格——如果附近就有深淵地形，這一震可能直接要它的命。",
   "tutorial.tut_push_into_abyss.step2": "李焰對陰魂使出排雲掌，把它震向深淵的方向。",
