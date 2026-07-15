@@ -26,6 +26,10 @@ export interface MonsterUnitState {
   hp: number;
   maxHp: number;
   shield: number;
+  /** Player index that most recently taunted this monster — set/cleared alongside tauntTurnsLeft. Absent when not taunted. */
+  tauntedBy?: number;
+  /** Turns of taunt override remaining, counted down once per computeIntents() call (once per fresh turn). Absent when not taunted. */
+  tauntTurnsLeft?: number;
 }
 
 export type MonsterIntent =
@@ -52,7 +56,8 @@ export type TurnEvent =
   | { kind: 'damage'; target: CombatTarget; amount: number; blocked: boolean }
   | { kind: 'push'; target: CombatTarget; distance: number }
   | { kind: 'shield'; target: CombatTarget; amount: number }
-  | { kind: 'heal'; target: CombatTarget; amount: number };
+  | { kind: 'heal'; target: CombatTarget; amount: number }
+  | { kind: 'taunt'; target: CombatTarget };
 
 export type ActionResult = { ok: true } | { ok: false; reason: string };
 
