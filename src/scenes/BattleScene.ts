@@ -458,6 +458,7 @@ export class BattleScene extends Phaser.Scene {
     } else {
       const res = this.engine.moveUnit(this.selectedUnit, dir);
       if (!res.ok) this.cameras.main.shake(80, 0.002);
+      else this.playHitFeedback(this.engine.getLastEvents());
     }
     this.render();
   }
@@ -523,6 +524,11 @@ export class BattleScene extends Phaser.Scene {
         this.cameras.main.shake(80, 0.002);
         break;
       }
+      // getLastEvents() only reflects the most recent moveUnit() call, so a
+      // multi-tile path (click-to-move) needs feedback fired per step —
+      // otherwise an opportunity attack triggered by an early step in the
+      // path gets silently overwritten by the next step's (empty) events.
+      this.playHitFeedback(this.engine.getLastEvents());
     }
     this.render();
   }
