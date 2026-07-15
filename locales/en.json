@@ -64,5 +64,33 @@
   "ui.outcome_defeat": "The base fell! Restarting from wave 1.",
   "ui.outcome_victory": "Held the line! Every wave survived.",
 
-  "ui.select_level": "Select Level"
+  "ui.select_level": "Select Level",
+  "ui.tutorial_label": "[Tutorial]",
+  "ui.tutorial_skip": "Skip",
+
+  "tutorial.tut_ap_cost.name": "Tutorial: Action Points",
+  "tutorial.tut_ap_cost.mapName": "Tutorial: Action Points",
+  "tutorial.tut_ap_cost.step1": "Every hero has their own Action Point (AP) pool that refills each turn — moving AND casting skills both spend from this same pool.",
+  "tutorial.tut_ap_cost.step2": "Li Yan steps forward — that costs 1 AP, no matter which direction.",
+  "tutorial.tut_ap_cost.step3": "See the AP counter drop from 4 to 3 — every single step costs exactly 1 AP.",
+  "tutorial.tut_ap_cost.step4": "Now Li Yan uses Sword Qi Slash on the ghost ahead.",
+  "tutorial.tut_ap_cost.step5": "Sword Qi Slash costs 2 AP, not 1 — each skill's own cost is printed right on its button, so check it before you commit. Li Yan has spent 3 of 4 AP this turn.",
+  "tutorial.tut_ap_cost.step6": "That's the whole AP system: one pool per hero, spent on movement and skills alike. Back to level select.",
+
+  "tutorial.tut_opportunity_attack.name": "Tutorial: Opportunity Attacks",
+  "tutorial.tut_opportunity_attack.mapName": "Tutorial: Opportunity Attacks",
+  "tutorial.tut_opportunity_attack.step1": "Watch what happens when you disengage from a monster you're standing right next to.",
+  "tutorial.tut_opportunity_attack.step2": "Li Yan steps up next to the ghost.",
+  "tutorial.tut_opportunity_attack.step3": "Now they're adjacent — right in the ghost's melee range.",
+  "tutorial.tut_opportunity_attack.step4": "Li Yan strikes with Sword Qi Slash.",
+  "tutorial.tut_opportunity_attack.step5": "The ghost is hurt but still alive. Now watch Li Yan try to back away...",
+  "tutorial.tut_opportunity_attack.step6": "Li Yan steps back, breaking adjacency.",
+  "tutorial.tut_opportunity_attack.step7": "There it is — the instant you break adjacency with a monster, it gets one free hit in. Finish it off or plan your retreat before you step away.",
+
+  "tutorial.tut_push_into_abyss.name": "Tutorial: Push into the Abyss",
+  "tutorial.tut_push_into_abyss.mapName": "Tutorial: Push into the Abyss",
+  "tutorial.tut_push_into_abyss.step1": "Cloud-Parting Palm doesn't just shove enemies back 2 tiles — near a hazard tile, that shove can be lethal.",
+  "tutorial.tut_push_into_abyss.step2": "Li Yan strikes the ghost with Cloud-Parting Palm, sending it flying toward the abyss.",
+  "tutorial.tut_push_into_abyss.step3": "The ghost hit the hazard tile and died instantly — monsters shoved into a hazard don't survive it, unlike a hero who's just hurt by it.",
+  "tutorial.tut_push_into_abyss.step4": "Use the terrain: a well-aimed push can be a kill on its own. Back to level select."
 }
