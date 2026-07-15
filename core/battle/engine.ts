@@ -467,14 +467,58 @@ export class BattleEngine {
   // AI intent computation
   // ---------------------------------------------------------------------
 
+  /**
+   * Called exactly once per fresh player turn (startFreshTurn(), reached via
+   * endTurn()'s continue/reinforce branches, and resetRun()) — never mid-turn,
+   * since the player's own moveUnit()/useSkill() calls don't touch intents at
+   * all. That makes this the correct, single place to age down `tauntTurnsLeft`:
+   * ticking it here (once per turn) rather than in computeIntentFor (which
+   * this method itself may call once per monster per turn, so ticking there
+   * would be turn-count-safe too, but only by coincidence of it being mapped
+   * once — here is the one spot proven safe by construction).
+   */
   private computeIntents(): MonsterIntent[] {
-    return this.monsters
+    const intents = this.monsters
       .filter((m) => m.hp > 0)
       .map((m) => this.computeIntentFor(m));
+
+    for (const m of this.monsters) {
+      if (m.hp <= 0 || m.tauntTurnsLeft == null) continue;
+      m.tauntTurnsLeft -= 1;
+      if (m.tauntTurnsLeft <= 0) {
+        m.tauntedBy = undefined;
+        m.tauntTurnsLeft = undefined;
+      }
+    }
+
+    return intents;
   }
 
   private computeIntentFor(m: MonsterUnitState): MonsterIntent {
     const def = this.registry.monsters[m.monsterId];
+
+    // Taunt overrides normal AI entirely while active: aim locks onto the
+    // taunting player's position and the monster picks attack-vs-move via
+    // the same logic the moveToward path below uses, skipping this
+    // monster's own aiRules for the turn. If the taunter has died, the
+    // taunt is void — clear it and fall through to normal AI instead of
+    // aiming at a dead player's now-meaningless last position.
+    if (m.tauntedBy != null) {
+      const taunter = this.players[m.tauntedBy];
+      if (taunter && taunter.hp > 0) {
+        const aim = taunter.position;
+        const stepDir = stepDirectionToward(m.position, aim);
+        const ahead = add(m.position, MOVE_VECTORS[stepDir]);
+        const blocker = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, ahead));
+        const attackSkillId = blocker ? this.monsterAttackSkillId(def) : undefined;
+        if (attackSkillId) {
+          return { kind: 'skill', instanceId: m.instanceId, skillId: attackSkillId, direction: stepDir };
+        }
+        return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange), aim };
+      }
+      m.tauntedBy = undefined;
+      m.tauntTurnsLeft = undefined;
+    }
 
     for (const rule of def.aiRules) {
       if (this.matchesCondition(rule.when, m)) {
@@ -766,6 +810,20 @@ export class BattleEngine {
         const before = unit.hp;
         unit.hp = Math.min(unit.maxHp, unit.hp + effect.amount);
         if (unit.hp > before) this.pendingEvents.push({ kind: 'heal', target: combatTarget, amount: unit.hp - before });
+        break;
+      }
+      case 'taunt': {
+        // Taunt only makes sense against a monster — a player skill's target
+        // is always resolved from the enemy side (see resolveTarget's
+        // searchPlayers logic), so `unit` here is a MonsterUnitState in
+        // every real case. The 'instanceId' narrowing below is what makes
+        // that concrete for TS; a caster is always a player for this effect
+        // (only a hero skill uses it in this batch).
+        if ('instanceId' in unit && !('instanceId' in caster)) {
+          unit.tauntedBy = this.players.indexOf(caster);
+          unit.tauntTurnsLeft = effect.amount;
+          this.pendingEvents.push({ kind: 'taunt', target: combatTarget });
+        }
         break;
       }
     }
