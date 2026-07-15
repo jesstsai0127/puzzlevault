@@ -13,10 +13,13 @@ import vineLash from './skills/vine_lash.json';
 import wolfBite from './skills/wolf_bite.json';
 import minorHeal from './skills/minor_heal.json';
 import majorHeal from './skills/major_heal.json';
+import heavyShield from './skills/heavy_shield.json';
+import tauntSkill from './skills/taunt.json';
 
 import liYan from './characters/li_yan.json';
 import suQing from './characters/su_qing.json';
 import baiZhi from './characters/bai_zhi.json';
+import lingEr from './characters/ling_er.json';
 
 import yinGhost from './monsters/yin_ghost.json';
 import jiangshi from './monsters/jiangshi.json';
@@ -49,8 +52,10 @@ const skills = [
   wolfBite,
   minorHeal,
   majorHeal,
+  heavyShield,
+  tauntSkill,
 ].map(parseSkillDef);
-const characters = [liYan, suQing, baiZhi].map(parseCharacterDef);
+const characters = [liYan, suQing, baiZhi, lingEr].map(parseCharacterDef);
 const monsters = [yinGhost, jiangshi, yuanLing, tengYao, yaoLang].map(parseMonsterDef);
 
 export const registry: ContentRegistry = {
