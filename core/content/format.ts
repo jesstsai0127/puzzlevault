@@ -127,9 +127,11 @@ export function parseMonsterDef(raw: unknown): MonsterDef {
 
 /**
  * '#' wall, ' ' floor, '~' hazard (blocks movement like a wall, but a push can
- * still land a unit on it), 'B' base (impassable to everyone, shares one HP pool).
+ * still land a unit on it), 'B' base (impassable to everyone, shares one HP pool),
+ * '*' poison mist (walkable like floor — see MapDef.grid / BattleEngine's
+ * poison-mist tick in endTurn()).
  */
-const GRID_CHARS = new Set(['#', ' ', '~', 'B']);
+const GRID_CHARS = new Set(['#', ' ', '~', 'B', '*']);
 
 function parseWallFloorGrid(grid: string[]): { width: number; height: number; walkable: boolean[][] } {
   const height = grid.length;
@@ -159,6 +161,16 @@ export function validateMapDef(def: MapDef): string[] {
 
   if (!(def.baseHp > 0)) problems.push('baseHp must be > 0');
   if (!def.grid.some((row) => row.includes('B'))) problems.push("map has no base ('B') tile");
+
+  if (def.squadCharacterIds !== undefined) {
+    if (!Array.isArray(def.squadCharacterIds) || def.squadCharacterIds.length === 0) {
+      problems.push('squadCharacterIds, if present, must be a non-empty array');
+    } else if (Array.isArray(def.playerStarts) && def.squadCharacterIds.length !== def.playerStarts.length) {
+      problems.push(
+        `squadCharacterIds.length (${def.squadCharacterIds.length}) must match playerStarts.length (${def.playerStarts.length})`,
+      );
+    }
+  }
 
   const inBounds = (p: Vec2) => p.x >= 0 && p.y >= 0 && p.x < width && p.y < height;
   const isWalkable = (p: Vec2) => inBounds(p) && walkable[p.y]?.[p.x];

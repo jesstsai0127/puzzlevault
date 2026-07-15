@@ -83,12 +83,27 @@ export interface MapDef {
   formatVersion: number;
   id: string;
   nameKey: string;
-  /** Sokoban-style char grid: '#' wall, ' ' floor, '~' hazard, 'B' base (impassable, shared HP pool). */
+  /**
+   * Sokoban-style char grid: '#' wall, ' ' floor, '~' hazard (impassable —
+   * a push can still land a unit on it, lethal to a shoved monster), 'B'
+   * base (impassable, shared HP pool), '*' poison mist (walkable like plain
+   * floor — flat, unavoidable, non-lethal-on-its-own damage to whichever
+   * living unit, player or monster, is still standing on it at endTurn()).
+   */
   grid: string[];
   playerStarts: Vec2[];
   waves: WaveDef[];
   /** Shared HP pool for all of this map's 'B' base tiles combined. */
   baseHp: number;
+  /**
+   * The squad that plays this map, by characterId, in playerStarts order.
+   * Defaults to the game's global STARTING_SQUAD (content/registry.ts) when
+   * omitted — existing 2-hero maps don't need to declare this. A map whose
+   * playerStarts.length differs from the default squad size (e.g. a 3-hero
+   * level) MUST set this explicitly so BattleEngine's squad and the map's
+   * own playerStarts line up 1:1.
+   */
+  squadCharacterIds?: string[];
 }
 
 /** One beat of a fully-automatic tutorial playback — see TutorialDef. */
