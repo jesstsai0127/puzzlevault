@@ -262,17 +262,29 @@ describe('demo4 (mist hollow) — 3-hero squad + healer + poison mist, world-2 s
 });
 
 describe('tutorials registry (scripted teaching levels)', () => {
-  it('parses all three builtin tutorials without throwing, each with a non-empty script', () => {
-    expect(Object.keys(tutorials)).toEqual(['tut_ap_cost', 'tut_opportunity_attack', 'tut_push_into_abyss']);
+  it('parses all five builtin tutorials without throwing, each with a non-empty script', () => {
+    expect(Object.keys(tutorials)).toEqual([
+      'tut_ap_cost',
+      'tut_dot_terrain',
+      'tut_healer',
+      'tut_opportunity_attack',
+      'tut_push_into_abyss',
+    ]);
     for (const tutorial of Object.values(tutorials)) {
       expect(tutorial.script.length).toBeGreaterThan(0);
-      expect(tutorial.map.playerStarts.length).toBeGreaterThanOrEqual(STARTING_SQUAD.length);
+      // Tutorials without their own squadCharacterIds fall back to the
+      // global 2-hero STARTING_SQUAD (see MapDef.squadCharacterIds); ones
+      // that declare their own (e.g. tut_healer's li_yan+bai_zhi, or
+      // tut_dot_terrain's solo li_yan) must have playerStarts line up 1:1.
+      const squad = tutorial.map.squadCharacterIds ?? STARTING_SQUAD;
+      expect(tutorial.map.playerStarts.length).toBe(squad.length);
     }
   });
 
   it('builds a playable BattleEngine from each tutorial map and can replay its whole script without throwing', () => {
     for (const tutorial of Object.values(tutorials)) {
-      const engine = new BattleEngine(tutorial.map, STARTING_SQUAD, registry);
+      const squad = tutorial.map.squadCharacterIds ?? STARTING_SQUAD;
+      const engine = new BattleEngine(tutorial.map, squad, registry);
       for (const step of tutorial.script) {
         if (!step.action) continue;
         if (step.action.type === 'move') {
@@ -315,5 +327,59 @@ describe('tutorials registry (scripted teaching levels)', () => {
     // endTurn was scripted) means the only thing that could have hit them
     // is the disengage opportunity attack in the retreat step.
     expect(liYan.hp).toBeLessThan(liYan.maxHp);
+  });
+
+  it('tut_healer script actually drops Li Yan below max HP via the jiangshi hit, then Bai Zhi\'s minor_heal actually raises it back', () => {
+    const tutorial = tutorials.tut_healer;
+    const squad = tutorial.map.squadCharacterIds!;
+    expect(squad).toEqual(['li_yan', 'bai_zhi']);
+    const engine = new BattleEngine(tutorial.map, squad, registry);
+    const liYanMaxHp = engine.getSnapshot().players[0].maxHp;
+
+    let hpAfterHit = -1;
+    let sawHeal = false;
+    for (const step of tutorial.script) {
+      if (!step.action) continue;
+      if (step.action.type === 'move') {
+        engine.moveUnit(step.action.unitIndex, step.action.dir);
+      } else if (step.action.type === 'useSkill') {
+        engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
+        if (step.action.skillId === 'minor_heal' || step.action.skillId === 'major_heal') sawHeal = true;
+      } else {
+        engine.endTurn();
+        // The only scripted endTurn is the one that lets the jiangshi hit
+        // Li Yan — capture the resulting HP right after it resolves.
+        hpAfterHit = engine.getSnapshot().players[0].hp;
+      }
+    }
+    expect(hpAfterHit).toBeGreaterThanOrEqual(0);
+    expect(hpAfterHit).toBeLessThan(liYanMaxHp); // jiangshi's corpse_smash actually landed
+    expect(sawHeal).toBe(true);
+    const liYanFinal = engine.getSnapshot().players[0];
+    expect(liYanFinal.hp).toBeGreaterThan(hpAfterHit); // Bai Zhi's heal actually raised it back up
+  });
+
+  it('tut_dot_terrain script actually ticks poison-mist damage on both Li Yan and the yin_ghost after endTurn', () => {
+    const tutorial = tutorials.tut_dot_terrain;
+    const squad = tutorial.map.squadCharacterIds!;
+    expect(squad).toEqual(['li_yan']);
+    const engine = new BattleEngine(tutorial.map, squad, registry);
+    const liYanMaxHp = engine.getSnapshot().players[0].maxHp;
+    const ghostMaxHp = engine.getSnapshot().monsters[0].maxHp;
+
+    for (const step of tutorial.script) {
+      if (!step.action) continue;
+      if (step.action.type === 'move') engine.moveUnit(step.action.unitIndex, step.action.dir);
+      else if (step.action.type === 'useSkill') engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
+      else engine.endTurn();
+    }
+
+    const snap = engine.getSnapshot();
+    // Both units were still standing on a '*' tile when the scripted
+    // endTurn resolved — poison mist is flat, unblockable, and hits both
+    // player and monster the same way (see POISON_MIST_DAMAGE in engine.ts).
+    expect(snap.players[0].hp).toBeLessThan(liYanMaxHp);
+    expect(snap.monsters[0].hp).toBeLessThan(ghostMaxHp);
+    expect(snap.monsters[0].hp).toBeGreaterThan(0); // not lethal on its own
   });
 });
