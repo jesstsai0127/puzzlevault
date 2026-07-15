@@ -91,12 +91,12 @@ export class LevelSelectScene extends Phaser.Scene {
       const y = 220 + (tutorialIds.length + i) * 70;
       const group = groupByNormalMapId.get(mapId);
 
-      // The main row button always targets this map's own "normal" entry —
-      // demo2/3/4 (no group) behave exactly as before.
-      const bg = this.add
-        .rectangle(this.scale.width / 2, y, 360, 50, 0x2a2a35)
-        .setStrokeStyle(1, 0x3a3a46)
-        .setInteractive({ useHandCursor: true });
+      // A grouped map's "normal" difficulty is already a clickable tier
+      // button (rendered below) — the main row here is just a label for
+      // grouped maps, not a second, redundant button for the same map.
+      // Ungrouped maps (demo2/3/4) behave exactly as before: the whole row
+      // is the one and only button.
+      const bg = this.add.rectangle(this.scale.width / 2, y, 360, 50, 0x2a2a35).setStrokeStyle(1, 0x3a3a46);
       const label = this.add
         .text(this.scale.width / 2, y, `${mapId} — ${i18n.t(map.nameKey)}`, {
           fontFamily: 'monospace',
@@ -104,12 +104,15 @@ export class LevelSelectScene extends Phaser.Scene {
           color: '#f1f1f6',
         })
         .setOrigin(0.5);
-      bg.on('pointerover', () => bg.setFillStyle(0x3a3a46));
-      bg.on('pointerout', () => bg.setFillStyle(0x2a2a35));
-      bg.on('pointerdown', () => goToMap(mapId));
       label.setDepth(1);
 
-      if (!group) return;
+      if (!group) {
+        bg.setInteractive({ useHandCursor: true });
+        bg.on('pointerover', () => bg.setFillStyle(0x3a3a46));
+        bg.on('pointerout', () => bg.setFillStyle(0x2a2a35));
+        bg.on('pointerdown', () => goToMap(mapId));
+        return;
+      }
 
       // Difficulty-tier buttons: small, color-coded, stacked to the right of
       // the main row so demo1's easy/normal/hard choice reads as one level
