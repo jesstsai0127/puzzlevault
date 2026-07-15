@@ -136,8 +136,12 @@ const GRID_CHARS = new Set(['#', ' ', '~', 'B', '*']);
 function parseWallFloorGrid(grid: string[]): { width: number; height: number; walkable: boolean[][] } {
   const height = grid.length;
   const width = grid[0]?.length ?? 0;
+  // Must match BattleEngine's own isWalkable() — poison mist ('*') is floor
+  // you can stand on, same as ' '. Diverging here would let a map validate
+  // fine while placing a playerStart/monster spawn the engine actually
+  // rejects (or vice versa).
   const walkable: boolean[][] = grid.map((row) =>
-    row.split('').map((ch) => ch === ' '),
+    row.split('').map((ch) => ch === ' ' || ch === '*'),
   );
   return { width, height, walkable };
 }
