@@ -644,6 +644,32 @@ describe('BattleEngine: hazard terrain', () => {
     expect(res).toEqual({ ok: true });
     expect(engine.getSnapshot().monsters[0].hp).toBe(0); // maxHp 2 - 2 damage landed, the ray wasn't blocked by the hazard
   });
+
+  it('a monster reroutes onto the other axis instead of permanently wedging against a hazard tile on a tied diagonal', () => {
+    // Regression: multiStepToward() picked one axis (ties go horizontal) and
+    // gave up for the whole turn if that single step was blocked, even when
+    // a step on the other axis was clear. A monster whose distance to its
+    // target ties (or nearly ties) on both axes, with a hazard sitting on
+    // the tie-break axis, got permanently walled off with zero progress
+    // every turn — found via manual playtesting, not by the automated
+    // "no monster ever gets stuck" regression (that check only exercises the
+    // default player-start positions, which never happened to create a tie).
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'hazard-reroute',
+      nameKey: 'map.hazard4.name',
+      grid: hazardGrid,
+      baseHp: 8,
+      playerStarts: [{ x: 4, y: 1 }, { x: 6, y: 3 }], // li_yan at (4,1) is nearest; su_qing far away, out of contention
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    // From (3,2) to (4,1): dx=1, dy=-1 — a tie. The tie-break picks
+    // horizontal ('right'), landing on the hazard at (4,2) — blocked. Without
+    // the fallback the ghost never moves; with it, it steps 'up' to (3,1).
+    engine.endTurn();
+    expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 3, y: 1 });
+  });
 });
 
 describe('BattleEngine: Phase 1 base defense', () => {
