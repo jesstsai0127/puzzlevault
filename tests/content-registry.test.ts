@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
+import { MOVE_VECTORS, add, stepDirectionToward } from '../core/geometry';
 import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry, tutorials } from '../content/registry';
 
 describe('Phase 0 content registry', () => {
@@ -61,7 +62,7 @@ describe('Phase 0 content registry', () => {
 
 describe('maps registry (multi-level select, roadmap ch.5)', () => {
   it('exposes every playable level by a stable id, and demo1 is the default', () => {
-    expect(Object.keys(maps)).toEqual(['demo1', 'demo2']);
+    expect(Object.keys(maps)).toEqual(['demo1', 'demo2', 'demo3']);
     expect(maps.demo1).toBe(yanwuGroundMap);
     expect(DEFAULT_MAP_ID).toBe('demo1');
     expect(maps[DEFAULT_MAP_ID]).toBe(maps.demo1);
@@ -107,6 +108,93 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
         // resolveMoveDestination() couldn't take a single step — the classic
         // symptom of a hazard tile sitting directly on the greedy path.
         expect(m && (m.position.x !== intent.to.x || m.position.y !== intent.to.y)).toBe(true);
+      }
+      engine.endTurn();
+    }
+  });
+});
+
+describe('demo3 (wolf woods) — finale mixing all three unused monster archetypes', () => {
+  it('builds a playable BattleEngine on demo3 without throwing', () => {
+    const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
+    const snap = engine.getSnapshot();
+    expect(snap.players).toHaveLength(2);
+    expect(snap.monsters).toHaveLength(2); // wave 1: two yao_lang from opposite corners
+    expect(snap.baseTiles.length).toBeGreaterThan(0);
+    expect(maps.demo3.waves).toHaveLength(5); // finale spec: 5 waves (roadmap ch.4 關卡結構)
+  });
+
+  it('covers all three new monster archetypes plus yin_ghost as base pressure', () => {
+    // yao_lang / teng_yao / jiangshi all target nearestPlayer, never the base —
+    // without yin_ghost in the mix the base could never fall, making the level
+    // unlosable. The finale spec (混合該世界所有怪) wants the mix anyway.
+    const allMonsterIds = new Set(maps.demo3.waves.flatMap((w) => w.monsters.map((m) => m.monsterId)));
+    expect(allMonsterIds.has('yao_lang')).toBe(true);
+    expect(allMonsterIds.has('teng_yao')).toBe(true);
+    expect(allMonsterIds.has('jiangshi')).toBe(true);
+    expect(allMonsterIds.has('yin_ghost')).toBe(true);
+  });
+
+  it('no monster on demo3 ever gets terrain-stuck with a move intent that goes nowhere (regression: hazard tiles sat directly in the greedy spawn path)', () => {
+    // Same regression demo2 guards against, adapted for player-hunting
+    // monsters. demo2's monsters all aim at the (static) base, so a
+    // zero-progress move intent could only mean terrain blocking the greedy
+    // path. demo3's wolves/jiangshi hunt players, which adds two LEGITIMATE
+    // zero-progress cases the strict check would false-positive on:
+    //   1. aim === null — every player is dead, the hunter has no target and
+    //      idles in place by design (only the base can end a run).
+    //   2. The greedy next tile is occupied by another living unit — a
+    //      traffic queue (e.g. two ghosts single-file at the base), which
+    //      resolves or persists harmlessly; the monster is boxed in by
+    //      bodies, not silently wedged against a hazard.
+    // What must NEVER happen is the original bug: aim set, nobody in the
+    // way, and the monster still can't take a single step — that means a
+    // hazard/wall sits directly on the greedy path.
+    const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
+    const walkable = (p: { x: number; y: number }) => maps.demo3.grid[p.y]?.[p.x] === ' ';
+    for (let i = 0; i < 60; i++) {
+      const snap = engine.getSnapshot();
+      if (snap.outcome) {
+        engine.confirmOutcome();
+        continue;
+      }
+      const playersAlive = snap.players.some((p) => p.hp > 0);
+      const occupied = new Set(
+        [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
+          (u) => `${u.position.x},${u.position.y}`,
+        ),
+      );
+      for (const intent of engine.getIntents()) {
+        if (intent.kind !== 'move') continue;
+        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+        expect(m).toBeDefined();
+        if (!intent.aim) {
+          expect(playersAlive).toBe(false); // idle with no aim is only legal once the squad is wiped
+          continue;
+        }
+        if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
+          const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
+          // Zero progress must be explained by a body in the way — never by terrain.
+          expect(occupied.has(`${next.x},${next.y}`), `terrain-stuck at (${m!.position.x},${m!.position.y}) toward (${intent.aim.x},${intent.aim.y}): next tile (${next.x},${next.y}) walkable=${walkable(next)}`).toBe(true);
+        }
+      }
+      engine.endTurn();
+    }
+  });
+
+  it("teng_yao's intent is never a move — its aiRules are useSkill-only, so a move intent would mean the rules or engine regressed", () => {
+    const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
+    for (let i = 0; i < 60; i++) {
+      const snap = engine.getSnapshot();
+      if (snap.outcome) {
+        engine.confirmOutcome();
+        continue;
+      }
+      for (const intent of engine.getIntents()) {
+        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+        if (m?.monsterId === 'teng_yao') {
+          expect(intent.kind).toBe('skill');
+        }
       }
       engine.endTurn();
     }
