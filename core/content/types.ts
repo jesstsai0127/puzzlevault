@@ -8,11 +8,11 @@ export type TargetMode = 'self' | 'firstInLine';
  * combine them but never introduce new verbs. Keep this list small; adding
  * a verb is a deliberate engine change, not a per-skill one.
  */
-export type EffectType = 'damage' | 'push' | 'shield' | 'heal';
+export type EffectType = 'damage' | 'push' | 'shield' | 'heal' | 'taunt';
 
 export interface EffectPrimitive {
   type: EffectType;
-  /** Meaning depends on `type`: damage amount / push distance (tiles) / shield or heal amount. */
+  /** Meaning depends on `type`: damage amount / push distance (tiles) / shield or heal amount / taunt duration in turns. */
   amount: number;
   target: TargetMode;
 }
