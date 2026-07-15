@@ -1248,3 +1248,231 @@ describe('BattleEngine: opportunity attacks (closes the attack-then-retreat expl
     };
   }
 });
+
+describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
+  const heavyShieldSkill: SkillDef = {
+    formatVersion: 1,
+    id: 'heavy_shield',
+    nameKey: 'skill.heavy_shield.name',
+    descKey: 'skill.heavy_shield.desc',
+    range: 0,
+    mpCost: 2,
+    effects: [{ type: 'shield', amount: 2, target: 'self' }],
+  };
+  const tauntSkill: SkillDef = {
+    formatVersion: 1,
+    id: 'taunt',
+    nameKey: 'skill.taunt.name',
+    descKey: 'skill.taunt.desc',
+    range: 3,
+    mpCost: 2,
+    effects: [{ type: 'taunt', amount: 2, target: 'firstInLine' }],
+  };
+  const lingEr: CharacterDef = {
+    formatVersion: 1,
+    id: 'ling_er',
+    nameKey: 'character.ling_er.name',
+    spriteRef: 'char_ling_er',
+    maxHp: 9,
+    actionPoints: 4,
+    skillIds: ['heavy_shield', 'taunt'],
+  };
+  // A pure base-seeker, like content/monsters/yin_ghost.json's real Phase 1
+  // aiRules — never attacks a player, only ever aims at nearestBaseTile. The
+  // most meaningful taunt case: proving it can be yanked off the base and
+  // onto a hero, not just redirected between two things it already hunted.
+  const baseSeekingGhost: MonsterDef = {
+    ...yinGhost,
+    id: 'base_ghost',
+    aiRules: [
+      { when: { kind: 'targetInRange', target: 'nearestBaseTile', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
+      { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } },
+    ],
+  };
+  const lethalClaw: SkillDef = {
+    formatVersion: 1,
+    id: 'lethal_claw',
+    nameKey: 'skill.lethal_claw.name',
+    descKey: 'skill.lethal_claw.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 99, target: 'firstInLine' }],
+  };
+  // Always attacks whoever's adjacent — used only to kill the taunt caster
+  // on cue, to test the caster-died cleanup path.
+  const assassin: MonsterDef = {
+    formatVersion: 1,
+    id: 'assassin',
+    nameKey: 'monster.assassin.name',
+    spriteRef: 'mon_assassin',
+    maxHp: 5,
+    moveRange: 1,
+    skillIds: ['lethal_claw'],
+    aiRules: [{ when: { kind: 'always' }, action: { kind: 'useSkill', skillId: 'lethal_claw' } }],
+  };
+
+  const tauntRegistry: ContentRegistry = {
+    characters: { ...registry.characters, ling_er: lingEr },
+    skills: { ...registry.skills, heavy_shield: heavyShieldSkill, taunt: tauntSkill, lethal_claw: lethalClaw },
+    monsters: { ...registry.monsters, base_ghost: baseSeekingGhost, assassin },
+  };
+
+  // 10x6 room, base tile in the bottom-left, ling_er in the top-right corner,
+  // base_ghost spawned in the bottom-right — far from both the base and
+  // ling_er, so its very first intent (before any taunt) is a plain
+  // moveToward-base fallback. Deliberately keeps ling_er off the x=7 column
+  // the ghost walks up so a taunted move's "ahead" tile never coincides with
+  // ling_er's own tile — isolates "is the aim the taunter or the base" from
+  // the unrelated blocker-attack mechanic (moveToward's own body-block rule).
+  function tauntArena(): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'taunt-arena',
+      nameKey: 'map.tauntarena.name',
+      grid: ['##########', '#        #', '#        #', '#        #', '#B       #', '##########'],
+      baseHp: 8,
+      playerStarts: [{ x: 8, y: 1 }],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 8, y: 4 } }] }],
+    };
+  }
+
+  it('taunting a pure base-seeking monster (nearestBaseTile AI, never targets a player) redirects its very next intent onto the caster', () => {
+    const engine = new BattleEngine(tauntArena(), ['ling_er'], tauntRegistry);
+
+    // Sanity: before any taunt, this monster's fallback rule aims at the
+    // base, not a player — confirms this really is the "打陣" archetype.
+    expect(engine.getIntents()).toEqual([
+      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object), aim: { x: 1, y: 4 } },
+    ]);
+
+    const res = engine.useSkill(0, 'taunt', 'down'); // ling_er (8,1) -> base_ghost (8,4), straight down, range 3
+    expect(res).toEqual({ ok: true });
+    expect(engine.getLastEvents()).toEqual([{ kind: 'taunt', target: { kind: 'monster', instanceId: expect.any(String) } }]);
+
+    const tauntedInstanceId = engine.getSnapshot().monsters[0].instanceId;
+    const tauntedNow = engine.getSnapshot().monsters.find((m) => m.instanceId === tauntedInstanceId);
+    expect(tauntedNow?.tauntedBy).toBe(0);
+    expect(tauntedNow?.tauntTurnsLeft).toBe(2);
+
+    // This turn's already-telegraphed intent (locked in before the cast)
+    // still resolves untouched — no mid-turn randomness/retargeting.
+    engine.endTurn();
+
+    // The NEXT intent, computed fresh for the new turn, is the first one the
+    // taunt actually gets to influence — and it aims at ling_er, not the base.
+    const intents = engine.getIntents();
+    expect(intents).toHaveLength(1);
+    expect(intents[0].kind).toBe('move');
+    if (intents[0].kind === 'move') {
+      expect(intents[0].aim).toEqual({ x: 8, y: 1 }); // ling_er's position, not the base
+    }
+  });
+
+  it('taunt lasts exactly its amount in turns, then automatically expires and the monster reverts to its normal AI', () => {
+    const engine = new BattleEngine(tauntArena(), ['ling_er'], tauntRegistry);
+    engine.useSkill(0, 'taunt', 'down'); // amount: 2 -> tauntTurnsLeft starts at 2
+
+    engine.endTurn(); // resolves the pre-taunt intent; computes turn 2's intent (1st taunted computation)
+    expect(engine.getIntents()[0].kind).toBe('move');
+    let intent = engine.getIntents()[0];
+    if (intent.kind === 'move') expect(intent.aim).toEqual({ x: 8, y: 1 }); // still taunted
+    expect(engine.getSnapshot().monsters[0].tauntTurnsLeft).toBe(1);
+
+    engine.endTurn(); // resolves turn 2's intent; computes turn 3's intent (2nd taunted computation — still within the 2-turn duration)
+    intent = engine.getIntents()[0];
+    expect(intent.kind === 'move' || intent.kind === 'skill').toBe(true);
+    if (intent.kind === 'move') expect(intent.aim).toEqual({ x: 8, y: 1 });
+    expect(engine.getSnapshot().monsters[0].tauntedBy).toBeUndefined(); // expired exactly after the 2nd taunted computation
+    expect(engine.getSnapshot().monsters[0].tauntTurnsLeft).toBeUndefined();
+
+    engine.endTurn(); // resolves turn 3's (still-taunted) intent; computes turn 4's intent — taunt is gone, normal AI applies
+    intent = engine.getIntents()[0];
+    if (intent.kind === 'move') {
+      // Reverted to hunting the base again, not still locked onto ling_er.
+      expect(intent.aim).not.toEqual({ x: 8, y: 1 });
+    }
+  });
+
+  it("the taunt caster dying clears the monster's taunt state — it falls back to normal AI instead of aiming at a dead player's stale position", () => {
+    const squishyLingEr: CharacterDef = { ...lingEr, maxHp: 1 };
+    const deathRegistry: ContentRegistry = {
+      ...tauntRegistry,
+      characters: { ...tauntRegistry.characters, ling_er: squishyLingEr },
+    };
+    const map: MapDef = {
+      ...tauntArena(),
+      waves: [
+        {
+          turns: AMPLE_TURNS,
+          monsters: [
+            { monsterId: 'base_ghost', spawn: { x: 8, y: 4 } },
+            { monsterId: 'assassin', spawn: { x: 7, y: 1 } }, // adjacent to ling_er at (8,1) from the very first turn
+          ],
+        },
+      ],
+    };
+    const engine = new BattleEngine(map, ['ling_er'], deathRegistry);
+    engine.useSkill(0, 'taunt', 'down'); // taunts base_ghost before ending the turn
+
+    const baseGhostId = engine.getSnapshot().monsters.find((m) => m.monsterId === 'base_ghost')!.instanceId;
+    expect(engine.getSnapshot().monsters.find((m) => m.instanceId === baseGhostId)?.tauntedBy).toBe(0);
+
+    engine.endTurn(); // the assassin's always-on lethal_claw kills ling_er (1 HP) this same turn
+    expect(engine.getSnapshot().players[0].hp).toBe(0);
+
+    // computeIntents(), run fresh for the new turn as part of that same
+    // endTurn() call, must have noticed the taunter is dead and cleared the
+    // taunt instead of leaving it dangling or throwing.
+    const baseGhost = engine.getSnapshot().monsters.find((m) => m.instanceId === baseGhostId);
+    expect(baseGhost?.tauntedBy).toBeUndefined();
+    expect(baseGhost?.tauntTurnsLeft).toBeUndefined();
+
+    const intent = engine.getIntents().find((i) => i.instanceId === baseGhostId)!;
+    // Back to normal AI: aiming at the base, not at ling_er's last (now dead) position.
+    if (intent.kind === 'move') expect(intent.aim).toEqual({ x: 1, y: 4 });
+  });
+
+  it('heavy_shield grants 2 shield charges that fully block the next 2 hits, same block-a-hit-not-a-point mechanic as qi_shield', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'heavy-shield-test',
+      nameKey: 'map.heavyshieldtest.name',
+      grid: ['##########', '#        #', '#        #', '##########'],
+      baseHp: 8,
+      playerStarts: [{ x: 3, y: 1 }],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'assassin', spawn: { x: 2, y: 1 } }] }], // adjacent, always attacks
+    };
+    const engine = new BattleEngine(map, ['ling_er'], tauntRegistry);
+    engine.useSkill(0, 'heavy_shield', 'left'); // self-target — direction is irrelevant but required by the call shape
+    expect(engine.getSnapshot().players[0].shield).toBe(2);
+
+    engine.endTurn(); // 1st lethal_claw hit — fully blocked
+    expect(engine.getSnapshot().players[0].shield).toBe(1);
+    expect(engine.getSnapshot().players[0].hp).toBe(9);
+
+    engine.endTurn(); // 2nd lethal_claw hit — fully blocked, charge exhausted
+    expect(engine.getSnapshot().players[0].shield).toBe(0);
+    expect(engine.getSnapshot().players[0].hp).toBe(9);
+
+    engine.endTurn(); // 3rd hit — no charges left, lands for real (99 dmg, way past 9 HP)
+    expect(engine.getSnapshot().players[0].hp).toBe(0);
+  });
+
+  it('resetTurn undoes a taunt cast earlier in the same turn, reverting the monster to its pre-cast (untaunted) state', () => {
+    const engine = new BattleEngine(tauntArena(), ['ling_er'], tauntRegistry);
+    engine.useSkill(0, 'taunt', 'down');
+    expect(engine.getSnapshot().monsters[0].tauntedBy).toBe(0);
+
+    engine.resetTurn();
+
+    const reverted = engine.getSnapshot().monsters[0];
+    expect(reverted.tauntedBy).toBeUndefined();
+    expect(reverted.tauntTurnsLeft).toBeUndefined();
+    // The pre-cast intent (base-seeking) is untouched too, since resetTurn
+    // doesn't recompute intents — it restores state from before the cast,
+    // and currentIntents was never touched by useSkill() in the first place.
+    expect(engine.getIntents()).toEqual([
+      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object), aim: { x: 1, y: 4 } },
+    ]);
+  });
+});
