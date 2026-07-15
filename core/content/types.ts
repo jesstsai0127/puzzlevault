@@ -1,4 +1,4 @@
-import type { Vec2 } from '../geometry';
+import type { CardinalDir, Vec2 } from '../geometry';
 
 export type TargetMode = 'self' | 'firstInLine';
 
@@ -89,4 +89,30 @@ export interface MapDef {
   waves: WaveDef[];
   /** Shared HP pool for all of this map's 'B' base tiles combined. */
   baseHp: number;
+}
+
+/** One beat of a fully-automatic tutorial playback — see TutorialDef. */
+export interface TutorialStep {
+  /** i18n key for the narration line shown while this step plays. Purely a pause/explanation when `action` is absent — the player has nothing to do but wait (or skip). */
+  textKey: string;
+  action?:
+    | { type: 'move'; unitIndex: number; dir: CardinalDir }
+    | { type: 'useSkill'; unitIndex: number; skillId: string; dir: CardinalDir }
+    | { type: 'endTurn' };
+}
+
+/**
+ * A short, fully-automatic scripted scene that teaches one mechanic — BattleScene
+ * plays its `script` step by step against a real BattleEngine (same moveUnit/
+ * useSkill/endTurn calls a player's own actions go through), narrating each
+ * step's textKey. The player never acts; they can only skip to LevelSelectScene.
+ * Not registered in the `maps` registry — tutorials are their own top-level
+ * content kind with their own map embedded, since they aren't a playable level.
+ */
+export interface TutorialDef {
+  formatVersion: number;
+  id: string;
+  nameKey: string;
+  map: MapDef;
+  script: TutorialStep[];
 }
