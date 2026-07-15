@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "heavy_shield",
+  "nameKey": "skill.heavy_shield.name",
+  "descKey": "skill.heavy_shield.desc",
+  "range": 0,
+  "mpCost": 2,
+  "effects": [{ "type": "shield", "amount": 2, "target": "self" }]
+}
