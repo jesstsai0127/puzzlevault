@@ -1104,7 +1104,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const isLastWave = snap.waveIndex === this.map.waves.length - 1;
-    if (isLastWave && !this.announcedLastWave) {
+    // Tutorials auto-play — there's no "hold out" for the viewer to do, and the
+    // banner lands right on top of the rules panel text.
+    if (isLastWave && !this.announcedLastWave && !this.isTutorial) {
       this.announcedLastWave = true;
       this.lastWaveBanner.setText(i18n.t('ui.last_wave_reminder')).setVisible(true);
       this.time.delayedCall(3000, () => this.lastWaveBanner.setVisible(false));
