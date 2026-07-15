@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "ling_er",
+  "nameKey": "character.ling_er.name",
+  "spriteRef": "char_ling_er",
+  "maxHp": 9,
+  "actionPoints": 4,
+  "skillIds": ["heavy_shield", "taunt"]
+}
