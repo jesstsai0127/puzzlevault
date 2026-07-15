@@ -5,6 +5,8 @@ import type {
   MapDef,
   MonsterDef,
   SkillDef,
+  TutorialDef,
+  TutorialStep,
   WaveDef,
 } from './types';
 import type { Vec2 } from '../geometry';
@@ -13,6 +15,8 @@ export const CONTENT_FORMAT_VERSION = 1;
 
 const EFFECT_TYPES = ['damage', 'push', 'shield', 'heal'];
 const TARGET_MODES = ['self', 'firstInLine'];
+const CARDINAL_DIRS = ['up', 'down', 'left', 'right'];
+const TUTORIAL_ACTION_TYPES = ['move', 'useSkill', 'endTurn'];
 
 function checkFormatVersion(raw: unknown, kind: string): void {
   const v = (raw as { formatVersion?: unknown })?.formatVersion;
@@ -196,5 +200,63 @@ export function parseMapDef(raw: unknown): MapDef {
   checkFormatVersion(raw, 'map file');
   const def = raw as MapDef;
   throwIfProblems('map', def.id, validateMapDef(def));
+  return def;
+}
+
+// ---------------------------------------------------------------------------
+// Tutorial (scripted teaching level — see core/content/types.ts TutorialDef)
+// ---------------------------------------------------------------------------
+
+function validateTutorialStep(step: TutorialStep, i: number): string[] {
+  const problems: string[] = [];
+  if (!step.textKey) problems.push(`step ${i}: missing textKey`);
+  if (step.action === undefined) return problems;
+
+  const action = step.action;
+  if (!TUTORIAL_ACTION_TYPES.includes(action.type)) {
+    problems.push(`step ${i}: unknown action type '${(action as { type: unknown }).type}'`);
+    return problems;
+  }
+  if (action.type === 'endTurn') return problems;
+
+  if (!(Number.isInteger(action.unitIndex) && action.unitIndex >= 0)) {
+    problems.push(`step ${i}: action.unitIndex must be a non-negative integer`);
+  }
+  if (!CARDINAL_DIRS.includes(action.dir)) {
+    problems.push(`step ${i}: action.dir '${action.dir}' is not a CardinalDir`);
+  }
+  if (action.type === 'useSkill' && !action.skillId) {
+    problems.push(`step ${i}: useSkill action missing skillId`);
+  }
+  return problems;
+}
+
+export function validateTutorialDef(def: TutorialDef): string[] {
+  const problems: string[] = [];
+  if (!def.id) problems.push('missing id');
+  if (!def.nameKey) problems.push('missing nameKey');
+
+  if (!def.map) {
+    problems.push('missing map');
+  } else {
+    // Reuse the same map validation a playable level's map goes through —
+    // a tutorial's embedded map is a real MapDef, just not registered in
+    // the `maps` registry, so it must be exactly as valid.
+    validateMapDef(def.map).forEach((p) => problems.push(`map: ${p}`));
+  }
+
+  if (!Array.isArray(def.script) || def.script.length === 0) {
+    problems.push('tutorial has no script steps');
+  } else {
+    def.script.forEach((step, i) => problems.push(...validateTutorialStep(step, i)));
+  }
+
+  return problems;
+}
+
+export function parseTutorialDef(raw: unknown): TutorialDef {
+  checkFormatVersion(raw, 'tutorial file');
+  const def = raw as TutorialDef;
+  throwIfProblems('tutorial', def.id, validateTutorialDef(def));
   return def;
 }
