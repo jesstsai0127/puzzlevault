@@ -1,6 +1,7 @@
 {
   "character.li_yan.name": "Li Yan",
   "character.su_qing.name": "Su Qing",
+  "character.bai_zhi.name": "Bai Zhi",
 
   "skill.sword_qi.name": "Sword Qi Slash",
   "skill.sword_qi.desc": "Melee: a slash of condensed sword qi strikes an adjacent foe.",
@@ -21,6 +22,10 @@
   "skill.vine_lash.desc": "Ranged: demonic vines lash out in a straight line, up to 4 tiles.",
   "skill.wolf_bite.name": "Wolf Bite",
   "skill.wolf_bite.desc": "Melee: a swift bite from an adjacent target.",
+  "skill.minor_heal.name": "Lesser Spring Renewal",
+  "skill.minor_heal.desc": "Restores 2 HP to the nearest ally in a straight line, up to 1 tile.",
+  "skill.major_heal.name": "Greater Spring Renewal",
+  "skill.major_heal.desc": "Restores 4 HP to the nearest ally in a straight line, up to 2 tiles.",
 
   "monster.yin_ghost.name": "Yin Ghost",
   "monster.jiangshi.name": "Jiangshi",
@@ -31,6 +36,7 @@
   "map.yanwu_ground.name": "Sparring Grounds",
   "map.demo2_pincer.name": "Sparring Grounds II - Pincer",
   "map.demo3_wolf_woods.name": "Wolfhowl Trail",
+  "map.demo4_mist_hollow.name": "Miasma Hollow",
 
   "ui.hp": "HP",
   "ui.wave": "Wave",
