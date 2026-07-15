@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { maps } from '../../content/registry';
-import { MAP_QUERY_PARAM } from './levelNav';
+import { maps, tutorials } from '../../content/registry';
+import { MAP_QUERY_PARAM, TUTORIAL_QUERY_PARAM } from './levelNav';
 
 const i18n = new I18n(en, zhTW);
 
@@ -37,10 +37,40 @@ export class LevelSelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    // Tutorials are listed first — they're the suggested starting point, not
+    // a gate: every demo map below is always clickable too, nothing here is
+    // locked/unlocked. A distinct fill color + "【教學】" prefix is the only
+    // thing that tells them apart from a real level in the list.
+    const tutorialIds = Object.keys(tutorials);
+    tutorialIds.forEach((tutorialId, i) => {
+      const tutorial = tutorials[tutorialId];
+      const y = 220 + i * 70;
+      const bg = this.add
+        .rectangle(this.scale.width / 2, y, 360, 50, 0x1f3a2e)
+        .setStrokeStyle(1, 0x2e5a44)
+        .setInteractive({ useHandCursor: true });
+      const label = this.add
+        .text(this.scale.width / 2, y, `${i18n.t('ui.tutorial_label')} ${i18n.t(tutorial.nameKey)}`, {
+          fontFamily: 'monospace',
+          fontSize: '18px',
+          color: '#8fe3b0',
+        })
+        .setOrigin(0.5);
+      bg.on('pointerover', () => bg.setFillStyle(0x2e5a44));
+      bg.on('pointerout', () => bg.setFillStyle(0x1f3a2e));
+      bg.on('pointerdown', () => {
+        const url = new URL(window.location.href);
+        url.searchParams.delete(MAP_QUERY_PARAM);
+        url.searchParams.set(TUTORIAL_QUERY_PARAM, tutorialId);
+        window.location.href = url.toString();
+      });
+      label.setDepth(1);
+    });
+
     const mapIds = Object.keys(maps);
     mapIds.forEach((mapId, i) => {
       const map = maps[mapId];
-      const y = 220 + i * 70;
+      const y = 220 + (tutorialIds.length + i) * 70;
       const bg = this.add
         .rectangle(this.scale.width / 2, y, 360, 50, 0x2a2a35)
         .setStrokeStyle(1, 0x3a3a46)
@@ -56,6 +86,7 @@ export class LevelSelectScene extends Phaser.Scene {
       bg.on('pointerout', () => bg.setFillStyle(0x2a2a35));
       bg.on('pointerdown', () => {
         const url = new URL(window.location.href);
+        url.searchParams.delete(TUTORIAL_QUERY_PARAM);
         url.searchParams.set(MAP_QUERY_PARAM, mapId);
         window.location.href = url.toString();
       });
