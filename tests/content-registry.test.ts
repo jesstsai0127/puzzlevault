@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
 import { MOVE_VECTORS, add, stepDirectionToward } from '../core/geometry';
-import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry, tutorials } from '../content/registry';
+import {
+  STARTING_SQUAD,
+  DEFAULT_MAP_ID,
+  maps,
+  yanwuGroundMap,
+  registry,
+  tutorials,
+  LEVEL_GROUPS,
+} from '../content/registry';
 
 describe('Phase 0 content registry', () => {
   it('parses all builtin content without throwing', () => {
@@ -62,7 +70,14 @@ describe('Phase 0 content registry', () => {
 
 describe('maps registry (multi-level select, roadmap ch.5)', () => {
   it('exposes every playable level by a stable id, and demo1 is the default', () => {
-    expect(Object.keys(maps)).toEqual(['demo1', 'demo2', 'demo3', 'demo4']);
+    expect(Object.keys(maps)).toEqual([
+      'demo1',
+      'yanwu_ground_easy',
+      'yanwu_ground_hard',
+      'demo2',
+      'demo3',
+      'demo4',
+    ]);
     expect(maps.demo1).toBe(yanwuGroundMap);
     expect(DEFAULT_MAP_ID).toBe('demo1');
     expect(maps[DEFAULT_MAP_ID]).toBe(maps.demo1);
@@ -112,6 +127,86 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
       engine.endTurn();
     }
   });
+});
+
+describe('yanwu_ground_easy / yanwu_ground_hard — demo1 difficulty tiers (LEVEL_GROUPS, roadmap difficulty-tiers batch)', () => {
+  it('LEVEL_GROUPS points demo1 (演武場) at exactly the easy/normal/hard mapIds registered in `maps`', () => {
+    expect(LEVEL_GROUPS).toHaveLength(1);
+    const group = LEVEL_GROUPS[0];
+    expect(group.normal).toBe('demo1');
+    expect(group.easy).toBe('yanwu_ground_easy');
+    expect(group.hard).toBe('yanwu_ground_hard');
+    expect(maps[group.easy!]).toBeDefined();
+    expect(maps[group.normal]).toBeDefined();
+    expect(maps[group.hard!]).toBeDefined();
+  });
+
+  it('yanwu_ground_easy: builds a playable BattleEngine and reuses demo1\'s exact grid layout (only waves/baseHp/turns differ)', () => {
+    const engine = new BattleEngine(maps.yanwu_ground_easy, STARTING_SQUAD, registry);
+    const snap = engine.getSnapshot();
+    expect(snap.players).toHaveLength(2);
+    expect(snap.baseTiles.length).toBeGreaterThan(0);
+    expect(maps.yanwu_ground_easy.grid).toEqual(yanwuGroundMap.grid);
+    expect(maps.yanwu_ground_easy.baseHp).toBeGreaterThan(yanwuGroundMap.baseHp); // easier: more base HP than normal
+  });
+
+  it('yanwu_ground_hard: builds a playable BattleEngine and reuses demo1\'s exact grid layout (only waves/baseHp/turns differ)', () => {
+    const engine = new BattleEngine(maps.yanwu_ground_hard, STARTING_SQUAD, registry);
+    const snap = engine.getSnapshot();
+    expect(snap.players).toHaveLength(2);
+    expect(snap.baseTiles.length).toBeGreaterThan(0);
+    expect(maps.yanwu_ground_hard.grid).toEqual(yanwuGroundMap.grid);
+    expect(maps.yanwu_ground_hard.baseHp).toBeLessThan(yanwuGroundMap.baseHp); // harder: less base HP than normal
+  });
+
+  it('a fully passive run (never acting) loses on both tiers, and hard loses no later than normal (tighter turn budget + lower baseHp)', () => {
+    function passiveDefeatTurn(map: typeof maps.demo1): number {
+      const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+      let turns = 0;
+      while (!engine.getSnapshot().outcome && turns < 200) {
+        engine.endTurn();
+        turns += 1;
+      }
+      expect(engine.getSnapshot().outcome).toBe('defeat');
+      return engine.getSnapshot().turnNumber;
+    }
+    const normalDefeatTurn = passiveDefeatTurn(yanwuGroundMap);
+    const hardDefeatTurn = passiveDefeatTurn(maps.yanwu_ground_hard);
+    const easyDefeatTurn = passiveDefeatTurn(maps.yanwu_ground_easy);
+    expect(hardDefeatTurn).toBeLessThanOrEqual(normalDefeatTurn);
+    expect(easyDefeatTurn).toBeGreaterThan(normalDefeatTurn);
+  });
+
+  it.each(['yanwu_ground_easy', 'yanwu_ground_hard'] as const)(
+    'no monster on %s ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/3/4 guard against)',
+    (mapId) => {
+      const map = maps[mapId];
+      const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+      for (let i = 0; i < 60; i++) {
+        const snap = engine.getSnapshot();
+        if (snap.outcome) {
+          engine.confirmOutcome();
+          continue;
+        }
+        const occupied = new Set(
+          [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
+            (u) => `${u.position.x},${u.position.y}`,
+          ),
+        );
+        for (const intent of engine.getIntents()) {
+          if (intent.kind !== 'move') continue;
+          const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+          expect(m).toBeDefined();
+          if (!intent.aim) continue; // no living base-seeking target case doesn't apply here, but keep parity with the demo2/3/4 pattern
+          if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
+            const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
+            expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
+          }
+        }
+        engine.endTurn();
+      }
+    },
+  );
 });
 
 describe('demo3 (wolf woods) — finale mixing all three unused monster archetypes', () => {
