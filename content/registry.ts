@@ -23,6 +23,7 @@ import yaoLang from './monsters/yao_lang.json';
 
 import yanwuGround from './maps/yanwu_ground.json';
 import demo2Pincer from './maps/demo2_pincer.json';
+import demo3WolfWoods from './maps/demo3_wolf_woods.json';
 
 import tutApCost from './tutorials/tut_ap_cost.json';
 import tutOpportunityAttack from './tutorials/tut_opportunity_attack.json';
@@ -51,6 +52,7 @@ export const yanwuGroundMap = parseMapDef(yanwuGround);
 export const maps: Record<string, MapDef> = {
   demo1: yanwuGroundMap,
   demo2: parseMapDef(demo2Pincer),
+  demo3: parseMapDef(demo3WolfWoods),
 };
 
 export const DEFAULT_MAP_ID = 'demo1';
