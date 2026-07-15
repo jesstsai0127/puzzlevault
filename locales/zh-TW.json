@@ -84,7 +84,7 @@
   "tutorial.tut_ap_cost.step5": "劍氣斬要花 2 點 AP，不是 1 點——每個技能自己要花多少點數，按鈕上都寫得清清楚楚，出手前先看一眼。這回合李焰已經用掉 4 點裡的 3 點了。",
   "tutorial.tut_ap_cost.step6": "這就是行動點的規則：每位俠客一本帳，移動跟技能都從裡面扣。回到選關畫面。",
 
-  "tutorial.tut_dot_terrain.name": "毒霧地形",
+  "tutorial.tut_dot_terrain.name": "站在毒霧上會持續扣血",
   "tutorial.tut_dot_terrain.mapName": "教學：毒霧地形",
   "tutorial.tut_dot_terrain.step1": "地上這片綠霧是毒霧地形，走過去或站上去都沒事，但回合結束時人還站在上面就會扣血。",
   "tutorial.tut_dot_terrain.step2": "李焰往前走一步，踏進毒霧裡。",

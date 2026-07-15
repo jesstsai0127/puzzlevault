@@ -84,7 +84,7 @@
   "tutorial.tut_ap_cost.step5": "Sword Qi Slash costs 2 AP, not 1 — each skill's own cost is printed right on its button, so check it before you commit. Li Yan has spent 3 of 4 AP this turn.",
   "tutorial.tut_ap_cost.step6": "That's the whole AP system: one pool per hero, spent on movement and skills alike. Back to level select.",
 
-  "tutorial.tut_dot_terrain.name": "Poison Mist Terrain",
+  "tutorial.tut_dot_terrain.name": "Standing in Mist Costs HP",
   "tutorial.tut_dot_terrain.mapName": "Tutorial: Poison Mist Terrain",
   "tutorial.tut_dot_terrain.step1": "That green haze on the ground is poison mist — walking onto it is free, but if you're still standing on it when the turn ends, it ticks you for damage.",
   "tutorial.tut_dot_terrain.step2": "Li Yan steps forward into the mist.",
