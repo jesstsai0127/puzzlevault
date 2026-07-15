@@ -12,7 +12,7 @@ import { levelSelectUrl } from './levelNav';
 /** How long a narration-only tutorial step (no action) holds on screen before auto-advancing — long enough to read a short sentence, short enough not to feel stuck. */
 const TUTORIAL_STEP_PAUSE_MS = 2500;
 
-const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚' };
+const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
 /** Every skill's numeric effects, exactly as the engine will apply them — e.g. "⚔2" or "⚔1 ➜2". */
 function effectSummary(skill: SkillDef): string {
