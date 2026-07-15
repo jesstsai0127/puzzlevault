@@ -39,6 +39,8 @@
   "monster.yao_lang.name": "Demon Wolf",
 
   "map.yanwu_ground.name": "Sparring Grounds",
+  "map.yanwu_ground_easy.name": "Sparring Grounds · Easy",
+  "map.yanwu_ground_hard.name": "Sparring Grounds · Hard",
   "map.demo2_pincer.name": "Sparring Grounds II - Pincer",
   "map.demo3_wolf_woods.name": "Wolfhowl Trail",
   "map.demo4_mist_hollow.name": "Miasma Hollow",
@@ -77,6 +79,9 @@
   "ui.outcome_victory": "Held the line! Every wave survived.",
 
   "ui.select_level": "Select Level",
+  "ui.difficulty_easy": "Easy",
+  "ui.difficulty_normal": "Normal",
+  "ui.difficulty_hard": "Hard",
   "ui.tutorial_label": "[Tutorial]",
   "ui.tutorial_skip": "Skip",
 
