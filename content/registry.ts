@@ -30,6 +30,8 @@ import demo3WolfWoods from './maps/demo3_wolf_woods.json';
 import demo4MistHollow from './maps/demo4_mist_hollow.json';
 
 import tutApCost from './tutorials/tut_ap_cost.json';
+import tutDotTerrain from './tutorials/tut_dot_terrain.json';
+import tutHealer from './tutorials/tut_healer.json';
 import tutOpportunityAttack from './tutorials/tut_opportunity_attack.json';
 import tutPushIntoAbyss from './tutorials/tut_push_into_abyss.json';
 
@@ -79,6 +81,8 @@ export const STARTING_SQUAD = ['li_yan', 'su_qing'];
 // own right, so it's never mixed into the `maps` registry above.
 export const tutorials: Record<string, TutorialDef> = {
   tut_ap_cost: parseTutorialDef(tutApCost),
+  tut_dot_terrain: parseTutorialDef(tutDotTerrain),
+  tut_healer: parseTutorialDef(tutHealer),
   tut_opportunity_attack: parseTutorialDef(tutOpportunityAttack),
   tut_push_into_abyss: parseTutorialDef(tutPushIntoAbyss),
 };
