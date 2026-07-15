@@ -867,7 +867,7 @@ describe('BattleEngine: getLastEvents', () => {
     ]);
   });
 
-  it("pushing a target into a wall records only the distance actually covered, not the skill's nominal amount", () => {
+  it("pushing a target into a wall records only the distance actually covered, not the skill's nominal amount, and lands a collision hit", () => {
     const map = twoWaveMap();
     map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the x=6 floor edge (x=7 is wall)
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
@@ -877,8 +877,32 @@ describe('BattleEngine: getLastEvents', () => {
     const targetId = engine.getSnapshot().monsters[0].instanceId;
     engine.useSkill(0, 'push_skill', 'right'); // push_skill's amount is 2, but the wall at x=7 stops it after 1
     expect(engine.getLastEvents()).toEqual([
+      // Cut short of the full 2-tile shove — the wall collision itself lands
+      // a hit instead of the remaining distance silently going nowhere.
+      { kind: 'damage', target: { kind: 'monster', instanceId: targetId }, amount: 1, blocked: false },
       { kind: 'push', target: { kind: 'monster', instanceId: targetId }, distance: 1 },
     ]);
+    expect(engine.getSnapshot().monsters[0].hp).toBe(1); // yinGhost maxHp 2 - 1 collision damage
+  });
+
+  it('pushing a target into another unit deals collision damage to both, with zero push distance', () => {
+    const map = twoWaveMap();
+    map.waves[0].monsters[0].spawn = { x: 5, y: 1 };
+    map.waves[0].monsters.push({ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }); // blocks the push target's only escape tile
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, 'right'); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
+    const [pushedId, blockerId] = engine.getSnapshot().monsters.map((m) => m.instanceId);
+    engine.useSkill(0, 'push_skill', 'right'); // (5,1) can't move to (6,1) — occupied
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'damage', target: { kind: 'monster', instanceId: pushedId }, amount: 1, blocked: false },
+      { kind: 'damage', target: { kind: 'monster', instanceId: blockerId }, amount: 1, blocked: false },
+      // No 'push' event at all — zero distance covered.
+    ]);
+    const snap = engine.getSnapshot();
+    expect(snap.monsters[0].hp).toBe(1);
+    expect(snap.monsters[1].hp).toBe(1);
   });
 
   it('casting a shield records a shield event', () => {
