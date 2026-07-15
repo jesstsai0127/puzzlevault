@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "minor_heal",
+  "nameKey": "skill.minor_heal.name",
+  "descKey": "skill.minor_heal.desc",
+  "range": 1,
+  "mpCost": 1,
+  "effects": [{ "type": "heal", "amount": 2, "target": "firstInLine" }]
+}

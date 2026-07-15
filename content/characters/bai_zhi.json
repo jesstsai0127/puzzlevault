@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "bai_zhi",
+  "nameKey": "character.bai_zhi.name",
+  "spriteRef": "char_bai_zhi",
+  "maxHp": 5,
+  "actionPoints": 4,
+  "skillIds": ["minor_heal", "major_heal"]
+}
