@@ -5,7 +5,7 @@ import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, yanwuGroundMap, registry, tutoria
 
 describe('Phase 0 content registry', () => {
   it('parses all builtin content without throwing', () => {
-    expect(Object.keys(registry.characters)).toEqual(['li_yan', 'su_qing']);
+    expect(Object.keys(registry.characters)).toEqual(['li_yan', 'su_qing', 'bai_zhi']);
     expect(Object.keys(registry.monsters)).toEqual([
       'yin_ghost',
       'jiangshi',
@@ -62,7 +62,7 @@ describe('Phase 0 content registry', () => {
 
 describe('maps registry (multi-level select, roadmap ch.5)', () => {
   it('exposes every playable level by a stable id, and demo1 is the default', () => {
-    expect(Object.keys(maps)).toEqual(['demo1', 'demo2', 'demo3']);
+    expect(Object.keys(maps)).toEqual(['demo1', 'demo2', 'demo3', 'demo4']);
     expect(maps.demo1).toBe(yanwuGroundMap);
     expect(DEFAULT_MAP_ID).toBe('demo1');
     expect(maps[DEFAULT_MAP_ID]).toBe(maps.demo1);
@@ -198,6 +198,66 @@ describe('demo3 (wolf woods) — finale mixing all three unused monster archetyp
       }
       engine.endTurn();
     }
+  });
+});
+
+describe('demo4 (mist hollow) — 3-hero squad + healer + poison mist, world-2 small-level spec (4 waves)', () => {
+  it('builds a playable BattleEngine on demo4 with its own 3-hero squad, not the global 2-hero default', () => {
+    const squad = maps.demo4.squadCharacterIds;
+    expect(squad).toEqual(['li_yan', 'su_qing', 'bai_zhi']);
+    const engine = new BattleEngine(maps.demo4, squad!, registry);
+    const snap = engine.getSnapshot();
+    expect(snap.players).toHaveLength(3);
+    expect(snap.players[2].characterId).toBe('bai_zhi');
+    expect(snap.baseTiles.length).toBeGreaterThan(0);
+    expect(maps.demo4.waves).toHaveLength(4); // world-2 small-level spec: world-1 small-level (3) + 1
+  });
+
+  it('covers both new-mechanic monster archetypes: yin_ghost (base-seeking, crosses the mist lanes) and jiangshi (player-seeking tank)', () => {
+    const allMonsterIds = new Set(maps.demo4.waves.flatMap((w) => w.monsters.map((m) => m.monsterId)));
+    expect(allMonsterIds.has('yin_ghost')).toBe(true);
+    expect(allMonsterIds.has('jiangshi')).toBe(true);
+  });
+
+  it('no monster on demo4 ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/demo3 guard against)', () => {
+    const engine = new BattleEngine(maps.demo4, maps.demo4.squadCharacterIds!, registry);
+    for (let i = 0; i < 60; i++) {
+      const snap = engine.getSnapshot();
+      if (snap.outcome) {
+        engine.confirmOutcome();
+        continue;
+      }
+      const occupied = new Set(
+        [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
+          (u) => `${u.position.x},${u.position.y}`,
+        ),
+      );
+      const playersAlive = snap.players.some((p) => p.hp > 0);
+      for (const intent of engine.getIntents()) {
+        if (intent.kind !== 'move') continue;
+        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+        expect(m).toBeDefined();
+        if (!intent.aim) {
+          expect(playersAlive).toBe(false);
+          continue;
+        }
+        if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
+          const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
+          expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
+        }
+      }
+      engine.endTurn();
+    }
+  });
+
+  it('a fully passive run (never acting, only ending turns) loses — the map is not winnable by doing nothing', () => {
+    const engine = new BattleEngine(maps.demo4, maps.demo4.squadCharacterIds!, registry);
+    let turns = 0;
+    while (!engine.getSnapshot().outcome && turns < 200) {
+      engine.endTurn();
+      turns += 1;
+    }
+    expect(engine.getSnapshot().outcome).toBe('defeat');
   });
 });
 
