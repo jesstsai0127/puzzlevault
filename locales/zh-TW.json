@@ -1,6 +1,7 @@
 {
   "character.li_yan.name": "李焰",
   "character.su_qing.name": "蘇晴",
+  "character.bai_zhi.name": "白芷",
 
   "skill.sword_qi.name": "劍氣斬",
   "skill.sword_qi.desc": "近戰：凝聚劍氣斬向相鄰的敵人。",
@@ -21,6 +22,10 @@
   "skill.vine_lash.desc": "遠程：妖藤直線抽擊，最遠 4 格。",
   "skill.wolf_bite.name": "狼噬",
   "skill.wolf_bite.desc": "近戰：對相鄰目標迅猛一咬。",
+  "skill.minor_heal.name": "小回春",
+  "skill.minor_heal.desc": "直線治療距離內最近的隊友 2 點生命，最遠 1 格。",
+  "skill.major_heal.name": "大回春",
+  "skill.major_heal.desc": "直線治療距離內最近的隊友 4 點生命，最遠 2 格。",
 
   "monster.yin_ghost.name": "陰魂",
   "monster.jiangshi.name": "殭屍",
@@ -31,6 +36,7 @@
   "map.yanwu_ground.name": "演武場",
   "map.demo2_pincer.name": "演武場二・雙面夾擊",
   "map.demo3_wolf_woods.name": "狼嚎林道",
+  "map.demo4_mist_hollow.name": "毒霧幽谷",
 
   "ui.hp": "生命值",
   "ui.wave": "波次",
