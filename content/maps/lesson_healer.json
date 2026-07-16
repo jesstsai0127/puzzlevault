@@ -4,7 +4,7 @@
   "nameKey": "map.lesson_healer.name",
   "hintKey": "map.lesson_healer.hint",
   "grid": ["######", "#   B#", "#    #", "#    #", "######"],
-  "baseHp": 9,
+  "baseHp": 12,
   "playerStarts": [
     { "x": 1, "y": 2 },
     { "x": 1, "y": 1 }
@@ -15,7 +15,7 @@
       "turns": 12,
       "monsters": [
         { "monsterId": "yin_ghost", "spawn": { "x": 4, "y": 3 } },
-        { "monsterId": "jiangshi", "spawn": { "x": 1, "y": 3 } }
+        { "monsterId": "yao_lang", "spawn": { "x": 1, "y": 3 } }
       ]
     }
   ]
