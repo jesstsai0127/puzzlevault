@@ -49,6 +49,15 @@ import lessonPushAbyss from './maps/lesson_push_abyss.json';
 import lessonHealer from './maps/lesson_healer.json';
 import lessonPoisonMist from './maps/lesson_poison_mist.json';
 
+// World 2/3 lesson levels (world-structure batch) — same "small, real,
+// winnable/losable MapDef" spirit as the LESSON_MAP_IDS levels above, just
+// scoped to a specific World instead of the flat list. See WORLD_STRUCTURE
+// below for where each one sits relative to its world's finale map.
+import world2YuanLing from './maps/world2_yuan_ling.json';
+import world2PincerPractice from './maps/world2_pincer_practice.json';
+import world3WolfVine from './maps/world3_wolf_vine.json';
+import world3Jiangshi from './maps/world3_jiangshi.json';
+
 // Builtin content goes through the same parse+validate path that downloaded
 // content packs will use in Phase 2 — one format, one code path.
 const skills = [
@@ -97,6 +106,10 @@ export const maps: Record<string, MapDef> = {
   lesson_push_abyss: parseMapDef(lessonPushAbyss),
   lesson_healer: parseMapDef(lessonHealer),
   lesson_poison_mist: parseMapDef(lessonPoisonMist),
+  world2_yuan_ling: parseMapDef(world2YuanLing),
+  world2_pincer_practice: parseMapDef(world2PincerPractice),
+  world3_wolf_vine: parseMapDef(world3WolfVine),
+  world3_jiangshi: parseMapDef(world3Jiangshi),
 };
 
 export const DEFAULT_MAP_ID = 'demo1';
@@ -137,6 +150,83 @@ export const LEVEL_GROUPS: LevelGroup[] = [
     easy: 'yanwu_ground_easy',
     normal: 'demo1',
     hard: 'yanwu_ground_hard',
+  },
+];
+
+/**
+ * World structure — groups every playable level into "World N: lesson(s) +
+ * finale" for LevelSelectScene, replacing the old flat LESSON_MAP_IDS-vs-
+ * everything-else split with an explicit per-world ordering. This is a pure
+ * UI/organization concern layered on top of `maps` (same relationship
+ * LEVEL_GROUPS has to `maps`) — not part of MapDef/format.ts, so it doesn't
+ * touch battle-content validation.
+ *
+ * `mapId` is the real key into `maps` (what autoplay-harness, BattleScene,
+ * etc. address a level by). `label` is the player-facing in-world sequence
+ * number shown on the level-select screen (e.g. "2-1", "3-3") — purely
+ * cosmetic, never used to look anything up, so it can be renumbered without
+ * touching content ids. `isLesson` drives the same "小關" visual treatment
+ * (green tint / lesson-label prefix) LESSON_MAP_IDS levels already get in
+ * LevelSelectScene; a world's finale (`demo1`..`demo4`) is the only level in
+ * each world with isLesson: false.
+ *
+ * World 2's and World 3's lesson levels (world2_yuan_ling, world3_jiangshi,
+ * etc.) are intentionally NOT added to LESSON_MAP_IDS above — that array is
+ * still relied on verbatim by tests/content-registry.test.ts (exact-length
+ * assertions) and existing LevelSelectScene rendering, and this batch's
+ * instructions are to keep it as-is rather than risk an unrelated regression
+ * there. WORLD_STRUCTURE is the single source of truth for the new grouped
+ * level-select UI; LESSON_MAP_IDS remains a legacy/compat export.
+ */
+export interface WorldLevelEntry {
+  /** Real key into `maps` — what every other system (BattleScene, autoplay-harness) addresses this level by. */
+  mapId: string;
+  /** Player-facing in-world sequence label shown on the level-select screen, e.g. "2-1". Cosmetic only. */
+  label: string;
+  /** Whether LevelSelectScene should render this entry with the small-lesson visual treatment (green tint / 【小關】 prefix) instead of as a finale-style demo map. */
+  isLesson: boolean;
+}
+
+export interface WorldDef {
+  /** i18n key for this world's display name, e.g. 'world.1.name'. */
+  worldNameKey: string;
+  /** This world's levels in play order: lesson(s) first, finale last. */
+  levels: WorldLevelEntry[];
+}
+
+export const WORLD_STRUCTURE: WorldDef[] = [
+  {
+    worldNameKey: 'world.1.name',
+    levels: [
+      { mapId: 'lesson_ap_cost', label: '1-1', isLesson: true },
+      { mapId: 'lesson_opportunity_attack', label: '1-2', isLesson: true },
+      { mapId: 'lesson_push_abyss', label: '1-3', isLesson: true },
+      { mapId: 'demo1', label: '1-4', isLesson: false },
+    ],
+  },
+  {
+    worldNameKey: 'world.2.name',
+    levels: [
+      { mapId: 'world2_yuan_ling', label: '2-1', isLesson: true },
+      { mapId: 'world2_pincer_practice', label: '2-2', isLesson: true },
+      { mapId: 'demo2', label: '2-3', isLesson: false },
+    ],
+  },
+  {
+    worldNameKey: 'world.3.name',
+    levels: [
+      { mapId: 'world3_wolf_vine', label: '3-1', isLesson: true },
+      { mapId: 'world3_jiangshi', label: '3-2', isLesson: true },
+      { mapId: 'demo3', label: '3-3', isLesson: false },
+    ],
+  },
+  {
+    worldNameKey: 'world.4.name',
+    levels: [
+      { mapId: 'lesson_poison_mist', label: '4-1', isLesson: true },
+      { mapId: 'lesson_healer', label: '4-2', isLesson: true },
+      { mapId: 'demo4', label: '4-3', isLesson: false },
+    ],
   },
 ];
 
