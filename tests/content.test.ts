@@ -65,6 +65,7 @@ const liYanCharacter = {
   maxHp: 6,
   actionPoints: 4,
   skillIds: ['sword_qi', 'palm_wave'],
+  ultimateSkillId: 'sword_tempest',
 };
 
 describe('parseCharacterDef', () => {
@@ -78,6 +79,11 @@ describe('parseCharacterDef', () => {
 
   it('rejects non-positive maxHp', () => {
     expect(() => parseCharacterDef({ ...liYanCharacter, maxHp: 0 })).toThrow(/maxHp/);
+  });
+
+  it('rejects a character missing ultimateSkillId', () => {
+    const { ultimateSkillId: _drop, ...noUltimate } = liYanCharacter;
+    expect(() => parseCharacterDef(noUltimate as typeof liYanCharacter)).toThrow(/ultimateSkillId/);
   });
 });
 
