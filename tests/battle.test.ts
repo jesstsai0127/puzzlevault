@@ -9,7 +9,6 @@ const strike: SkillDef = {
   nameKey: 'skill.strike.name',
   descKey: 'skill.strike.desc',
   range: 1,
-  mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
@@ -19,7 +18,6 @@ const pushSkill: SkillDef = {
   nameKey: 'skill.push_skill.name',
   descKey: 'skill.push_skill.desc',
   range: 1,
-  mpCost: 1,
   effects: [{ type: 'push', amount: 2, target: 'firstInLine' }],
 };
 
@@ -29,7 +27,6 @@ const rangedSkill: SkillDef = {
   nameKey: 'skill.ranged_skill.name',
   descKey: 'skill.ranged_skill.desc',
   range: 3,
-  mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
@@ -39,7 +36,6 @@ const shieldSkill: SkillDef = {
   nameKey: 'skill.shield_skill.name',
   descKey: 'skill.shield_skill.desc',
   range: 0,
-  mpCost: 1,
   effects: [{ type: 'shield', amount: 1, target: 'self' }],
 };
 
@@ -49,7 +45,6 @@ const ghostClaw: SkillDef = {
   nameKey: 'skill.ghost_claw.name',
   descKey: 'skill.ghost_claw.desc',
   range: 1,
-  mpCost: 1,
   effects: [{ type: 'damage', amount: 1, target: 'firstInLine' }],
 };
 
@@ -73,14 +68,14 @@ const li_yan: CharacterDef = {
   nameKey: 'character.li_yan.name',
   spriteRef: 'char_li_yan',
   maxHp: 6,
-  actionPoints: 4,
+  moveRange: 3,
   skillIds: ['strike', 'push_skill'],
   // Placeholder, deliberately NOT one of this character's own skillIds —
   // these test fixtures don't exercise Ultimate behavior, just satisfy the
   // now-required field. Reusing a real skillId here (e.g. 'strike') would
   // silently make useSkill() treat that normal skill as a once-per-level
   // Ultimate too, tripping the ultimateUsed lock on tests that cast it
-  // twice on the same engine instance (e.g. the AP-pool exhaustion test).
+  // twice on the same engine instance (across turns).
   ultimateSkillId: 'li_yan_ultimate_unused',
 };
 
@@ -90,7 +85,7 @@ const su_qing: CharacterDef = {
   nameKey: 'character.su_qing.name',
   spriteRef: 'char_su_qing',
   maxHp: 5,
-  actionPoints: 4,
+  moveRange: 3,
   skillIds: ['ranged_skill', 'shield_skill'],
   ultimateSkillId: 'su_qing_ultimate_unused',
 };
@@ -169,17 +164,28 @@ describe('BattleEngine: player actions', () => {
     };
   }
 
-  it('moves a unit one step and is blocked by a wall', () => {
+  it('commits a whole move to a destination tile and rejects a wall tile as unreachable', () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    expect(engine.moveUnit(0, 'up')).toEqual({ ok: false, reason: 'blocked' }); // y=0 is wall
-    expect(engine.moveUnit(0, 'down')).toEqual({ ok: true });
+    expect(engine.moveUnit(0, { x: 1, y: 0 })).toEqual({ ok: false, reason: 'unreachable' }); // y=0 is wall
+    expect(engine.moveUnit(0, { x: 1, y: 2 })).toEqual({ ok: true });
     expect(engine.getSnapshot().players[0].position).toEqual({ x: 1, y: 2 });
   });
 
-  it('is blocked by an occupied tile', () => {
+  it('rejects a destination beyond moveRange even with a clear path', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    // li_yan's moveRange is 3 — (5,1) is 4 BFS steps from (1,1).
+    expect(engine.moveUnit(0, { x: 5, y: 1 })).toEqual({ ok: false, reason: 'unreachable' });
+    expect(engine.moveUnit(0, { x: 4, y: 1 })).toEqual({ ok: true }); // exactly 3 steps
+  });
+
+  it('an occupied destination is unreachable — and bodies block the PATH too, not just the landing tile', () => {
     const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
-    // su_qing is at (1,2), directly below li_yan (1,1)
-    expect(engine.moveUnit(0, 'down')).toEqual({ ok: false, reason: 'blocked' });
+    // li_yan (1,1) is boxed in: ghost at (2,1), su_qing at (1,2), walls above/left.
+    expect(engine.moveUnit(0, { x: 1, y: 2 })).toEqual({ ok: false, reason: 'unreachable' }); // ally's tile
+    expect(engine.moveUnit(0, { x: 2, y: 1 })).toEqual({ ok: false, reason: 'unreachable' }); // monster's tile
+    expect(engine.moveUnit(0, { x: 2, y: 2 })).toEqual({ ok: false, reason: 'unreachable' }); // open tile, but every route to it passes through a body
+    // su_qing herself is NOT boxed in — BFS routes her around the crowd.
+    expect(engine.moveUnit(1, { x: 2, y: 2 })).toEqual({ ok: true });
   });
 
   it('strike deals damage to a monster in the aimed direction', () => {
@@ -189,46 +195,83 @@ describe('BattleEngine: player actions', () => {
     expect(engine.getSnapshot().monsters[0].hp).toBe(0);
   });
 
-  it("each character's AP pool is independent — exhausting one unit's AP does not block the other", () => {
+  it('each unit may move once, then take one action — moving after having moved is rejected', () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    for (let i = 0; i < 4; i++) engine.moveUnit(0, 'right'); // li_yan: 4 AP -> 0
-    expect(engine.getSnapshot().players[0].ap).toBe(0);
-    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'not-enough-ap' });
-    expect(engine.moveUnit(1, 'left')).toEqual({ ok: true }); // su_qing's own AP untouched
-    expect(engine.getSnapshot().players[1].ap).toBe(3);
+    expect(engine.moveUnit(0, { x: 3, y: 1 })).toEqual({ ok: true });
+    expect(engine.getSnapshot().players[0].moved).toBe(true);
+    expect(engine.moveUnit(0, { x: 4, y: 1 })).toEqual({ ok: false, reason: 'already-moved' }); // no splitting a move
+    // The other unit's own economy is untouched by unit 0's spent move.
+    expect(engine.moveUnit(1, { x: 5, y: 2 })).toEqual({ ok: true });
   });
 
-  it('movement and skills draw from the same AP pool — casting can exhaust the AP moving would need', () => {
-    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right'); // li_yan: 4 AP -> 2
-    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // strike costs 2 AP, exactly what's left
-    expect(engine.getSnapshot().players[0].ap).toBe(0);
-    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'not-enough-ap' }); // same pool, now empty
-    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'not-enough-ap' });
+  it('a unit that moved can still act (move precedes the action), and acting then locks BOTH', () => {
+    const map = twoWaveMap();
+    map.waves[0].monsters[0].spawn = { x: 4, y: 2 };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    expect(engine.moveUnit(0, { x: 3, y: 2 })).toEqual({ ok: true }); // walk adjacent to the ghost at (4,2)
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // move-then-act is the intended flow
+    expect(engine.getSnapshot().players[0].acted).toBe(true);
+    expect(engine.moveUnit(0, { x: 2, y: 2 })).toEqual({ ok: false, reason: 'already-acted' }); // no retreat after acting
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'already-acted' }); // one action only
   });
 
-  it("resets every unit's own AP at the start of every turn, not only when a wave clears", () => {
-    // Monster starts 5 tiles from li_yan, so a couple of moves won't clear the wave.
+  it('acting WITHOUT moving first also locks movement — the move phase is forfeited, not banked', () => {
+    const map = twoWaveMap();
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // ghost at (2,1) is adjacent from the start
+    expect(engine.getSnapshot().players[0].moved).toBe(false); // never moved...
+    expect(engine.moveUnit(1, { x: 2, y: 2 })).toEqual({ ok: true }); // (other unit unaffected)
+    expect(engine.moveUnit(0, { x: 1, y: 2 })).toEqual({ ok: false, reason: 'already-acted' }); // ...but may not move anymore
+  });
+
+  it("resets every unit's moved/acted at the start of every turn, not only when a wave clears", () => {
+    // Monster starts 5 tiles from li_yan, so one move won't clear the wave.
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'down');
-    engine.moveUnit(0, 'right');
-    expect(engine.getSnapshot().players[0].ap).toBe(2); // maxAp 4 - 2 moves
+    engine.moveUnit(0, { x: 2, y: 2 });
+    engine.rest(0);
+    expect(engine.getSnapshot().players[0].moved).toBe(true);
+    expect(engine.getSnapshot().players[0].acted).toBe(true);
 
     engine.endTurn();
 
     expect(engine.getSnapshot().monsters.length).toBeGreaterThan(0); // sanity: wave still active
-    expect(engine.getSnapshot().players[0].ap).toBe(4); // fresh AP for the new turn
+    const fresh = engine.getSnapshot().players[0];
+    expect(fresh.moved).toBe(false); // fresh economy for the new turn
+    expect(fresh.acted).toBe(false);
+  });
+
+  it('rest self-heals 1, is capped at maxHp, and spends the unit\'s one action', () => {
+    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
+    engine.endTurn(); // the adjacent ghost claws li_yan: 6 -> 5
+    expect(engine.getSnapshot().players[0].hp).toBe(5);
+
+    expect(engine.rest(0)).toEqual({ ok: true });
+    expect(engine.getSnapshot().players[0].hp).toBe(6); // +1
+    expect(engine.getSnapshot().players[0].acted).toBe(true);
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'heal', target: { kind: 'player', unitIndex: 0 }, amount: 1 },
+    ]);
+    expect(engine.rest(0)).toEqual({ ok: false, reason: 'already-acted' }); // rest IS the action — once per turn
+    expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: false, reason: 'already-acted' });
+  });
+
+  it('rest at full HP still spends the action and reports an honest 0-amount heal event', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    expect(engine.getSnapshot().players[0].hp).toBe(6); // full
+    expect(engine.rest(0)).toEqual({ ok: true });
+    expect(engine.getSnapshot().players[0].hp).toBe(6); // capped at maxHp
+    expect(engine.getSnapshot().players[0].acted).toBe(true);
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'heal', target: { kind: 'player', unitIndex: 0 }, amount: 0 },
+    ]);
   });
 
   it('push moves the target away from the caster, stopping at a wall', () => {
     const map = twoWaveMap();
     map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the right wall (x=6 is the last floor col)
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    // move li_yan 3 tiles right (3 of its 4 action points), landing adjacent to the monster at (4,1)
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
+    // one committed move: li_yan 3 tiles right (his full moveRange), landing adjacent to the monster at (4,1)
+    engine.moveUnit(0, { x: 4, y: 1 });
     expect(engine.getSnapshot().players[0].position).toEqual({ x: 4, y: 1 });
 
     const res = engine.useSkill(0, 'push_skill', 'right');
@@ -257,49 +300,63 @@ describe('BattleEngine: player actions', () => {
     expect(suQing2.hp).toBe(5); // fully blocked, no HP lost
   });
 
-  it("undo restores the pre-action snapshot (including the mover's own AP); history clears after endTurn", () => {
-    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    const before = engine.getSnapshot().players[0].position;
-    engine.moveUnit(0, 'down');
-    expect(engine.getSnapshot().players[0].ap).toBe(3);
-    expect(engine.undo()).toBe(true);
-    expect(engine.getSnapshot().players[0].position).toEqual(before);
-    expect(engine.getSnapshot().players[0].ap).toBe(4); // AP restored too
-    expect(engine.undo()).toBe(false);
-
-    engine.moveUnit(0, 'down');
-    engine.endTurn();
-    expect(engine.undo()).toBe(false);
-  });
-
-  it('resetTurn reverts every action taken this turn back to the turn-start snapshot in one call', () => {
+  it('resetTurn reverts every action taken this turn back to the turn-start snapshot in one call (no per-step undo exists)', () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     const before = engine.getSnapshot();
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
-    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself, spending AP
-    expect(engine.getSnapshot().players[0].ap).toBe(2);
-    expect(engine.getSnapshot().players[1].ap).toBe(3);
+    engine.moveUnit(0, { x: 3, y: 1 });
+    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself, spending her action
 
     engine.resetTurn();
 
     const after = engine.getSnapshot();
     expect(after.players[0].position).toEqual(before.players[0].position);
-    expect(after.players[0].ap).toBe(4);
-    expect(after.players[1].ap).toBe(4);
+    expect(after.players[0].moved).toBe(false); // the move is refunded along with the position
+    expect(after.players[1].acted).toBe(false);
     expect(after.players[1].shield).toBe(0);
+    expect(after.resetTurnUsed).toBe(true); // ...but the level's single reset is now spent
   });
 
   it('resetTurn only reaches back to the start of the CURRENT turn, not earlier turns', () => {
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, { x: 2, y: 1 });
     engine.endTurn(); // this turn's moves are now locked in as the new turn-start baseline
     const afterEndTurn = engine.getSnapshot().players[0].position;
 
-    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, { x: 3, y: 1 });
     engine.resetTurn();
 
     expect(engine.getSnapshot().players[0].position).toEqual(afterEndTurn); // not all the way back to game start
+  });
+
+  it('resetTurn is limited to ONCE per level run — the second call this level is a rejected no-op', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    expect(engine.getSnapshot().resetTurnUsed).toBe(false);
+    engine.moveUnit(0, { x: 2, y: 1 });
+    engine.resetTurn(); // spend the level's one reset
+    expect(engine.getSnapshot().resetTurnUsed).toBe(true);
+    expect(engine.getSnapshot().players[0].position).toEqual({ x: 1, y: 1 }); // reverted
+
+    engine.endTurn(); // a fresh turn does NOT refresh the reset budget
+    engine.moveUnit(0, { x: 2, y: 1 });
+    engine.resetTurn(); // second attempt — must do nothing
+    expect(engine.getSnapshot().players[0].position).toEqual({ x: 2, y: 1 }); // the move STANDS
+    expect(engine.getSnapshot().players[0].moved).toBe(true);
+    expect(engine.getSnapshot().resetTurnUsed).toBe(true);
+  });
+
+  it('resetLevel() restores the spent turn-reset budget (it belongs to the level run, not the turn)', () => {
+    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
+    engine.moveUnit(0, { x: 2, y: 1 });
+    engine.resetTurn();
+    expect(engine.getSnapshot().resetTurnUsed).toBe(true);
+
+    engine.resetLevel();
+    expect(engine.getSnapshot().resetTurnUsed).toBe(false);
+
+    // And the refreshed budget actually works again on the fresh run.
+    engine.moveUnit(0, { x: 2, y: 1 });
+    engine.resetTurn();
+    expect(engine.getSnapshot().players[0].position).toEqual({ x: 1, y: 1 });
   });
 });
 
@@ -326,7 +383,7 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     const snap = engine.getSnapshot();
     expect(snap.waveIndex).toBe(0); // did NOT advance — the clock hasn't elapsed
     expect(snap.monsters).toHaveLength(0); // board is clear, but that's just a breather
-    expect(snap.players[0].ap).toBe(4); // still a fresh round every turn
+    expect(snap.players[0].acted).toBe(false); // still a fresh round every turn
     expect(snap.outcome).toBeNull();
   });
 
@@ -378,7 +435,7 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
     // Frozen: further play is locked out until confirmOutcome().
     engine.endTurn(); // no-op — pendingOutcome guards it
     expect(engine.getSnapshot().outcome).toBe('victory'); // unchanged by the no-op endTurn
-    expect(engine.moveUnit(0, 'right')).toEqual({ ok: false, reason: 'outcome-pending' });
+    expect(engine.moveUnit(0, { x: 2, y: 1 })).toEqual({ ok: false, reason: 'outcome-pending' });
 
     engine.confirmOutcome();
     const snap = engine.getSnapshot();
@@ -587,7 +644,7 @@ describe('BattleEngine: hazard terrain', () => {
       waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }] }],
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'right'); // li_yan (1,2) -> (2,2), adjacent to the ghost at (3,2)
+    engine.moveUnit(0, { x: 2, y: 2 }); // li_yan (1,2) -> (2,2), adjacent to the ghost at (3,2)
     const res = engine.useSkill(0, 'push_skill', 'right'); // pushes the ghost 2: (3,2) -> (4,2) hazard
     expect(res).toEqual({ ok: true });
     expect(engine.getSnapshot().monsters[0].hp).toBe(0);
@@ -600,7 +657,6 @@ describe('BattleEngine: hazard terrain', () => {
       nameKey: 'skill.shove.name',
       descKey: 'skill.shove.desc',
       range: 1,
-      mpCost: 1,
       effects: [{ type: 'push', amount: 2, target: 'firstInLine' }],
     };
     const brute: MonsterDef = {
@@ -697,7 +753,7 @@ describe('BattleEngine: poison mist terrain', () => {
       waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }],
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'right'); // (3,2) -> (4,2), onto the mist
+    engine.moveUnit(0, { x: 4, y: 2 }); // (3,2) -> (4,2), onto the mist
     expect(engine.getSnapshot().players[0].position).toEqual({ x: 4, y: 2 });
     const hpBefore = engine.getSnapshot().players[0].hp;
 
@@ -759,8 +815,9 @@ describe('BattleEngine: poison mist terrain', () => {
       waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }], // far away, won't attack this turn
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.useSkill(1, 'shield_skill', 'down'); // su_qing shields herself — 1 charge
-    engine.moveUnit(1, 'right'); // su_qing (3,2) -> (4,2), onto the mist, shield still up
+    // Move BEFORE casting — the ITB economy's fixed order (acting would lock movement).
+    engine.moveUnit(1, { x: 4, y: 2 }); // su_qing (3,2) -> (4,2), onto the mist
+    engine.useSkill(1, 'shield_skill', 'down'); // then shields herself — 1 charge
     expect(engine.getSnapshot().players[1].shield).toBe(1);
     const hpBefore = engine.getSnapshot().players[1].hp;
 
@@ -795,7 +852,6 @@ describe('BattleEngine: heal targeting (bai_zhi-style skills — allies only, ne
     nameKey: 'skill.minor_heal.name',
     descKey: 'skill.minor_heal.desc',
     range: 3,
-    mpCost: 1,
     effects: [{ type: 'heal', amount: 2, target: 'firstInLine' }],
   };
   const baiZhi: CharacterDef = {
@@ -804,7 +860,7 @@ describe('BattleEngine: heal targeting (bai_zhi-style skills — allies only, ne
     nameKey: 'character.bai_zhi.name',
     spriteRef: 'char_bai_zhi',
     maxHp: 5,
-    actionPoints: 4,
+    moveRange: 3,
     skillIds: ['minor_heal'],
     ultimateSkillId: 'bai_zhi_ultimate_unused', // placeholder, see li_yan fixture's comment above for why
   };
@@ -1042,7 +1098,7 @@ describe('BattleEngine: getAttackPreviews', () => {
 describe('BattleEngine: getLastEvents', () => {
   it('a plain move produces no events', () => {
     const engine = new BattleEngine(roomyMapModule(), ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'down');
+    engine.moveUnit(0, { x: 1, y: 2 });
     expect(engine.getLastEvents()).toEqual([]);
   });
 
@@ -1075,9 +1131,7 @@ describe('BattleEngine: getLastEvents', () => {
     const map = twoWaveMap();
     map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the x=6 floor edge (x=7 is wall)
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'right'); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, { x: 4, y: 1 }); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
     const targetId = engine.getSnapshot().monsters[0].instanceId;
     engine.useSkill(0, 'push_skill', 'right'); // push_skill's amount is 2, but the wall at x=7 stops it after 1
     expect(engine.getLastEvents()).toEqual([
@@ -1094,9 +1148,7 @@ describe('BattleEngine: getLastEvents', () => {
     map.waves[0].monsters[0].spawn = { x: 5, y: 1 };
     map.waves[0].monsters.push({ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }); // blocks the push target's only escape tile
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right'); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
+    engine.moveUnit(0, { x: 4, y: 1 }); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
     const [pushedId, blockerId] = engine.getSnapshot().monsters.map((m) => m.instanceId);
     engine.useSkill(0, 'push_skill', 'right'); // (5,1) can't move to (6,1) — occupied
     expect(engine.getLastEvents()).toEqual([
@@ -1143,7 +1195,7 @@ describe('BattleEngine: getLastEvents', () => {
     const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
     engine.useSkill(0, 'strike', 'right'); // kills the ghost — one damage event
     expect(engine.getLastEvents()).toHaveLength(1);
-    engine.moveUnit(1, 'right'); // a no-op-for-events action right after
+    engine.moveUnit(1, { x: 2, y: 2 }); // a no-op-for-events action right after
     expect(engine.getLastEvents()).toEqual([]); // the earlier damage event is gone, not accumulated
   });
 
@@ -1159,103 +1211,34 @@ describe('BattleEngine: getLastEvents', () => {
   }
 });
 
-describe('BattleEngine: opportunity attacks (closes the attack-then-retreat exploit)', () => {
-  // yin_ghost's maxHp (2) dies to a single strike (2 dmg) — need a target
-  // that survives the hit to prove the retreat itself costs something.
+describe('BattleEngine: no opportunity attacks (A7 — removed with the ITB action economy)', () => {
+  // The old attack-then-retreat exploit this mechanic existed to close is
+  // now structurally impossible (acting ends the unit's turn), and punishing
+  // disengagement would punish the "read the telegraph, walk out of it"
+  // core loop itself. This regression guard proves a move that breaks
+  // adjacency with a living monster is FREE.
   const tankyGhost: MonsterDef = { ...yinGhost, id: 'tanky_ghost', maxHp: 10 };
   const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, tanky_ghost: tankyGhost } };
 
-  function openRoomMap(monsterIds: string[]): MapDef {
-    return {
+  it('moving out of adjacency with a living monster costs nothing — no free counter-hit', () => {
+    const map: MapDef = {
       formatVersion: 1,
-      id: 'test-opportunity',
-      nameKey: 'map.testopportunity.name',
+      id: 'test-no-opportunity',
+      nameKey: 'map.testnoopportunity.name',
       grid: ['##########', '#        #', '#        #', '#B       #', '##########'],
       baseHp: 8,
       playerStarts: [
-        { x: 3, y: 1 },
-        { x: 3, y: 3 }, // out of the way, irrelevant to these scenarios
+        { x: 3, y: 1 }, // adjacent to the ghost at (2,1) from the very first turn
+        { x: 3, y: 3 },
       ],
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: monsterIds.map((monsterId, i) => ({ monsterId, spawn: { x: 2, y: 1 + i } })),
-        },
-      ],
-    };
-  }
-
-  it('retreating out of range after landing a hit provokes a free counter-attack — attack-then-disengage is no longer free', () => {
-    const engine = new BattleEngine(openRoomMap(['tanky_ghost']), ['li_yan', 'su_qing'], localRegistry);
-    engine.useSkill(0, 'strike', 'left'); // li_yan (3,1) hits the ghost at (2,1); it survives (10 - 2 = 8 hp)
-    expect(engine.getSnapshot().players[0].hp).toBe(6); // no self-damage from the attack itself
-
-    const res = engine.moveUnit(0, 'right'); // (3,1) -> (4,1): breaks adjacency with the ghost at (2,1)
-    expect(res).toEqual({ ok: true });
-    expect(engine.getSnapshot().players[0].hp).toBe(5); // ghost_claw's 1 dmg opportunity attack landed
-    expect(engine.getLastEvents()).toEqual([
-      { kind: 'damage', target: { kind: 'player', unitIndex: 0 }, amount: 1, blocked: false },
-    ]);
-  });
-
-  it('moving toward a monster you started adjacent to is rejected as blocked, not treated as a disengage', () => {
-    // On a cardinal-only single-tile grid, a step from an adjacent tile can only
-    // land at manhattan distance 0 (the monster's own tile — blocked, occupied)
-    // or distance 2 (a disengage) — there's no move that keeps distance 1, so
-    // the only "harmless move while already adjacent" case is walking INTO it.
-    const engine = new BattleEngine(openRoomMap(['tanky_ghost']), ['li_yan', 'su_qing'], localRegistry);
-    const res = engine.moveUnit(0, 'left'); // (3,1) -> (2,1): occupied by the ghost
-    expect(res).toEqual({ ok: false, reason: 'blocked' });
-    expect(engine.getSnapshot().players[0].hp).toBe(6);
-    expect(engine.getLastEvents()).toEqual([]);
-  });
-
-  it('moving without ever having been adjacent to anything provokes nothing (baseline, no false positives)', () => {
-    const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
-    const res = engine.moveUnit(0, 'right');
-    expect(res).toEqual({ ok: true });
-    expect(engine.getLastEvents()).toEqual([]);
-  });
-
-  it('disengaging from two flanking monsters at once provokes a free hit from each of them', () => {
-    const map: MapDef = {
-      formatVersion: 1,
-      id: 'test-flanked',
-      nameKey: 'map.testflanked.name',
-      grid: ['######', '#    #', '#    #', '#B   #', '######'],
-      baseHp: 8,
-      playerStarts: [
-        { x: 2, y: 1 }, // flanked: ghost0 at (1,1) left, ghost1 at (3,1) right — both adjacent
-        { x: 2, y: 3 },
-      ],
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: [
-            { monsterId: 'tanky_ghost', spawn: { x: 1, y: 1 } },
-            { monsterId: 'tanky_ghost', spawn: { x: 3, y: 1 } },
-          ],
-        },
-      ],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'tanky_ghost', spawn: { x: 2, y: 1 } }] }],
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
-    const before = engine.getSnapshot().players[0].hp;
-    const res = engine.moveUnit(0, 'down'); // (2,1) -> (2,2): breaks adjacency with BOTH flanking ghosts
+    const res = engine.moveUnit(0, { x: 6, y: 1 }); // (3,1) -> (6,1): breaks adjacency with the living ghost
     expect(res).toEqual({ ok: true });
-    expect(engine.getSnapshot().players[0].hp).toBe(before - 2); // one ghost_claw hit from each
-    expect(engine.getLastEvents()).toHaveLength(2);
+    expect(engine.getSnapshot().players[0].hp).toBe(6); // full HP — the disengage was free
+    expect(engine.getLastEvents()).toEqual([]); // and no damage event fired
   });
-
-  function roomyMap(): MapDef {
-    return {
-      ...twoWaveMap(),
-      playerStarts: [
-        { x: 1, y: 1 },
-        { x: 6, y: 2 },
-      ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
-    };
-  }
 });
 
 describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
@@ -1265,7 +1248,6 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     nameKey: 'skill.heavy_shield.name',
     descKey: 'skill.heavy_shield.desc',
     range: 0,
-    mpCost: 2,
     effects: [{ type: 'shield', amount: 2, target: 'self' }],
   };
   const tauntSkill: SkillDef = {
@@ -1274,7 +1256,6 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     nameKey: 'skill.taunt.name',
     descKey: 'skill.taunt.desc',
     range: 3,
-    mpCost: 2,
     effects: [{ type: 'taunt', amount: 2, target: 'firstInLine' }],
   };
   const lingEr: CharacterDef = {
@@ -1283,7 +1264,7 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     nameKey: 'character.ling_er.name',
     spriteRef: 'char_ling_er',
     maxHp: 9,
-    actionPoints: 4,
+    moveRange: 2,
     skillIds: ['heavy_shield', 'taunt'],
     ultimateSkillId: 'ling_er_ultimate_unused', // placeholder, see li_yan fixture's comment above for why
   };
@@ -1305,7 +1286,6 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     nameKey: 'skill.lethal_claw.name',
     descKey: 'skill.lethal_claw.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 99, target: 'firstInLine' }],
   };
   // Always attacks whoever's adjacent — used only to kill the taunt caster
@@ -1530,7 +1510,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.pierce_bolt.name',
     descKey: 'skill.pierce_bolt.desc',
     range: 5,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 2, target: 'pierceLine' }],
   };
   const crossBurst: SkillDef = {
@@ -1539,7 +1518,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.cross_burst.name',
     descKey: 'skill.cross_burst.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 1, target: 'aoeCross' }],
   };
   const ringBurst: SkillDef = {
@@ -1548,7 +1526,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.ring_burst.name',
     descKey: 'skill.ring_burst.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 1, target: 'aoeRing' }],
   };
   const arc3Strike: SkillDef = {
@@ -1557,7 +1534,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.arc3_strike.name',
     descKey: 'skill.arc3_strike.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 1, target: 'aoeArc3' }],
   };
   const callAllEnemies: SkillDef = {
@@ -1566,7 +1542,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.call_all_enemies.name',
     descKey: 'skill.call_all_enemies.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 1, target: 'allEnemies' }],
   };
   const callAllUnits: SkillDef = {
@@ -1575,7 +1550,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.call_all_units.name',
     descKey: 'skill.call_all_units.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 1, target: 'allUnits' }],
   };
   const percentBolt: SkillDef = {
@@ -1584,7 +1558,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.percent_bolt.name',
     descKey: 'skill.percent_bolt.desc',
     range: 5,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 50, target: 'pierceLine', amountIsPercent: true }],
   };
   const percentBoltMin: SkillDef = {
@@ -1593,7 +1566,6 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'skill.percent_bolt_min.name',
     descKey: 'skill.percent_bolt_min.desc',
     range: 3,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 10, target: 'firstInLine', amountIsPercent: true }],
   };
 
@@ -1603,7 +1575,7 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
     nameKey: 'character.shape_caster.name',
     spriteRef: 'char_shape_caster',
     maxHp: 20,
-    actionPoints: 10,
+    moveRange: 5,
     skillIds: [
       'pierce_bolt',
       'cross_burst',
@@ -1918,14 +1890,13 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
       // whole-map percent Ultimate into a free execute on 1-2 HP tutorial
       // monsters, so a fizzle is now genuinely 0: the target survives, the
       // event records the honest amount (0), and the AP is still spent.
-      const apBefore = engine.getSnapshot().players[0].ap;
       const res = engine.useSkill(0, 'percent_bolt_min', 'right');
       expect(res).toEqual({ ok: true });
       expect(engine.getLastEvents()).toEqual([
         { kind: 'damage', target: { kind: 'monster', instanceId: expect.any(String) }, amount: 0, blocked: false },
       ]);
       expect(unitHpAt(engine, 3, 4)).toBe(1); // untouched — the hit fizzled
-      expect(engine.getSnapshot().players[0].ap).toBe(apBefore - 1); // mpCost 1 still paid
+      expect(engine.getSnapshot().players[0].acted).toBe(true); // the action is still spent
     });
   });
 });
@@ -1955,7 +1926,6 @@ describe('BattleEngine: allAllies targeting mode', () => {
     nameKey: 'skill.rally_cry.name',
     descKey: 'skill.rally_cry.desc',
     range: 0,
-    mpCost: 1,
     effects: [{ type: 'shield', amount: 1, target: 'allAllies' }],
   };
 
@@ -1965,7 +1935,7 @@ describe('BattleEngine: allAllies targeting mode', () => {
     nameKey: 'character.rally_caster.name',
     spriteRef: 'char_rally_caster',
     maxHp: 20,
-    actionPoints: 10,
+    moveRange: 5,
     skillIds: ['rally_cry'],
     ultimateSkillId: 'rally_cry',
   };
@@ -2085,7 +2055,6 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     nameKey: 'skill.zap.name',
     descKey: 'skill.zap.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 1, target: 'firstInLine' }],
   };
 
@@ -2095,7 +2064,6 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     nameKey: 'skill.ultimate_nuke.name',
     descKey: 'skill.ultimate_nuke.desc',
     range: 0,
-    mpCost: 4, // == the character's full actionPoints, by design (see ling_er/li_yan/su_qing/bai_zhi content)
     effects: [{ type: 'damage', amount: 50, target: 'allEnemies', amountIsPercent: true }],
   };
 
@@ -2105,7 +2073,7 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     nameKey: 'character.ultimate_caster.name',
     spriteRef: 'char_ultimate_caster',
     maxHp: 10,
-    actionPoints: 4,
+    moveRange: 3,
     skillIds: ['zap'],
     ultimateSkillId: 'ultimate_nuke',
   };
@@ -2131,36 +2099,36 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     };
   }
 
-  it("can be cast even though it isn't in skillIds, hits its declared targets, spends the caster's full AP, and locks ultimateUsed", () => {
+  it("can be cast even though it isn't in skillIds, hits its declared targets, spends the caster's one action, and locks ultimateUsed", () => {
     const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
     const res = engine.useSkill(0, 'ultimate_nuke', 'right');
     expect(res).toEqual({ ok: true });
     const snap = engine.getSnapshot();
-    expect(snap.players[0].ap).toBe(0); // full 4 AP spent
+    expect(snap.players[0].acted).toBe(true); // an ultimate is an action like any other
     expect(snap.players[0].ultimateUsed).toBe(true);
     expect(snap.monsters[0].hp).toBe(1); // yin_ghost maxHp 2, 50% percent damage -> 1 dmg
   });
 
-  it('is rejected with a distinct reason once already used this level run, even with full AP restored on a later turn', () => {
+  it('is rejected with a distinct reason once already used this level run, even on a fresh later turn', () => {
     const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
     engine.useSkill(0, 'ultimate_nuke', 'right');
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
 
-    engine.endTurn(); // wave 1's 1-turn budget elapses -> reinforce, fresh AP
-    expect(engine.getSnapshot().players[0].ap).toBe(4); // AP refilled by the new turn
+    engine.endTurn(); // wave 1's 1-turn budget elapses -> reinforce, fresh turn
+    expect(engine.getSnapshot().players[0].acted).toBe(false); // action economy refreshed by the new turn
     const res = engine.useSkill(0, 'ultimate_nuke', 'right');
     expect(res).toEqual({ ok: false, reason: 'ultimate-already-used' });
-    expect(engine.getSnapshot().players[0].ap).toBe(4); // rejected cast spends nothing
+    expect(engine.getSnapshot().players[0].acted).toBe(false); // rejected cast spends nothing
   });
 
-  it('resetTurn() undoes an ultimate cast made THIS turn (ordinary undo semantics), unlocking it again', () => {
+  it('resetTurn() undoes an ultimate cast made THIS turn (ordinary turn-reset semantics), unlocking it again', () => {
     const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
     engine.useSkill(0, 'ultimate_nuke', 'right');
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
     engine.resetTurn();
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
-    expect(engine.getSnapshot().players[0].ap).toBe(4);
+    expect(engine.getSnapshot().players[0].acted).toBe(false);
   });
 
   it('resetTurn() does NOT unlock an ultimate that was used in an earlier turn (only undoes THIS turn\'s actions)', () => {
@@ -2168,7 +2136,7 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     engine.useSkill(0, 'ultimate_nuke', 'right');
     engine.endTurn(); // ultimate cast is now locked in from a PRIOR turn
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
-    engine.moveUnit(0, 'right'); // take some unrelated action this turn
+    engine.moveUnit(0, { x: 3, y: 2 }); // take some unrelated action this turn
     engine.resetTurn(); // should only undo the move, not reach back into last turn
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
   });
@@ -2193,7 +2161,6 @@ describe('BattleEngine: total party wipe is a defeat', () => {
     nameKey: 'skill.heavy_claw.name',
     descKey: 'skill.heavy_claw.desc',
     range: 1,
-    mpCost: 1,
     effects: [{ type: 'damage', amount: 99, target: 'firstInLine' }],
   };
   const brute: MonsterDef = {
@@ -2242,7 +2209,7 @@ describe('BattleEngine: total party wipe is a defeat', () => {
     expect(snap.baseHp).toBe(snap.baseMaxHp); // the base did NOT fall — this is the wipe branch
     // Same freeze-then-confirm flow as a base death: the board is locked
     // until confirmOutcome(), which restarts the level from wave 1.
-    expect(engine.moveUnit(1, 'right')).toEqual({ ok: false, reason: 'outcome-pending' });
+    expect(engine.moveUnit(1, { x: 3, y: 2 })).toEqual({ ok: false, reason: 'outcome-pending' });
     engine.confirmOutcome();
     const fresh = engine.getSnapshot();
     expect(fresh.outcome).toBeNull();
@@ -2275,7 +2242,6 @@ describe('BattleEngine: shield stacking cap', () => {
     nameKey: 'skill.heavy_shield_skill.name',
     descKey: 'skill.heavy_shield_skill.desc',
     range: 0,
-    mpCost: 1,
     effects: [{ type: 'shield', amount: 2, target: 'self' }],
   };
   const shieldCaster: CharacterDef = {
@@ -2284,7 +2250,7 @@ describe('BattleEngine: shield stacking cap', () => {
     nameKey: 'character.shield_caster.name',
     spriteRef: 'char_shield_caster',
     maxHp: 10,
-    actionPoints: 10,
+    moveRange: 3,
     skillIds: ['shield_skill', 'heavy_shield_skill'],
     ultimateSkillId: 'shield_caster_ultimate_unused',
   };
@@ -2300,10 +2266,14 @@ describe('BattleEngine: shield stacking cap', () => {
   });
 
   it('+1 shield stacks to 2 but a third cast does not push it past the cap (and reports zero gain)', () => {
+    // One action per turn now — the three casts are spread across three
+    // turns (the lone ghost spawns far away, outside claw range throughout).
     const engine = new BattleEngine(farMap(), ['shield_caster'], capRegistry);
     engine.useSkill(0, 'shield_skill', 'down');
+    engine.endTurn();
     engine.useSkill(0, 'shield_skill', 'down');
     expect(engine.getSnapshot().players[0].shield).toBe(2);
+    engine.endTurn();
     engine.useSkill(0, 'shield_skill', 'down'); // at the cap — wasted cast, zero gain
     expect(engine.getSnapshot().players[0].shield).toBe(2);
     // A zero-gain event still fires so the UI can show "no effect" — the
@@ -2322,8 +2292,10 @@ describe('BattleEngine: shield stacking cap', () => {
       { kind: 'shield', target: { kind: 'player', unitIndex: 0 }, amount: 2 },
     ]);
     // +1 on top of an existing 1: only 1 real charge gained, capped at 2.
+    // (Second cast happens on the next turn — one action per turn.)
     const engine2 = new BattleEngine(farMap(), ['shield_caster'], capRegistry);
     engine2.useSkill(0, 'shield_skill', 'down');
+    engine2.endTurn();
     engine2.useSkill(0, 'heavy_shield_skill', 'down');
     expect(engine2.getSnapshot().players[0].shield).toBe(2);
     expect(engine2.getLastEvents()).toEqual([
