@@ -1,0 +1,18 @@
+{
+  "formatVersion": 1,
+  "id": "lesson_push_abyss",
+  "nameKey": "map.lesson_push_abyss.name",
+  "hintKey": "map.lesson_push_abyss.hint",
+  "grid": ["######", "#    #", "#  ~ #", "#B   #", "######"],
+  "baseHp": 4,
+  "playerStarts": [
+    { "x": 1, "y": 2 },
+    { "x": 1, "y": 1 }
+  ],
+  "waves": [
+    {
+      "turns": 12,
+      "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 2 } }]
+    }
+  ]
+}
