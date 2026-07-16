@@ -1,6 +1,35 @@
 import type { Vec2 } from '../geometry';
 
-export type TargetMode = 'self' | 'firstInLine';
+/**
+ * - 'self': the caster only.
+ * - 'firstInLine': scans the aimed direction, stops at the first target hit
+ *   (existing behavior, unchanged).
+ * - 'pierceLine': same directional scan and same line-of-sight rules as
+ *   firstInLine (a wall blocks it, a hazard/abyss tile does not), but does
+ *   NOT stop at the first hit — every target on the line within range is hit.
+ * - 'aoeCross': the 4 orthogonally adjacent tiles around the caster (up/
+ *   down/left/right), NOT including the caster's own tile. No aim direction
+ *   needed.
+ * - 'aoeRing': the 8 adjacent tiles around the caster, including diagonals.
+ *   No aim direction needed.
+ * - 'aoeArc3': an aimed 3-tile fan, one step ahead of the caster in the aimed
+ *   direction — see resolveTargets() in engine.ts for the exact 3 cells.
+ * - 'allEnemies': every living monster on the map, regardless of range or
+ *   caster position.
+ * - 'allUnits': every living unit on the map (players AND monsters),
+ *   EXCLUDING the caster itself — see engine.ts resolveTargets() for the
+ *   rationale (a self-sacrifice cast already pays its own cost; the skill
+ *   itself shouldn't additionally hit its own caster).
+ */
+export type TargetMode =
+  | 'self'
+  | 'firstInLine'
+  | 'pierceLine'
+  | 'aoeCross'
+  | 'aoeRing'
+  | 'aoeArc3'
+  | 'allEnemies'
+  | 'allUnits';
 
 /**
  * The engine's fixed, closed vocabulary of effects. Skills — player or
@@ -12,9 +41,17 @@ export type EffectType = 'damage' | 'push' | 'shield' | 'heal' | 'taunt';
 
 export interface EffectPrimitive {
   type: EffectType;
-  /** Meaning depends on `type`: damage amount / push distance (tiles) / shield or heal amount / taunt duration in turns. */
+  /** Meaning depends on `type`: damage amount / push distance (tiles) / shield or heal amount / taunt duration in turns. Reinterpreted as a percentage when `amountIsPercent` is set (damage only — see below). */
   amount: number;
   target: TargetMode;
+  /**
+   * Only meaningful when `type === 'damage'`. When true, `amount` is a
+   * percentage (0-100) of the target's CURRENT hp at the moment the effect
+   * resolves, not a flat number — e.g. amount=50 deals 50% of whatever hp
+   * the target has right now. See BattleEngine.effectAmount() for the
+   * rounding rule. Not applied to push/shield/heal/taunt.
+   */
+  amountIsPercent?: boolean;
 }
 
 export interface SkillDef {
