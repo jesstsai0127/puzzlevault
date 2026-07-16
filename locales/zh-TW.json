@@ -65,6 +65,20 @@
   "map.lesson_poison_mist.name": "小關：毒霧地形",
   "map.lesson_poison_mist.hint": "這關示範：回合結束時還站在綠霧上會被扣血，不分敵我。陰魂的路線會穿過毒霧，等你追上它時它已經先被削過一輪了。",
 
+  "map.world2_yuan_ling.name": "小關：怨靈不好惹",
+  "map.world2_yuan_ling.hint": "這關示範：怨靈一旦被近戰逼近就會後退，光靠近戰追打追不上牠——牠會邊撤邊靠近陣地，趁隙用怨氣箭遠程放血。用飛劍術之類的遠程技能隔著距離解決牠，或用地形卡住牠的撤退空間，才是正解。",
+  "map.world2_pincer_practice.name": "小關：兩面夾擊",
+  "map.world2_pincer_practice.hint": "這關示範：陰魂從陣地兩側同時逼近時，分兵防守兩側跟集中火力守一邊、放棄另一邊各有代價——留意陣血，抓好你要犧牲哪一側的節奏。",
+  "map.world3_wolf_vine.name": "小關：快狼與藤妖",
+  "map.world3_wolf_vine.hint": "這關示範：妖狼移動力高、會很快欺身近戰，藤妖則是固定砲台、會持續放藤鞭放血——兩者不能同時放著不管，想清楚先打誰。",
+  "map.world3_jiangshi.name": "小關：殭屍難纏",
+  "map.world3_jiangshi.hint": "這關示範：殭屍是 6 點生命的近戰坦，一輪打不死就要挨牠的屍擊反擊。精算兩回合內能打出的爆發傷害解決牠，或用排雲掌把牠推進深淵——不要空手接白刃跟牠硬耗。",
+
+  "world.1.name": "世界一・演武場",
+  "world.2.name": "世界二・雙面夾擊",
+  "world.3.name": "世界三・狼嚎林道",
+  "world.4.name": "世界四・毒霧幽谷",
+
   "ui.hp": "生命值",
   "ui.wave": "波次",
   "ui.end_turn": "結束回合",
