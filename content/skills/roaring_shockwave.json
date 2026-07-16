@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "roaring_shockwave",
+  "nameKey": "skill.roaring_shockwave.name",
+  "descKey": "skill.roaring_shockwave.desc",
+  "range": 0,
+  "mpCost": 4,
+  "effects": [{ "type": "push", "amount": 2, "target": "allEnemies" }]
+}
