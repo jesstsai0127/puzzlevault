@@ -4,7 +4,7 @@
   "nameKey": "character.li_yan.name",
   "spriteRef": "char_li_yan",
   "maxHp": 6,
-  "actionPoints": 4,
+  "moveRange": 3,
   "skillIds": ["sword_qi", "palm_wave"],
   "ultimateSkillId": "sword_tempest"
 }
