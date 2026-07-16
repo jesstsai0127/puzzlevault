@@ -1,0 +1,18 @@
+{
+  "formatVersion": 1,
+  "id": "lesson_ap_cost",
+  "nameKey": "map.lesson_ap_cost.name",
+  "hintKey": "map.lesson_ap_cost.hint",
+  "grid": ["######", "#    #", "#B   #", "#    #", "######"],
+  "baseHp": 6,
+  "playerStarts": [
+    { "x": 2, "y": 1 },
+    { "x": 2, "y": 3 }
+  ],
+  "waves": [
+    {
+      "turns": 10,
+      "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 4, "y": 2 } }]
+    }
+  ]
+}
