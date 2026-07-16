@@ -4,13 +4,10 @@ import type { CardinalDir } from '../../core/geometry';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, registry, tutorials } from '../../content/registry';
-import type { EffectType, MapDef, SkillDef, TutorialDef, TutorialStep } from '../../core/content/types';
+import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, registry } from '../../content/registry';
+import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
 import { levelSelectUrl } from './levelNav';
-
-/** How long a narration-only tutorial step (no action) holds on screen before auto-advancing — long enough to read a short sentence, short enough not to feel stuck. */
-const TUTORIAL_STEP_PAUSE_MS = 2500;
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
@@ -128,18 +125,6 @@ export class BattleScene extends Phaser.Scene {
   private reachable: Map<string, CardinalDir[]> = new Map();
   private targetable: Map<string, CardinalDir> = new Map();
 
-  // -----------------------------------------------------------------------
-  // Tutorial playback (see core/content/types.ts TutorialDef) — a fully
-  // automatic scripted scene reusing this same scene/engine instead of a
-  // parallel one. All player input handlers early-return while this is set;
-  // the script drives the engine directly through the same moveUnit/useSkill/
-  // endTurn calls a real player's clicks go through.
-  // -----------------------------------------------------------------------
-  private tutorial?: TutorialDef;
-  private isTutorial = false;
-  private tutorialNarrationText?: Phaser.GameObjects.Text;
-  private tutorialSkipButton?: Button;
-
   constructor() {
     super('BattleScene');
   }
@@ -156,16 +141,8 @@ export class BattleScene extends Phaser.Scene {
    * at 0 each time), so a stale map-keyed cache entry would get silently
    * reused instead of a fresh game object being created.
    */
-  init(data: { mapId?: string; tutorialId?: string }) {
-    if (data.tutorialId && tutorials[data.tutorialId]) {
-      this.tutorial = tutorials[data.tutorialId];
-      this.isTutorial = true;
-      this.map = this.tutorial.map;
-    } else {
-      this.tutorial = undefined;
-      this.isTutorial = false;
-      this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
-    }
+  init(data: { mapId?: string }) {
+    this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
     this.tileHighlights = [];
     this.monsterSprites = new Map();
     this.monsterHpBars = new Map();
@@ -274,15 +251,7 @@ export class BattleScene extends Phaser.Scene {
     this.buildOutcomeOverlay();
     this.setupKeyboard();
 
-    if (this.isTutorial) {
-      this.buildTutorialOverlay();
-    }
-
     this.render();
-
-    if (this.isTutorial) {
-      this.playTutorialStep(0);
-    }
   }
 
   // ---------------------------------------------------------------------
@@ -456,108 +425,6 @@ export class BattleScene extends Phaser.Scene {
   }
 
   // ---------------------------------------------------------------------
-  // Tutorial playback
-  // ---------------------------------------------------------------------
-
-  /**
-   * Narration box + skip button, plus hiding every normal action button —
-   * none of them do anything meaningful while the script is driving the
-   * engine, so leaving them live/clickable would just be confusing dead UI.
-   */
-  private buildTutorialOverlay() {
-    [this.resetTurnButton, this.endTurnButton, this.resetLevelButton, this.backToLevelSelectButton].forEach((btn) => {
-      btn.bg.setVisible(false).disableInteractive();
-      btn.label.setVisible(false);
-    });
-    this.skillButtons.forEach((btn) => {
-      btn.bg.setVisible(false).disableInteractive();
-      btn.label.setVisible(false);
-    });
-    this.skillDescText.setVisible(false);
-
-    const boxWidth = this.scale.width - 80;
-    const boxY = this.scale.height - 60;
-    this.add
-      .rectangle(this.scale.width / 2, boxY, boxWidth, 90, 0x1b1b22, 0.85)
-      .setStrokeStyle(1, 0x3a3a46)
-      .setDepth(8);
-    this.tutorialNarrationText = this.add
-      .text(this.scale.width / 2, boxY, '', {
-        fontFamily: 'monospace',
-        fontSize: '16px',
-        color: '#f1f1f6',
-        align: 'center',
-        wordWrap: { width: boxWidth - 40, useAdvancedWrap: true },
-      })
-      .setOrigin(0.5)
-      .setDepth(9);
-
-    this.tutorialSkipButton = this.makeButton(this.scale.width - 150, 10, 130, 28, () => {
-      window.location.href = levelSelectUrl();
-    });
-    this.tutorialSkipButton.bg.setDepth(9);
-    this.tutorialSkipButton.label.setDepth(9);
-    this.tutorialSkipButton.label.setText(i18n.t('ui.tutorial_skip'));
-  }
-
-  /** Runs one script step: shows its narration, applies its action (if any) through the same engine API a real player's input uses, then schedules the next step after a fixed pause. */
-  private playTutorialStep(index: number) {
-    const tutorial = this.tutorial;
-    if (!tutorial) return;
-    if (index >= tutorial.script.length) {
-      // Script finished on its own (not skipped) — same destination as skip,
-      // just reached by actually watching the scene play out.
-      window.location.href = levelSelectUrl();
-      return;
-    }
-    const step = tutorial.script[index];
-    const narration = i18n.t(step.textKey);
-    this.tutorialNarrationText?.setText(narration);
-    if (step.action && !this.applyTutorialAction(step.action)) {
-      // The scripted action was rejected by the engine (e.g. a stale script
-      // no longer matches its map) — stop here instead of silently playing
-      // narration for something that never happened on screen.
-      console.warn(`[tutorial] step ${index} action failed, stopping playback:`, step.action);
-      this.render();
-      return;
-    }
-    if (this.engine.getSnapshot().outcome) {
-      // A scripted endTurn triggered a win/loss. The tutorial UI has no
-      // working confirm path (handleConfirmOutcome is disabled here), so the
-      // frozen board would soft-lock the playback — bail back to level select.
-      console.warn(`[tutorial] step ${index} triggered a run outcome, returning to level select`);
-      window.location.href = levelSelectUrl();
-      return;
-    }
-    this.render();
-    // A fixed pause reads fine for one-liners but truncates long closing
-    // paragraphs — scale the hold time with narration length instead.
-    const pause = Math.max(TUTORIAL_STEP_PAUSE_MS, 1200 + narration.length * 80);
-    this.time.delayedCall(pause, () => this.playTutorialStep(index + 1));
-  }
-
-  /** Returns whether the action was accepted by the engine. */
-  private applyTutorialAction(action: NonNullable<TutorialStep['action']>): boolean {
-    if (action.type === 'move' || action.type === 'useSkill') {
-      // Keep the selection ring/highlights on the unit the script is driving.
-      this.selectedUnit = action.unitIndex;
-    }
-    if (action.type === 'move') {
-      const res = this.engine.moveUnit(action.unitIndex, action.dir);
-      if (res.ok) this.playHitFeedback(this.engine.getLastEvents());
-      return res.ok;
-    } else if (action.type === 'useSkill') {
-      const res = this.engine.useSkill(action.unitIndex, action.skillId, action.dir);
-      if (res.ok) this.playHitFeedback(this.engine.getLastEvents());
-      return res.ok;
-    } else {
-      this.engine.endTurn();
-      this.playHitFeedback(this.engine.getLastEvents());
-      return true;
-    }
-  }
-
-  // ---------------------------------------------------------------------
   // Keyboard (kept as a shortcut layer; mouse is the primary path)
   // ---------------------------------------------------------------------
 
@@ -609,7 +476,6 @@ export class BattleScene extends Phaser.Scene {
 
   /** Arrow keys move one step, or fire an armed skill in that direction — mirrors clicking an adjacent highlighted tile. */
   private stepFromKeyboard(dir: CardinalDir) {
-    if (this.isTutorial) return; // tutorial playback owns the engine; player input is off
     if (this.engine.getSnapshot().outcome) return;
     if (this.armedSkillId) {
       const skillId = this.armedSkillId;
@@ -630,7 +496,6 @@ export class BattleScene extends Phaser.Scene {
   // ---------------------------------------------------------------------
 
   private selectUnit(index: number) {
-    if (this.isTutorial) return;
     const unit = this.engine.getSnapshot().players[index];
     if (!unit || unit.hp <= 0) return;
     this.selectedUnit = index;
@@ -651,7 +516,6 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private toggleSkill(skillIndex: number) {
-    if (this.isTutorial) return;
     const unit = this.engine.getSnapshot().players[this.selectedUnit];
     if (!unit || unit.hp <= 0) return;
     const skillId = unit.skillIds[skillIndex];
@@ -662,14 +526,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleResetTurn() {
-    if (this.isTutorial) return;
     this.engine.resetTurn();
     this.armedSkillId = null;
     this.render();
   }
 
   private handleTileClick(x: number, y: number) {
-    if (this.isTutorial) return; // tutorial playback owns the engine; player input is off
     if (this.engine.getSnapshot().outcome) return;
     const key = `${x},${y}`;
 
@@ -712,7 +574,6 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private handleEndTurn() {
-    if (this.isTutorial) return;
     if (this.engine.getSnapshot().outcome) return;
     this.engine.endTurn();
     this.playHitFeedback(this.engine.getLastEvents());
@@ -722,14 +583,12 @@ export class BattleScene extends Phaser.Scene {
 
   /** Advances past whatever endTurn() froze the board on — see buildOutcomeOverlay(). */
   private handleConfirmOutcome() {
-    if (this.isTutorial) return;
     this.engine.confirmOutcome();
     this.armedSkillId = null;
     this.render();
   }
 
   private handleResetLevel() {
-    if (this.isTutorial) return;
     this.engine.resetLevel();
     this.armedSkillId = null;
     this.render();
@@ -1195,9 +1054,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     const isLastWave = snap.waveIndex === this.map.waves.length - 1;
-    // Tutorials auto-play — there's no "hold out" for the viewer to do, and the
-    // banner lands right on top of the rules panel text.
-    if (isLastWave && !this.announcedLastWave && !this.isTutorial) {
+    if (isLastWave && !this.announcedLastWave) {
       this.announcedLastWave = true;
       this.lastWaveBanner.setText(i18n.t('ui.last_wave_reminder')).setVisible(true);
       this.time.delayedCall(3000, () => this.lastWaveBanner.setVisible(false));
@@ -1223,7 +1080,12 @@ export class BattleScene extends Phaser.Scene {
       waveCountdown,
       `AP ${selectedAp}`,
     ].join('\n');
-    this.rulesPanelText.setText(`${RULES_PANEL_STATIC}\n\n${liveStatus}`);
+    // A lesson-level's one-off tip (see MapDef.hintKey) sits right under the
+    // general rules panel, in the same static-text style — not a separate
+    // popup, not something that blocks or auto-advances. Most maps have no
+    // hintKey at all and this block is simply skipped for them.
+    const hintBlock = this.map.hintKey ? `\n\n【本關提示】\n${i18n.t(this.map.hintKey)}` : '';
+    this.rulesPanelText.setText(`${RULES_PANEL_STATIC}${hintBlock}\n\n${liveStatus}`);
 
     const OUTCOME_KEY: Record<RunOutcome, string> = {
       defeat: 'ui.outcome_defeat',
