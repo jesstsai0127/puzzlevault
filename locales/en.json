@@ -110,6 +110,8 @@
 
   "ui.confirm": "Confirm",
   "ui.blocked": "Blocked!",
+  "ui.no_effect": "No effect",
+  "ui.outcome_wipe": "Squad wiped out! Restarting from wave 1.",
   "ui.reset_level": "Reset Level",
   "ui.outcome_defeat": "The base fell! Restarting from wave 1.",
   "ui.outcome_victory": "Held the line! Every wave survived.",
