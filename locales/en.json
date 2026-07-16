@@ -32,6 +32,15 @@
   "skill.taunt.name": "Provoke",
   "skill.taunt.desc": "Jeer at a foe in a straight line, up to 3 tiles, forcing it to target you for 2 turns.",
 
+  "skill.sword_tempest.name": "Sword Qi Tempest",
+  "skill.sword_tempest.desc": "Ultimate: unleash a storm of sword qi, dealing 30% of current HP to every enemy on the field. Once per level run.",
+  "skill.sword_rampage.name": "Rampaging Blades",
+  "skill.sword_rampage.desc": "Ultimate: the flying swords spiral out of control, dealing 20% of current HP to EVERY unit on the field — allies and self included. Once per level run.",
+  "skill.roaring_shockwave.name": "Roaring Shockwave",
+  "skill.roaring_shockwave.desc": "Ultimate: a thunderous roar knocks every enemy on the field back 2 tiles. Once per level run.",
+  "skill.spring_rain.name": "Spring Rain",
+  "skill.spring_rain.desc": "Ultimate: a healing rain restores 3 HP to every ally (not yourself). Once per level run.",
+
   "monster.yin_ghost.name": "Yin Ghost",
   "monster.jiangshi.name": "Jiangshi",
   "monster.yuan_ling.name": "Vengeful Spirit",
@@ -78,6 +87,8 @@
   "ui.turns_left": "Turns left",
 
   "ui.not_enough_ap": "Not enough AP",
+  "ui.ultimate_used": "Used this level",
+  "ui.ultimate_hint": "Ultimate: once per level run",
   "ui.next_wave_in": "Next wave in",
   "ui.turns_suffix": "turns",
   "ui.last_wave_hold": "Final wave! Hold for",
