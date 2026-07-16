@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { maps, tutorials, LEVEL_GROUPS } from '../../content/registry';
-import { MAP_QUERY_PARAM, TUTORIAL_QUERY_PARAM } from './levelNav';
+import { maps, LESSON_MAP_IDS, LEVEL_GROUPS } from '../../content/registry';
+import { MAP_QUERY_PARAM } from './levelNav';
 
 const i18n = new I18n(en, zhTW);
 
@@ -37,20 +37,28 @@ export class LevelSelectScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    // Tutorials are listed first — they're the suggested starting point, not
-    // a gate: every demo map below is always clickable too, nothing here is
-    // locked/unlocked. A distinct fill color + "【教學】" prefix is the only
-    // thing that tells them apart from a real level in the list.
-    const tutorialIds = Object.keys(tutorials);
-    tutorialIds.forEach((tutorialId, i) => {
-      const tutorial = tutorials[tutorialId];
+    const goToMap = (mapId: string) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set(MAP_QUERY_PARAM, mapId);
+      window.location.href = url.toString();
+    };
+
+    // Lesson levels (LESSON_MAP_IDS, content/registry.ts) are listed first —
+    // they're the suggested starting point, not a gate: every demo map below
+    // is always clickable too, nothing here is locked/unlocked. Each lesson
+    // is a real, playable MapDef (see registry.ts) — clicking one goes
+    // straight into a real, winnable/losable battle, same as any other level;
+    // a distinct fill color + "【小關】" prefix is the only thing that tells
+    // them apart from a finale-style demo map in this list.
+    LESSON_MAP_IDS.forEach((lessonId, i) => {
+      const lesson = maps[lessonId];
       const y = 220 + i * 70;
       const bg = this.add
         .rectangle(this.scale.width / 2, y, 360, 50, 0x1f3a2e)
         .setStrokeStyle(1, 0x2e5a44)
         .setInteractive({ useHandCursor: true });
       const label = this.add
-        .text(this.scale.width / 2, y, `${i18n.t('ui.tutorial_label')} ${i18n.t(tutorial.nameKey)}`, {
+        .text(this.scale.width / 2, y, `${i18n.t('ui.lesson_label')} ${i18n.t(lesson.nameKey)}`, {
           fontFamily: 'monospace',
           fontSize: '18px',
           color: '#8fe3b0',
@@ -58,12 +66,7 @@ export class LevelSelectScene extends Phaser.Scene {
         .setOrigin(0.5);
       bg.on('pointerover', () => bg.setFillStyle(0x2e5a44));
       bg.on('pointerout', () => bg.setFillStyle(0x1f3a2e));
-      bg.on('pointerdown', () => {
-        const url = new URL(window.location.href);
-        url.searchParams.delete(MAP_QUERY_PARAM);
-        url.searchParams.set(TUTORIAL_QUERY_PARAM, tutorialId);
-        window.location.href = url.toString();
-      });
+      bg.on('pointerdown', () => goToMap(lessonId));
       label.setDepth(1);
     });
 
@@ -74,21 +77,16 @@ export class LevelSelectScene extends Phaser.Scene {
     // top-level row here, or demo1's three difficulty variants would show up
     // as four confusing entries (one generic + three tiered). Hide them from
     // the normal per-map loop below; the group's own row (rendered right
-    // after) is what surfaces them.
+    // after) is what surfaces them. Lesson maps already got their own row
+    // above, so they're excluded here too.
     const tieredMapIds = new Set(LEVEL_GROUPS.flatMap((g) => [g.easy, g.hard].filter((id): id is string => !!id)));
-    const mapIds = Object.keys(maps).filter((id) => !tieredMapIds.has(id));
+    const lessonMapIds = new Set(LESSON_MAP_IDS);
+    const mapIds = Object.keys(maps).filter((id) => !tieredMapIds.has(id) && !lessonMapIds.has(id));
     const groupByNormalMapId = new Map(LEVEL_GROUPS.map((g) => [g.normal, g]));
-
-    const goToMap = (mapId: string) => {
-      const url = new URL(window.location.href);
-      url.searchParams.delete(TUTORIAL_QUERY_PARAM);
-      url.searchParams.set(MAP_QUERY_PARAM, mapId);
-      window.location.href = url.toString();
-    };
 
     mapIds.forEach((mapId, i) => {
       const map = maps[mapId];
-      const y = 220 + (tutorialIds.length + i) * 70;
+      const y = 220 + (LESSON_MAP_IDS.length + i) * 70;
       const group = groupByNormalMapId.get(mapId);
 
       // A grouped map's "normal" difficulty is already a clickable tier
