@@ -4,7 +4,18 @@ import type { Vec2 } from '../geometry';
 export const CONTENT_FORMAT_VERSION = 1;
 
 const EFFECT_TYPES = ['damage', 'push', 'shield', 'heal', 'taunt'];
-const TARGET_MODES = ['self', 'firstInLine'];
+const TARGET_MODES = [
+  'self',
+  'firstInLine',
+  'pierceLine',
+  'aoeCross',
+  'aoeRing',
+  'aoeArc3',
+  'allEnemies',
+  'allUnits',
+];
+/** Directional line-scan modes: same range>=1 requirement as firstInLine, since a 0-range line has nothing to scan. */
+const LINE_TARGET_MODES = ['firstInLine', 'pierceLine'];
 
 function checkFormatVersion(raw: unknown, kind: string): void {
   const v = (raw as { formatVersion?: unknown })?.formatVersion;
@@ -38,8 +49,11 @@ export function validateSkillDef(def: SkillDef): string[] {
     if (!EFFECT_TYPES.includes(eff.type)) problems.push(`effect ${i}: unknown type '${eff.type}'`);
     if (!(eff.amount > 0)) problems.push(`effect ${i}: amount must be > 0`);
     if (!TARGET_MODES.includes(eff.target)) problems.push(`effect ${i}: unknown target '${eff.target}'`);
-    if (eff.target === 'firstInLine' && def.range < 1) {
-      problems.push(`effect ${i}: firstInLine target requires range >= 1`);
+    if (LINE_TARGET_MODES.includes(eff.target) && def.range < 1) {
+      problems.push(`effect ${i}: ${eff.target} target requires range >= 1`);
+    }
+    if (eff.amountIsPercent && eff.type !== 'damage') {
+      problems.push(`effect ${i}: amountIsPercent only applies to 'damage' effects`);
     }
   });
   return problems;
