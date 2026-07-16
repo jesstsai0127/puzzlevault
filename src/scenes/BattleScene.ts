@@ -710,7 +710,14 @@ export class BattleScene extends Phaser.Scene {
           this.cameras.main.shake(140, intensity);
         }
       } else if (event.kind === 'shield') {
-        this.spawnFloatingText(pos, `+${event.amount} 🛡`, '#4cc9f0');
+        if (event.amount === 0) {
+          // Cast landed on a unit already at the shield cap — same "loud
+          // no-op" treatment as the percent-damage fizzle above: the player
+          // spent resources, so silence would read as a dropped click.
+          this.spawnFloatingText(pos, i18n.t('ui.no_effect'), '#8d99ae');
+        } else {
+          this.spawnFloatingText(pos, `+${event.amount} 🛡`, '#4cc9f0');
+        }
       } else if (event.kind === 'heal') {
         this.spawnFloatingText(pos, `+${event.amount}`, '#70e000');
         this.flashSprite(event.target, 0x70e000);
