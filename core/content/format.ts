@@ -41,7 +41,6 @@ export function validateSkillDef(def: SkillDef): string[] {
   if (!def.nameKey) problems.push('missing nameKey');
   if (!def.descKey) problems.push('missing descKey');
   if (!(def.range >= 0)) problems.push('range must be >= 0');
-  if (!(def.mpCost > 0)) problems.push('mpCost must be > 0');
   if (!Array.isArray(def.effects) || def.effects.length === 0) {
     problems.push('skill has no effects');
     return problems;
@@ -77,7 +76,7 @@ export function validateCharacterDef(def: CharacterDef): string[] {
   if (!def.nameKey) problems.push('missing nameKey');
   if (!def.spriteRef) problems.push('missing spriteRef');
   if (!(def.maxHp > 0)) problems.push('maxHp must be > 0');
-  if (!(def.actionPoints > 0)) problems.push('actionPoints must be > 0');
+  if (!(def.moveRange > 0)) problems.push('moveRange must be > 0');
   if (!Array.isArray(def.skillIds) || def.skillIds.length === 0) problems.push('character has no skills');
   if (!def.ultimateSkillId) problems.push('missing ultimateSkillId');
   return problems;
