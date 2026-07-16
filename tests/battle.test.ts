@@ -1476,3 +1476,433 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     ]);
   });
 });
+
+describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing / aoeArc3 / allEnemies / allUnits / percent damage)', () => {
+  // A big open room so every AOE shape has room to breathe, plus a lone base
+  // tile off in the corner (format requires at least one) that none of these
+  // tests interact with.
+  const openRoomGrid = [
+    '#############',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#          B#',
+    '#############',
+  ];
+  // Same room, but with one wall tile at (6,4) to test pierceLine's
+  // beam-stops-at-a-wall behavior.
+  const wallRoomGrid = [
+    '#############',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#     #     #',
+    '#           #',
+    '#           #',
+    '#          B#',
+    '#############',
+  ];
+
+  const pierceBolt: SkillDef = {
+    formatVersion: 1,
+    id: 'pierce_bolt',
+    nameKey: 'skill.pierce_bolt.name',
+    descKey: 'skill.pierce_bolt.desc',
+    range: 5,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 2, target: 'pierceLine' }],
+  };
+  const crossBurst: SkillDef = {
+    formatVersion: 1,
+    id: 'cross_burst',
+    nameKey: 'skill.cross_burst.name',
+    descKey: 'skill.cross_burst.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 1, target: 'aoeCross' }],
+  };
+  const ringBurst: SkillDef = {
+    formatVersion: 1,
+    id: 'ring_burst',
+    nameKey: 'skill.ring_burst.name',
+    descKey: 'skill.ring_burst.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 1, target: 'aoeRing' }],
+  };
+  const arc3Strike: SkillDef = {
+    formatVersion: 1,
+    id: 'arc3_strike',
+    nameKey: 'skill.arc3_strike.name',
+    descKey: 'skill.arc3_strike.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 1, target: 'aoeArc3' }],
+  };
+  const callAllEnemies: SkillDef = {
+    formatVersion: 1,
+    id: 'call_all_enemies',
+    nameKey: 'skill.call_all_enemies.name',
+    descKey: 'skill.call_all_enemies.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 1, target: 'allEnemies' }],
+  };
+  const callAllUnits: SkillDef = {
+    formatVersion: 1,
+    id: 'call_all_units',
+    nameKey: 'skill.call_all_units.name',
+    descKey: 'skill.call_all_units.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 1, target: 'allUnits' }],
+  };
+  const percentBolt: SkillDef = {
+    formatVersion: 1,
+    id: 'percent_bolt',
+    nameKey: 'skill.percent_bolt.name',
+    descKey: 'skill.percent_bolt.desc',
+    range: 5,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 50, target: 'pierceLine', amountIsPercent: true }],
+  };
+  const percentBoltMin: SkillDef = {
+    formatVersion: 1,
+    id: 'percent_bolt_min',
+    nameKey: 'skill.percent_bolt_min.name',
+    descKey: 'skill.percent_bolt_min.desc',
+    range: 3,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 10, target: 'firstInLine', amountIsPercent: true }],
+  };
+
+  const shapeCaster: CharacterDef = {
+    formatVersion: 1,
+    id: 'shape_caster',
+    nameKey: 'character.shape_caster.name',
+    spriteRef: 'char_shape_caster',
+    maxHp: 20,
+    actionPoints: 10,
+    skillIds: [
+      'pierce_bolt',
+      'cross_burst',
+      'ring_burst',
+      'arc3_strike',
+      'call_all_enemies',
+      'call_all_units',
+      'percent_bolt',
+      'percent_bolt_min',
+    ],
+  };
+
+  const hp10Ghost: MonsterDef = { ...yinGhost, id: 'hp10_ghost', maxHp: 10 };
+  const hp4Ghost: MonsterDef = { ...yinGhost, id: 'hp4_ghost', maxHp: 4 };
+  const hp1Ghost: MonsterDef = { ...yinGhost, id: 'hp1_ghost', maxHp: 1 };
+
+  const shapeRegistry: ContentRegistry = {
+    characters: { ...registry.characters, shape_caster: shapeCaster },
+    skills: {
+      ...registry.skills,
+      pierce_bolt: pierceBolt,
+      cross_burst: crossBurst,
+      ring_burst: ringBurst,
+      arc3_strike: arc3Strike,
+      call_all_enemies: callAllEnemies,
+      call_all_units: callAllUnits,
+      percent_bolt: percentBolt,
+      percent_bolt_min: percentBoltMin,
+    },
+    monsters: { ...registry.monsters, hp10_ghost: hp10Ghost, hp4_ghost: hp4Ghost, hp1_ghost: hp1Ghost },
+  };
+
+  /** Finds a live unit (player or monster) at (x,y) in the current snapshot — none of these tests move anything before asserting, so spawn position == current position. */
+  function unitHpAt(engine: BattleEngine, x: number, y: number): number | undefined {
+    const snap = engine.getSnapshot();
+    return (
+      snap.players.find((p) => p.position.x === x && p.position.y === y)?.hp ??
+      snap.monsters.find((m) => m.position.x === x && m.position.y === y)?.hp
+    );
+  }
+
+  describe('pierceLine', () => {
+    it('hits every target on the line within range and a wall stops the beam from piercing further', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'pierce-wall',
+        nameKey: 'map.piercewall.name',
+        grid: wallRoomGrid,
+        baseHp: 8,
+        playerStarts: [{ x: 2, y: 4 }],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 3, y: 4 } }, // step 1, before the wall at x=6
+              { monsterId: 'yin_ghost', spawn: { x: 4, y: 4 } }, // step 2, before the wall
+              { monsterId: 'yin_ghost', spawn: { x: 7, y: 4 } }, // step 5, past the wall — beam never reaches it
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
+      const res = engine.useSkill(0, 'pierce_bolt', 'right');
+      expect(res).toEqual({ ok: true });
+      expect(unitHpAt(engine, 3, 4)).toBe(0); // yin_ghost maxHp 2, took 2 dmg
+      expect(unitHpAt(engine, 4, 4)).toBe(0);
+      expect(unitHpAt(engine, 7, 4)).toBe(2); // untouched — the wall at (6,4) blocked the beam
+    });
+
+    it('does not hit a target beyond the skill range, even with clear line of sight', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'pierce-range',
+        nameKey: 'map.piercerange.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [{ x: 2, y: 4 }],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 4, y: 4 } }, // step 2, within range 5
+              { monsterId: 'yin_ghost', spawn: { x: 9, y: 4 } }, // step 7, past range 5
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
+      engine.useSkill(0, 'pierce_bolt', 'right');
+      expect(unitHpAt(engine, 4, 4)).toBe(0);
+      expect(unitHpAt(engine, 9, 4)).toBe(2); // out of range — untouched
+    });
+  });
+
+  describe('aoeCross', () => {
+    it('hits exactly the 4 orthogonal neighbors, respects ally/enemy targeting, and never hits the caster itself', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'cross-test',
+        nameKey: 'map.crosstest.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [
+          { x: 6, y: 4 }, // caster
+          { x: 5, y: 4 }, // ally, standing on the LEFT cross tile — a naive "hit everything adjacent" bug would land here
+        ],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } }, // up
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 5 } }, // down
+              { monsterId: 'yin_ghost', spawn: { x: 7, y: 4 } }, // right
+              { monsterId: 'yin_ghost', spawn: { x: 5, y: 3 } }, // diagonal — must NOT be hit
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster', 'su_qing'], shapeRegistry);
+      const res = engine.useSkill(0, 'cross_burst', 'down'); // direction is irrelevant for aoeCross, just a placeholder
+      expect(res).toEqual({ ok: true });
+      expect(unitHpAt(engine, 6, 3)).toBe(1); // up, hit
+      expect(unitHpAt(engine, 6, 5)).toBe(1); // down, hit
+      expect(unitHpAt(engine, 7, 4)).toBe(1); // right, hit
+      expect(unitHpAt(engine, 5, 3)).toBe(2); // diagonal, untouched
+      expect(unitHpAt(engine, 5, 4)).toBe(5); // ally on the left tile, untouched (su_qing maxHp 5) — proves ally/enemy targeting, not just adjacency
+      expect(unitHpAt(engine, 6, 4)).toBe(20); // caster itself, untouched (shape_caster maxHp 20)
+    });
+  });
+
+  describe('aoeRing', () => {
+    it('hits all 8 surrounding tiles (including diagonals) and nothing 2+ tiles away', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'ring-test',
+        nameKey: 'map.ringtest.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [{ x: 6, y: 4 }],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 5, y: 3 } },
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } },
+              { monsterId: 'yin_ghost', spawn: { x: 7, y: 3 } },
+              { monsterId: 'yin_ghost', spawn: { x: 5, y: 4 } },
+              { monsterId: 'yin_ghost', spawn: { x: 7, y: 4 } },
+              { monsterId: 'yin_ghost', spawn: { x: 5, y: 5 } },
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 5 } },
+              { monsterId: 'yin_ghost', spawn: { x: 7, y: 5 } },
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }, // 2 tiles away — must NOT be hit
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
+      engine.useSkill(0, 'ring_burst', 'down');
+      for (const [x, y] of [
+        [5, 3], [6, 3], [7, 3],
+        [5, 4], [7, 4],
+        [5, 5], [6, 5], [7, 5],
+      ] as const) {
+        expect(unitHpAt(engine, x, y)).toBe(1);
+      }
+      expect(unitHpAt(engine, 6, 2)).toBe(2); // untouched
+    });
+  });
+
+  describe('aoeArc3', () => {
+    // Shape: aiming a direction hits a 3-tile row one step ahead of the
+    // caster — the forward cell, plus that same forward cell shifted one
+    // tile to either side (perpendicular to the aim). Aiming 'up' from
+    // (6,4) hits (5,3),(6,3),(7,3) — a short horizontal row facing the
+    // caster, NOT a diagonal cone and NOT anything 2 tiles out.
+    it('hits the forward cell and its two lateral neighbors, nothing else', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'arc3-test',
+        nameKey: 'map.arc3test.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [{ x: 6, y: 4 }],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } }, // forward
+              { monsterId: 'yin_ghost', spawn: { x: 7, y: 3 } }, // forward + 1 lateral
+              { monsterId: 'yin_ghost', spawn: { x: 5, y: 3 } }, // forward - 1 lateral
+              { monsterId: 'yin_ghost', spawn: { x: 5, y: 4 } }, // beside the caster, not in the fan — must NOT be hit
+              { monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }, // 2 tiles straight ahead — must NOT be hit
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
+      engine.useSkill(0, 'arc3_strike', 'up');
+      expect(unitHpAt(engine, 6, 3)).toBe(1);
+      expect(unitHpAt(engine, 7, 3)).toBe(1);
+      expect(unitHpAt(engine, 5, 3)).toBe(1);
+      expect(unitHpAt(engine, 5, 4)).toBe(2); // untouched
+      expect(unitHpAt(engine, 6, 2)).toBe(2); // untouched
+    });
+  });
+
+  describe('allEnemies', () => {
+    it('hits every living monster on the map regardless of distance, and leaves players untouched', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'all-enemies-test',
+        nameKey: 'map.allenemiestest.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [
+          { x: 6, y: 4 },
+          { x: 2, y: 2 },
+        ],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 2, y: 6 } },
+              { monsterId: 'yin_ghost', spawn: { x: 10, y: 2 } },
+              { monsterId: 'yin_ghost', spawn: { x: 9, y: 6 } },
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster', 'su_qing'], shapeRegistry);
+      const res = engine.useSkill(0, 'call_all_enemies', 'down');
+      expect(res).toEqual({ ok: true });
+      expect(unitHpAt(engine, 2, 6)).toBe(1);
+      expect(unitHpAt(engine, 10, 2)).toBe(1);
+      expect(unitHpAt(engine, 9, 6)).toBe(1);
+      expect(unitHpAt(engine, 2, 2)).toBe(5); // the other player, untouched
+      expect(unitHpAt(engine, 6, 4)).toBe(20); // caster itself, untouched
+    });
+  });
+
+  describe('allUnits', () => {
+    it('hits every living unit on the map, players and monsters alike, EXCEPT the caster itself', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'all-units-test',
+        nameKey: 'map.allunitstest.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [
+          { x: 6, y: 4 }, // caster
+          { x: 2, y: 2 }, // ally teammate — must be hit
+        ],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'yin_ghost', spawn: { x: 9, y: 3 } },
+              { monsterId: 'yin_ghost', spawn: { x: 3, y: 6 } },
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster', 'su_qing'], shapeRegistry);
+      const res = engine.useSkill(0, 'call_all_units', 'down');
+      expect(res).toEqual({ ok: true });
+      expect(unitHpAt(engine, 2, 2)).toBe(4); // teammate, hit (su_qing maxHp 5 -> 4)
+      expect(unitHpAt(engine, 9, 3)).toBe(1); // monster, hit
+      expect(unitHpAt(engine, 3, 6)).toBe(1); // monster, hit
+      expect(unitHpAt(engine, 6, 4)).toBe(20); // caster itself, spared — see TargetMode 'allUnits' doc comment
+      expect(engine.getLastEvents()).toHaveLength(3);
+    });
+  });
+
+  describe('percent damage (amountIsPercent)', () => {
+    it("scales damage to the target's CURRENT hp, not a flat amount — different targets take different real damage from the same effect", () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'percent-test',
+        nameKey: 'map.percenttest.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [{ x: 2, y: 4 }],
+        waves: [
+          {
+            turns: AMPLE_TURNS,
+            monsters: [
+              { monsterId: 'hp10_ghost', spawn: { x: 3, y: 4 } }, // step 1, 10 hp
+              { monsterId: 'hp4_ghost', spawn: { x: 5, y: 4 } }, // step 3, 4 hp
+            ],
+          },
+        ],
+      };
+      const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
+      engine.useSkill(0, 'percent_bolt', 'right'); // 50% of current hp, pierces both
+      expect(unitHpAt(engine, 3, 4)).toBe(5); // floor(10 * 0.5) = 5 dmg -> 10-5=5
+      expect(unitHpAt(engine, 5, 4)).toBe(2); // floor(4 * 0.5) = 2 dmg -> 4-2=2
+    });
+
+    it('rounds down but always deals at least 1 damage, never a rounding-to-zero fizzle', () => {
+      const map: MapDef = {
+        formatVersion: 1,
+        id: 'percent-min-test',
+        nameKey: 'map.percentmintest.name',
+        grid: openRoomGrid,
+        baseHp: 8,
+        playerStarts: [{ x: 2, y: 4 }],
+        waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'hp1_ghost', spawn: { x: 3, y: 4 } }] }],
+      };
+      const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
+      // 10% of 1 hp = floor(0.1) = 0 raw, but the minimum-1 rule forces a
+      // real, lethal hit instead of a silent no-op that still spent the AP.
+      const res = engine.useSkill(0, 'percent_bolt_min', 'right');
+      expect(res).toEqual({ ok: true });
+      expect(engine.getLastEvents()).toEqual([
+        { kind: 'damage', target: { kind: 'monster', instanceId: expect.any(String) }, amount: 1, blocked: false },
+      ]);
+      expect(unitHpAt(engine, 3, 4)).toBe(0);
+    });
+  });
+});
