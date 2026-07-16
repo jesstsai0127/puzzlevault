@@ -1,6 +1,6 @@
-import { parseCharacterDef, parseMapDef, parseMonsterDef, parseSkillDef, parseTutorialDef } from '../core/content';
+import { parseCharacterDef, parseMapDef, parseMonsterDef, parseSkillDef } from '../core/content';
 import type { ContentRegistry } from '../core/battle/types';
-import type { MapDef, TutorialDef } from '../core/content/types';
+import type { MapDef } from '../core/content/types';
 
 import swordQi from './skills/sword_qi.json';
 import palmWave from './skills/palm_wave.json';
@@ -34,11 +34,16 @@ import demo2Pincer from './maps/demo2_pincer.json';
 import demo3WolfWoods from './maps/demo3_wolf_woods.json';
 import demo4MistHollow from './maps/demo4_mist_hollow.json';
 
-import tutApCost from './tutorials/tut_ap_cost.json';
-import tutDotTerrain from './tutorials/tut_dot_terrain.json';
-import tutHealer from './tutorials/tut_healer.json';
-import tutOpportunityAttack from './tutorials/tut_opportunity_attack.json';
-import tutPushIntoAbyss from './tutorials/tut_push_into_abyss.json';
+// "Lesson" levels: each is a small, real, winnable/losable MapDef (same
+// waves/turns/baseHp rules as every other map — see MapDef) that spotlights
+// one mechanic, replacing the old fully-scripted TutorialDef system. See
+// design/roadmap.md and LESSON_MAP_IDS below for how LevelSelectScene marks
+// these apart from a finale-style demo map.
+import lessonApCost from './maps/lesson_ap_cost.json';
+import lessonOpportunityAttack from './maps/lesson_opportunity_attack.json';
+import lessonPushAbyss from './maps/lesson_push_abyss.json';
+import lessonHealer from './maps/lesson_healer.json';
+import lessonPoisonMist from './maps/lesson_poison_mist.json';
 
 // Builtin content goes through the same parse+validate path that downloaded
 // content packs will use in Phase 2 — one format, one code path.
@@ -79,9 +84,30 @@ export const maps: Record<string, MapDef> = {
   demo2: parseMapDef(demo2Pincer),
   demo3: parseMapDef(demo3WolfWoods),
   demo4: parseMapDef(demo4MistHollow),
+  lesson_ap_cost: parseMapDef(lessonApCost),
+  lesson_opportunity_attack: parseMapDef(lessonOpportunityAttack),
+  lesson_push_abyss: parseMapDef(lessonPushAbyss),
+  lesson_healer: parseMapDef(lessonHealer),
+  lesson_poison_mist: parseMapDef(lessonPoisonMist),
 };
 
 export const DEFAULT_MAP_ID = 'demo1';
+
+/**
+ * Small, single-mechanic practice levels — real, playable MapDefs (see
+ * `maps` above), just called out separately so LevelSelectScene can still
+ * visually distinguish them from a finale-style demo map (distinct fill
+ * color), same spirit as the old scripted-tutorial list but now pointing at
+ * genuinely winnable/losable levels instead of an auto-playing script.
+ * Nothing here is gated/locked — every id in `maps` is always clickable.
+ */
+export const LESSON_MAP_IDS: string[] = [
+  'lesson_ap_cost',
+  'lesson_opportunity_attack',
+  'lesson_push_abyss',
+  'lesson_healer',
+  'lesson_poison_mist',
+];
 
 /**
  * Pure UI grouping for LevelSelectScene's difficulty-tier buttons — NOT part
@@ -107,14 +133,3 @@ export const LEVEL_GROUPS: LevelGroup[] = [
 ];
 
 export const STARTING_SQUAD = ['li_yan', 'su_qing'];
-
-// Tutorial levels are a separate content kind from `maps` — each one carries
-// its own embedded map (see TutorialDef) and isn't a playable level in its
-// own right, so it's never mixed into the `maps` registry above.
-export const tutorials: Record<string, TutorialDef> = {
-  tut_ap_cost: parseTutorialDef(tutApCost),
-  tut_dot_terrain: parseTutorialDef(tutDotTerrain),
-  tut_healer: parseTutorialDef(tutHealer),
-  tut_opportunity_attack: parseTutorialDef(tutOpportunityAttack),
-  tut_push_into_abyss: parseTutorialDef(tutPushIntoAbyss),
-};
