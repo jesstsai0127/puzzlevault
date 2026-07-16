@@ -20,6 +20,12 @@ import type { Vec2 } from '../geometry';
  *   EXCLUDING the caster itself — see engine.ts resolveTargets() for the
  *   rationale (a self-sacrifice cast already pays its own cost; the skill
  *   itself shouldn't additionally hit its own caster).
+ * - 'allAllies': every living unit on the SAME SIDE as the caster, EXCLUDING
+ *   the caster itself — "same side" is caster-relative (players for a
+ *   player caster, monsters for a monster caster), not hardcoded to one
+ *   side, even though only player ultimates use this mode today. See
+ *   engine.ts resolveTargets() for the exclusion rationale (same as
+ *   'allUnits' above).
  */
 export type TargetMode =
   | 'self'
@@ -29,7 +35,8 @@ export type TargetMode =
   | 'aoeRing'
   | 'aoeArc3'
   | 'allEnemies'
-  | 'allUnits';
+  | 'allUnits'
+  | 'allAllies';
 
 /**
  * The engine's fixed, closed vocabulary of effects. Skills — player or
@@ -75,6 +82,15 @@ export interface CharacterDef {
   /** This character's own per-turn action points — moving one tile costs 1, skills cost their mpCost, all from this one pool. Refills every turn. */
   actionPoints: number;
   skillIds: string[];
+  /**
+   * The character's Ultimate — a single skillId, deliberately kept OUT of
+   * skillIds (separate UI button, separate unlock/lock state; folding it in
+   * would make skillIds.length-driven layout, e.g. BattleScene's bottom
+   * button row, ambiguous about which slot is the special one). Required:
+   * every playable character in this content pack has exactly one Ultimate,
+   * so there's no meaningful "no ultimate" state to model as optional here.
+   */
+  ultimateSkillId: string;
 }
 
 export type AiTarget = 'nearestPlayer' | 'nearestBaseTile';
