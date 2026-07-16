@@ -625,9 +625,9 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
     '#############',
   ];
 
-  /** Same rounding rule BattleEngine.effectAmount() applies for amountIsPercent: floor(hp * pct/100), minimum 1. */
+  /** Same rounding rule BattleEngine.effectAmount() applies for amountIsPercent: floor(hp * pct/100) — 0 is a real fizzle, no minimum-1 execute. */
   function expectedPercentDamage(hp: number, pct: number): number {
-    return Math.max(1, Math.floor(hp * (pct / 100)));
+    return Math.floor(hp * (pct / 100));
   }
 
   function ultimateSquadMap(monsters: Array<{ monsterId: string; spawn: { x: number; y: number } }>): MapDef {
