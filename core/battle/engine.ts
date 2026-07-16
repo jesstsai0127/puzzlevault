@@ -996,9 +996,12 @@ export class BattleEngine {
         const before = unit.shield;
         unit.shield = Math.min(SHIELD_STACK_CAP, unit.shield + effect.amount);
         const gained = unit.shield - before;
-        // Only report charges actually gained — a cast that hits the cap
-        // shows the real (possibly zero) gain, not the nominal amount.
-        if (gained > 0) this.pendingEvents.push({ kind: 'shield', target: combatTarget, amount: gained });
+        // Report the charges actually gained — a cast that hits the cap
+        // shows the real gain, including zero: the cast still spent the
+        // player's resources, and a silent no-op reads as an unregistered
+        // click (the exact failure mode the percent-damage fizzle event
+        // solves for damage). The UI renders amount 0 as a "no effect" toast.
+        this.pendingEvents.push({ kind: 'shield', target: combatTarget, amount: gained });
         break;
       }
       case 'heal': {
