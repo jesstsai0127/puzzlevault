@@ -1,0 +1,110 @@
+[
+  {
+    "kind": "move",
+    "unitIndex": 0,
+    "dir": "left"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 0,
+    "dir": "left"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 0,
+    "dir": "left"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 1,
+    "dir": "right"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 1,
+    "dir": "right"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 1,
+    "dir": "up"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 1,
+    "dir": "right"
+  },
+  {
+    "kind": "endTurn"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 0,
+    "dir": "right"
+  },
+  {
+    "kind": "skill",
+    "unitIndex": 0,
+    "skillId": "sword_qi",
+    "dir": "down"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 1,
+    "dir": "left"
+  },
+  {
+    "kind": "skill",
+    "unitIndex": 1,
+    "skillId": "flying_sword",
+    "dir": "up"
+  },
+  {
+    "kind": "endTurn"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 0,
+    "dir": "right"
+  },
+  {
+    "kind": "skill",
+    "unitIndex": 0,
+    "skillId": "sword_qi",
+    "dir": "down"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 0,
+    "dir": "down"
+  },
+  {
+    "kind": "move",
+    "unitIndex": 1,
+    "dir": "left"
+  },
+  {
+    "kind": "skill",
+    "unitIndex": 1,
+    "skillId": "flying_sword",
+    "dir": "up"
+  },
+  {
+    "kind": "endTurn"
+  },
+  {
+    "kind": "skill",
+    "unitIndex": 0,
+    "skillId": "sword_qi",
+    "dir": "down"
+  },
+  {
+    "kind": "skill",
+    "unitIndex": 0,
+    "skillId": "sword_qi",
+    "dir": "down"
+  },
+  {
+    "kind": "endTurn"
+  }
+]
