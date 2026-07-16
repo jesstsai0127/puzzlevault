@@ -69,8 +69,6 @@ export interface SkillDef {
   /** Tiles reachable in the aimed direction. 1 = melee/adjacent only. */
   range: number;
   effects: EffectPrimitive[];
-  /** AP cost to cast — deducted from the caster's own per-turn action points, the same pool that pays for movement. (Field name kept from the old MP system for content compatibility.) */
-  mpCost: number;
 }
 
 export interface CharacterDef {
@@ -79,8 +77,13 @@ export interface CharacterDef {
   nameKey: string;
   spriteRef: string;
   maxHp: number;
-  /** This character's own per-turn action points — moving one tile costs 1, skills cost their mpCost, all from this one pool. Refills every turn. */
-  actionPoints: number;
+  /**
+   * How many tiles this character may move in its per-turn move phase (BFS
+   * distance, committed as one whole move). ITB-style action economy: each
+   * unit gets move-then-one-action per turn — skills no longer carry a cost
+   * of their own, so this is the only per-character economy number left.
+   */
+  moveRange: number;
   skillIds: string[];
   /**
    * The character's Ultimate — a single skillId, deliberately kept OUT of
