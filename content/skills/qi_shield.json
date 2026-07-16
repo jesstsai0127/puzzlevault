@@ -4,6 +4,5 @@
   "nameKey": "skill.qi_shield.name",
   "descKey": "skill.qi_shield.desc",
   "range": 0,
-  "mpCost": 1,
   "effects": [{ "type": "shield", "amount": 1, "target": "self" }]
 }
