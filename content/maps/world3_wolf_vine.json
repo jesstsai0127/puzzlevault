@@ -1,0 +1,27 @@
+{
+  "formatVersion": 1,
+  "id": "world3_wolf_vine",
+  "nameKey": "map.world3_wolf_vine.name",
+  "hintKey": "map.world3_wolf_vine.hint",
+  "grid": [
+    "###########",
+    "#         #",
+    "#        B#",
+    "#         #",
+    "###########"
+  ],
+  "baseHp": 7,
+  "playerStarts": [
+    { "x": 1, "y": 1 },
+    { "x": 1, "y": 2 }
+  ],
+  "waves": [
+    {
+      "turns": 10,
+      "monsters": [
+        { "monsterId": "yao_lang", "spawn": { "x": 5, "y": 1 } },
+        { "monsterId": "teng_yao", "spawn": { "x": 6, "y": 2 } }
+      ]
+    }
+  ]
+}
