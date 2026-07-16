@@ -12,7 +12,7 @@ describe('I18n', () => {
   it('falls back to the base locale when the active locale is missing a key', () => {
     const i18n = new I18n(en, { 'ui.end_turn': 'Fin du tour' });
     expect(i18n.t('ui.end_turn')).toBe('Fin du tour');
-    expect(i18n.t('ui.undo')).toBe('Undo'); // missing in active -> fallback
+    expect(i18n.t('ui.reset_turn')).toBe('Reset Turn'); // missing in active -> fallback
   });
 
   it('returns the key itself when missing everywhere', () => {
@@ -23,7 +23,7 @@ describe('I18n', () => {
   it('missingKeys reports what an incomplete translation is missing', () => {
     const i18n = new I18n(en);
     const partial = { 'ui.end_turn': 'Fin du tour' };
-    expect(i18n.missingKeys(partial)).toContain('ui.undo');
+    expect(i18n.missingKeys(partial)).toContain('ui.reset_turn');
     expect(i18n.missingKeys(partial)).not.toContain('ui.end_turn');
   });
 });
