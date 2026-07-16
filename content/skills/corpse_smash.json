@@ -4,7 +4,6 @@
   "nameKey": "skill.corpse_smash.name",
   "descKey": "skill.corpse_smash.desc",
   "range": 1,
-  "mpCost": 3,
   "effects": [
     { "type": "damage", "amount": 3, "target": "firstInLine" },
     { "type": "push", "amount": 1, "target": "firstInLine" }
