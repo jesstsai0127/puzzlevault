@@ -10,6 +10,7 @@ import {
   registry,
   LESSON_MAP_IDS,
   LEVEL_GROUPS,
+  WORLD_STRUCTURE,
 } from '../content/registry';
 
 describe('Phase 0 content registry', () => {
@@ -83,6 +84,10 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
       'lesson_push_abyss',
       'lesson_healer',
       'lesson_poison_mist',
+      'world2_yuan_ling',
+      'world2_pincer_practice',
+      'world3_wolf_vine',
+      'world3_jiangshi',
     ]);
     expect(maps.demo1).toBe(yanwuGroundMap);
     expect(DEFAULT_MAP_ID).toBe('demo1');
@@ -527,6 +532,86 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     engine.endTurn();
     expect(engine.getSnapshot().outcome).toBe('victory');
   });
+});
+
+describe('WORLD_STRUCTURE (world-structure batch: World 1-4 grouping for LevelSelectScene)', () => {
+  const NEW_WORLD2_WORLD3_LESSON_IDS = [
+    'world2_yuan_ling',
+    'world2_pincer_practice',
+    'world3_wolf_vine',
+    'world3_jiangshi',
+  ];
+
+  it('has exactly 4 worlds, each ending in its finale map, matching the confirmed World 1-4 layout', () => {
+    expect(WORLD_STRUCTURE).toHaveLength(4);
+    expect(WORLD_STRUCTURE[0].levels.map((l) => l.mapId)).toEqual([
+      'lesson_ap_cost',
+      'lesson_opportunity_attack',
+      'lesson_push_abyss',
+      'demo1',
+    ]);
+    expect(WORLD_STRUCTURE[1].levels.map((l) => l.mapId)).toEqual([
+      'world2_yuan_ling',
+      'world2_pincer_practice',
+      'demo2',
+    ]);
+    expect(WORLD_STRUCTURE[2].levels.map((l) => l.mapId)).toEqual(['world3_wolf_vine', 'world3_jiangshi', 'demo3']);
+    expect(WORLD_STRUCTURE[3].levels.map((l) => l.mapId)).toEqual(['lesson_poison_mist', 'lesson_healer', 'demo4']);
+  });
+
+  it('every level in WORLD_STRUCTURE points at a real, registered map, and only each world\'s last level is a non-lesson finale', () => {
+    for (const world of WORLD_STRUCTURE) {
+      world.levels.forEach((level, i) => {
+        expect(maps[level.mapId], `${level.mapId} must be a real entry in maps`).toBeDefined();
+        const isLast = i === world.levels.length - 1;
+        expect(level.isLesson).toBe(!isLast);
+      });
+    }
+  });
+
+  it.each(NEW_WORLD2_WORLD3_LESSON_IDS)('%s: builds a playable BattleEngine without throwing', (id) => {
+    const map = maps[id];
+    const squad = map.squadCharacterIds ?? STARTING_SQUAD;
+    const engine = new BattleEngine(map, squad, registry);
+    expect(engine.getSnapshot().players.length).toBe(squad.length);
+    expect(engine.getSnapshot().baseTiles.length).toBeGreaterThan(0);
+  });
+
+  it.each(NEW_WORLD2_WORLD3_LESSON_IDS)(
+    '%s: no monster ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/3/4 guard against)',
+    (id) => {
+      const map = maps[id];
+      const squad = map.squadCharacterIds ?? STARTING_SQUAD;
+      const engine = new BattleEngine(map, squad, registry);
+      for (let i = 0; i < 60; i++) {
+        const snap = engine.getSnapshot();
+        if (snap.outcome) {
+          engine.confirmOutcome();
+          continue;
+        }
+        const occupied = new Set(
+          [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
+            (u) => `${u.position.x},${u.position.y}`,
+          ),
+        );
+        const playersAlive = snap.players.some((p) => p.hp > 0);
+        for (const intent of engine.getIntents()) {
+          if (intent.kind !== 'move') continue;
+          const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+          expect(m).toBeDefined();
+          if (!intent.aim) {
+            expect(playersAlive).toBe(false);
+            continue;
+          }
+          if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
+            const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
+            expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
+          }
+        }
+        engine.endTurn();
+      }
+    },
+  );
 });
 
 describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage / roaring_shockwave / spring_rain)', () => {
