@@ -1,7 +1,0 @@
-[
-  { "kind": "move", "unitIndex": 1, "dir": "up" },
-  { "kind": "skill", "unitIndex": 1, "skillId": "flying_sword", "dir": "right" },
-  { "kind": "endTurn" },
-  { "kind": "skill", "unitIndex": 1, "skillId": "flying_sword", "dir": "right" },
-  { "kind": "endTurn" }
-]
