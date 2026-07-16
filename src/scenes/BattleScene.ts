@@ -36,6 +36,12 @@ const COLORS = {
   buttonBg: 0x2a2a35,
   buttonBgArmed: 0x5a4520,
   buttonBorder: 0x3a3a46,
+  // Ultimate button: deliberately gold/high-contrast against the regular
+  // skill buttons above so a player recognizes it as a different KIND of
+  // action (once-per-level, high cost) at a glance, not just "another skill".
+  ultimateBg: 0x4a3a10,
+  ultimateBgArmed: 0x8a6a10,
+  ultimateBorder: 0xffd700,
 };
 
 /** Phase 1 renders every actor as a text glyph instead of an image sprite — see design/roadmap.md ch.1/8. */
@@ -109,6 +115,7 @@ export class BattleScene extends Phaser.Scene {
   private instructionText!: Phaser.GameObjects.Text;
   private skillDescText!: Phaser.GameObjects.Text;
   private skillButtons: Button[] = [];
+  private ultimateButton!: Button;
   private endTurnButton!: Button;
   private resetTurnButton!: Button;
   private resetLevelButton!: Button;
@@ -350,6 +357,15 @@ export class BattleScene extends Phaser.Scene {
     this.skillButtons = Array.from({ length: skillButtonCount }, (_, i) =>
       this.makeButton(20 + i * 210, barY, 200, 40, () => this.toggleSkill(i)),
     );
+    // Placed right after the regular skill buttons (whose count varies per
+    // squad — see skillButtonCount above), before the reset/end-turn
+    // buttons on the right, so it never collides regardless of how many
+    // ordinary skills a character has. Gold border (see COLORS.ultimateBorder)
+    // is the visual cue that sets it apart from a normal skill button.
+    this.ultimateButton = this.makeButton(20 + skillButtonCount * 210 + 20, barY, 200, 40, () =>
+      this.toggleUltimate(),
+    );
+    this.ultimateButton.bg.setStrokeStyle(3, COLORS.ultimateBorder);
     this.resetTurnButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleResetTurn());
     this.endTurnButton = this.makeButton(this.scale.width - 170, barY, 150, 40, () => this.handleEndTurn());
     // Full manual restart — always clickable, independent of resetTurn/endTurn
@@ -521,6 +537,18 @@ export class BattleScene extends Phaser.Scene {
     const skillId = unit.skillIds[skillIndex];
     const skill = skillId ? registry.skills[skillId] : undefined;
     if (!skillId || !skill || unit.ap < skill.mpCost) return;
+    this.armedSkillId = this.armedSkillId === skillId ? null : skillId;
+    this.render();
+  }
+
+  /** Arms the selected unit's Ultimate (CharacterDef.ultimateSkillId) — mirrors toggleSkill(), gated additionally on ultimateUsed (this level run only allows one cast). */
+  private toggleUltimate() {
+    const unit = this.engine.getSnapshot().players[this.selectedUnit];
+    if (!unit || unit.hp <= 0) return;
+    const charDef = registry.characters[unit.characterId];
+    const skillId = charDef?.ultimateSkillId;
+    const skill = skillId ? registry.skills[skillId] : undefined;
+    if (!skillId || !skill || unit.ap < skill.mpCost || unit.ultimateUsed) return;
     this.armedSkillId = this.armedSkillId === skillId ? null : skillId;
     this.render();
   }
@@ -748,7 +776,13 @@ export class BattleScene extends Phaser.Scene {
     const skill = registry.skills[skillId];
     if (!unit || !skill) return result;
 
-    if (skill.effects.every((e) => e.target === 'self')) {
+    // Directionless modes: 'self' (existing) plus the three whole-field
+    // Ultimate modes (allEnemies/allUnits/allAllies) — none of these need an
+    // aim, so arming the skill just needs a single confirmable tile. The
+    // caster's own tile is the natural, always-reachable choice, same as
+    // the existing self-cast convention (e.g. heavy_shield).
+    const NO_AIM_MODES = new Set(['self', 'allEnemies', 'allUnits', 'allAllies']);
+    if (skill.effects.every((e) => NO_AIM_MODES.has(e.target))) {
       result.set(`${unit.position.x},${unit.position.y}`, 'down');
       return result;
     }
@@ -1029,6 +1063,39 @@ export class BattleScene extends Phaser.Scene {
         btn.bg.setInteractive({ useHandCursor: true });
       }
     });
+
+    // Ultimate button — separate from the skillButtons loop above since it's
+    // driven by CharacterDef.ultimateSkillId, not skillIds, and has its own
+    // once-per-level lock (PlayerUnitState.ultimateUsed) on top of the usual
+    // AP/alive/outcome gates.
+    {
+      const charDef = selected ? registry.characters[selected.characterId] : undefined;
+      const ultimateId = charDef?.ultimateSkillId;
+      const ultimateSkill = ultimateId ? registry.skills[ultimateId] : undefined;
+      const unitAlive = (selected?.hp ?? 0) > 0;
+      const ultimateUsed = !!selected?.ultimateUsed;
+      const notEnoughApUlt = !!ultimateSkill && unitAlive && selected!.ap < ultimateSkill.mpCost;
+      const nameWithStatsUlt = ultimateSkill
+        ? `★${i18n.t(`skill.${ultimateId}.name`)} ${effectSummary(ultimateSkill)} 💧${ultimateSkill.mpCost}`
+        : '';
+      let statusLine = '';
+      if (ultimateUsed) statusLine = i18n.t('ui.ultimate_used');
+      else if (notEnoughApUlt) statusLine = i18n.t('ui.not_enough_ap');
+      else if (ultimateSkill) statusLine = i18n.t('ui.ultimate_hint');
+      const labelUlt = statusLine ? `${nameWithStatsUlt}\n${statusLine}` : nameWithStatsUlt;
+
+      if (!ultimateId || !ultimateSkill || notEnoughApUlt || !unitAlive || outcomePending || ultimateUsed) {
+        this.ultimateButton.bg.setFillStyle(COLORS.ultimateBg, 0.35);
+        this.ultimateButton.label.setText(labelUlt);
+        this.ultimateButton.bg.disableInteractive();
+      } else {
+        const armed = this.armedSkillId === ultimateId;
+        this.ultimateButton.bg.setFillStyle(armed ? COLORS.ultimateBgArmed : COLORS.ultimateBg, 1);
+        this.ultimateButton.label.setText(labelUlt + (armed ? ' ◀' : ''));
+        this.ultimateButton.bg.setInteractive({ useHandCursor: true });
+      }
+    }
+
     this.resetTurnButton.label.setText(i18n.t('ui.reset_turn'));
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
     this.resetLevelButton.label.setText(i18n.t('ui.reset_level'));
