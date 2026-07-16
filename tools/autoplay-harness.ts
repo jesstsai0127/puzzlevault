@@ -4,11 +4,19 @@ import fs from 'fs';
 import path from 'path';
 import { BattleEngine } from '../core/battle/engine';
 import { registry, maps, STARTING_SQUAD } from '../content/registry';
-import type { CardinalDir } from '../core/geometry';
+import type { CardinalDir, Vec2 } from '../core/geometry';
 
+/**
+ * ITB action economy command set:
+ *   {"kind":"move","unitIndex":0,"to":{"x":3,"y":2}}  — one committed move to a destination tile
+ *   {"kind":"skill","unitIndex":0,"skillId":"sword_qi","dir":"right"}
+ *   {"kind":"rest","unitIndex":0}                     — built-in self-heal-1 action
+ *   {"kind":"endTurn"}
+ */
 interface Command {
-  kind: 'move' | 'skill' | 'endTurn';
+  kind: 'move' | 'skill' | 'rest' | 'endTurn';
   unitIndex?: number;
+  to?: Vec2;
   dir?: CardinalDir;
   skillId?: string;
 }
@@ -72,8 +80,9 @@ function printBoard(engine: BattleEngine, mapId: string): void {
   for (let i = 0; i < snap.players.length; i++) {
     const p = snap.players[i];
     if (p.hp > 0) {
+      const phase = p.acted ? 'acted' : p.moved ? 'moved' : 'fresh';
       console.log(
-        `  [${i}] ${p.characterId.padEnd(10)} HP: ${p.hp}/${p.maxHp} | AP: ${p.ap}/${p.maxAp} | Pos: (${p.position.x},${p.position.y})`,
+        `  [${i}] ${p.characterId.padEnd(10)} HP: ${p.hp}/${p.maxHp} | move ${p.moveRange} | ${phase.padEnd(5)} | Pos: (${p.position.x},${p.position.y})`,
       );
     }
   }
@@ -111,16 +120,22 @@ function printBoard(engine: BattleEngine, mapId: string): void {
 
 function executeCommand(engine: BattleEngine, cmd: Command): boolean {
   if (cmd.kind === 'move') {
-    if (cmd.unitIndex === undefined || !cmd.dir) return false;
-    const result = engine.moveUnit(cmd.unitIndex, cmd.dir);
+    if (cmd.unitIndex === undefined || !cmd.to) return false;
+    const result = engine.moveUnit(cmd.unitIndex, cmd.to);
     if (!result.ok) {
       console.warn(`  Move failed: ${result.reason}`);
       return false;
     }
-    const events = engine.getLastEvents();
-    console.log(
-      `  [Unit ${cmd.unitIndex}] moved ${cmd.dir} | Events: ${events.length > 0 ? JSON.stringify(events) : 'none'}`,
-    );
+    console.log(`  [Unit ${cmd.unitIndex}] moved to (${cmd.to.x},${cmd.to.y})`);
+    return true;
+  } else if (cmd.kind === 'rest') {
+    if (cmd.unitIndex === undefined) return false;
+    const result = engine.rest(cmd.unitIndex);
+    if (!result.ok) {
+      console.warn(`  Rest failed: ${result.reason}`);
+      return false;
+    }
+    console.log(`  [Unit ${cmd.unitIndex}] rested | Events: ${JSON.stringify(engine.getLastEvents())}`);
     return true;
   } else if (cmd.kind === 'skill') {
     if (cmd.unitIndex === undefined || !cmd.skillId || !cmd.dir) return false;
