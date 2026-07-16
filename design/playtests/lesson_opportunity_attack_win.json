@@ -1,0 +1,11 @@
+[
+  { "kind": "move", "unitIndex": 0, "dir": "down" },
+  { "kind": "move", "unitIndex": 0, "dir": "left" },
+  { "kind": "skill", "unitIndex": 0, "skillId": "sword_qi", "dir": "down" },
+  { "kind": "endTurn" },
+  { "kind": "skill", "unitIndex": 0, "skillId": "sword_qi", "dir": "down" },
+  { "kind": "endTurn" },
+  { "kind": "move", "unitIndex": 0, "dir": "down" },
+  { "kind": "skill", "unitIndex": 0, "skillId": "sword_qi", "dir": "left" },
+  { "kind": "endTurn" }
+]
