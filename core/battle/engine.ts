@@ -66,11 +66,13 @@ interface HistoryEntry {
  *   1. Intents for all living monsters are computed from the state at the
  *      START of the turn (getIntents()) — this is the "telegraph" and must
  *      not change as a side effect of the player's own actions.
- *   2. Player acts: moveUnit()/useSkill() resolve immediately and can be
- *      undone (undo()) up until endTurn() is called.
- *   3. endTurn() resolves the turn's stored intents (not recomputed), clears
- *      undo history, checks wipe/wave-clear/victory, and computes the next
- *      turn's intents.
+ *   2. Player acts. ITB-style per-unit economy: each unit may first MOVE
+ *      (moveUnit() — one committed move of up to moveRange BFS tiles), then
+ *      take ONE action (useSkill() or rest()), in that fixed order; acting
+ *      locks the unit for the rest of the turn. The whole turn can be wound
+ *      back once per level via resetTurn() (there is no per-step undo).
+ *   3. endTurn() resolves the turn's stored intents (not recomputed),
+ *      checks wipe/wave-clear/victory, and computes the next turn's intents.
  */
 export class BattleEngine {
   private map: MapDef;
@@ -91,11 +93,12 @@ export class BattleEngine {
   private turnsLeftInWave = 0;
 
   private currentIntents: MonsterIntent[] = [];
-  /** What the most recent moveUnit/useSkill/endTurn call actually did — see getLastEvents(). */
+  /** What the most recent moveUnit/useSkill/rest/endTurn call actually did — see getLastEvents(). */
   private pendingEvents: TurnEvent[] = [];
-  private history: HistoryEntry[] = [];
   /** Snapshot at the moment a fresh player turn begins — restored wholesale by resetTurn(). */
   private turnStartSnapshot: HistoryEntry | null = null;
+  /** ITB rule: ONE full-turn reset per level run — set by resetTurn(), cleared only by resetRun(). */
+  private resetTurnUsed = false;
   private monsterSpawnCounter = 0;
 
   constructor(map: MapDef, squadCharacterIds: string[], registry: ContentRegistry) {
@@ -129,6 +132,7 @@ export class BattleEngine {
       baseTiles: this.baseTiles.map((t) => ({ ...t })),
       turnsLeftInWave: this.turnsLeftInWave,
       waveTurns: this.map.waves[this.waveIndex].turns,
+      resetTurnUsed: this.resetTurnUsed,
     };
   }
 
@@ -152,51 +156,56 @@ export class BattleEngine {
   // Player actions
   // ---------------------------------------------------------------------
 
-  moveUnit(unitIndex: number, dir: CardinalDir): ActionResult {
+  /**
+   * Commits a unit's ENTIRE move phase in one call: `to` is the destination
+   * tile, validated as reachable within the unit's moveRange by BFS over
+   * walkable, unoccupied tiles (the same reachability the UI highlights).
+   * ITB ordering rules: a unit that has already moved can't move again this
+   * turn, and a unit that has already ACTED can't move at all — movement
+   * strictly precedes the action. There are no opportunity attacks: the
+   * old attack-then-retreat exploit is structurally dead now that acting
+   * ends the unit's turn, and punishing repositioning would punish the
+   * "read the telegraph, then walk out of it" core loop itself.
+   */
+  moveUnit(unitIndex: number, to: Vec2): ActionResult {
     if (this.pendingOutcome) return { ok: false, reason: 'outcome-pending' };
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
-    if (unit.ap < 1) return { ok: false, reason: 'not-enough-ap' };
-
-    const next = add(unit.position, MOVE_VECTORS[dir]);
-    if (!this.isWalkable(next) || this.isOccupied(next)) return { ok: false, reason: 'blocked' };
+    if (unit.acted) return { ok: false, reason: 'already-acted' };
+    if (unit.moved) return { ok: false, reason: 'already-moved' };
+    if (!this.isReachable(unit.position, to, unit.moveRange)) return { ok: false, reason: 'unreachable' };
 
     this.pendingEvents = [];
-    this.pushHistory();
-
-    // Opportunity attacks: a monster's telegraphed attack only names a
-    // DIRECTION, resolved against the board at endTurn — so without this, a
-    // hero could melee-hit a monster and then step back out of range before
-    // endTurn, making its queued counter swing at empty air. Move-in (1 AP) +
-    // melee (2 AP) + retreat (1 AP) fits exactly inside one turn's AP, which
-    // would turn "attack and disengage" into a free, repeatable, zero-risk
-    // way to grind down any melee monster — the single-dominant-strategy
-    // problem all over again, just worse. A monster still adjacent right
-    // before this step that WON'T be adjacent after it gets one free hit in,
-    // same as a real tactics game's disengage-provokes-an-attack rule.
-    const disengagedFrom = this.monsters.filter(
-      (m) => m.hp > 0 && manhattan(m.position, unit.position) === 1 && manhattan(m.position, next) > 1,
-    );
-
-    unit.position = next;
-    unit.ap -= 1;
-
-    for (const m of disengagedFrom) {
-      this.applyOpportunityAttack(m, unit);
-    }
-
+    unit.position = { ...to };
+    unit.moved = true;
     return { ok: true };
   }
 
-  /** A monster whose adjacency just got broken by a retreating hero gets one free hit — damage only, no push/shield/heal side effects. */
-  private applyOpportunityAttack(monster: MonsterUnitState, target: PlayerUnitState): void {
-    const def = this.registry.monsters[monster.monsterId];
-    const skillId = this.monsterAttackSkillId(def);
-    const skill = skillId ? this.registry.skills[skillId] : undefined;
-    if (!skill) return;
-    for (const effect of skill.effects) {
-      if (effect.type === 'damage') this.dealDamageWithEvent(target, this.effectAmount(effect, target.hp));
+  /**
+   * True when `to` can be reached from `from` in at most `budget` orthogonal
+   * steps over walkable, unoccupied tiles — the engine-side twin of the UI's
+   * reachable-tile highlight (BattleScene.computeReachable). Standing still
+   * is not a "move": the unit's own tile is deliberately not reachable.
+   */
+  private isReachable(from: Vec2, to: Vec2, budget: number): boolean {
+    if (equalsVec2(from, to)) return false;
+    if (!this.isWalkable(to) || this.isOccupied(to)) return false;
+    const queue: Array<{ p: Vec2; d: number }> = [{ p: from, d: 0 }];
+    const seen = new Set<string>([`${from.x},${from.y}`]);
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (cur.d >= budget) continue;
+      for (const dir of Object.keys(MOVE_VECTORS) as CardinalDir[]) {
+        const next = add(cur.p, MOVE_VECTORS[dir]);
+        const key = `${next.x},${next.y}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!this.isWalkable(next) || this.isOccupied(next)) continue;
+        if (equalsVec2(next, to)) return true;
+        queue.push({ p: next, d: cur.d + 1 });
+      }
     }
+    return false;
   }
 
   useSkill(unitIndex: number, skillId: string, dir: CardinalDir): ActionResult {
@@ -213,10 +222,11 @@ export class BattleEngine {
     if (isUltimate && unit.ultimateUsed) return { ok: false, reason: 'ultimate-already-used' };
     const skill = this.registry.skills[skillId];
     if (!skill) return { ok: false, reason: 'unknown-skill' };
-    if (unit.ap < skill.mpCost) return { ok: false, reason: 'not-enough-ap' };
+    // The one-action-per-turn gate: having MOVED is fine (move precedes the
+    // action), having ACTED is not — a skill IS the unit's single action.
+    if (unit.acted) return { ok: false, reason: 'already-acted' };
 
     this.pendingEvents = [];
-    this.pushHistory();
     const dirVec = MOVE_VECTORS[dir];
     for (const effect of skill.effects) {
       // `dir` is required by this method's signature for every skill, even
@@ -229,31 +239,45 @@ export class BattleEngine {
       const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, effect.type === 'heal');
       for (const target of targets) this.applyEffect(effect, target, unit);
     }
-    unit.ap -= skill.mpCost;
+    unit.acted = true;
     if (isUltimate) unit.ultimateUsed = true;
     return { ok: true };
   }
 
-  undo(): boolean {
-    const prev = this.history.pop();
-    if (!prev) return false;
-    this.players = prev.players;
-    this.monsters = prev.monsters;
-    return true;
+  /**
+   * The built-in "rest" action (ITB's repair): self-heal 1 (capped at maxHp),
+   * available to every unit with no skill definition behind it. Same gate as
+   * useSkill — it IS the unit's one action for the turn. A rest at full HP
+   * still spends the action and reports a 0-amount heal event, so the UI can
+   * show an honest "no effect" instead of a silently dropped click.
+   */
+  rest(unitIndex: number): ActionResult {
+    if (this.pendingOutcome) return { ok: false, reason: 'outcome-pending' };
+    const unit = this.players[unitIndex];
+    if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
+    if (unit.acted) return { ok: false, reason: 'already-acted' };
+
+    this.pendingEvents = [];
+    const before = unit.hp;
+    unit.hp = Math.min(unit.maxHp, unit.hp + 1);
+    this.pendingEvents.push({ kind: 'heal', target: this.combatTargetFor(unit), amount: unit.hp - before });
+    unit.acted = true;
+    return { ok: true };
   }
 
   /**
    * Reverts every action taken so far THIS turn back to the snapshot captured
-   * the instant the turn began (see captureTurnStart()) — the single button/
-   * key players use instead of undo()'s per-step history. Base HP never
-   * changes during the player's own turn (only a resolved monster intent on
-   * endTurn can touch it), so it needn't be part of the snapshot.
+   * the instant the turn began (see captureTurnStart()) — usable ONCE per
+   * level run (ITB's one-reset-per-battle rule; resetLevel() is what restores
+   * it). There is no per-step undo. Base HP never changes during the player's
+   * own turn (only a resolved monster intent on endTurn can touch it), so it
+   * needn't be part of the snapshot.
    */
   resetTurn(): void {
-    if (this.pendingOutcome || !this.turnStartSnapshot) return;
+    if (this.pendingOutcome || !this.turnStartSnapshot || this.resetTurnUsed) return;
+    this.resetTurnUsed = true;
     this.players = this.turnStartSnapshot.players.map((p) => ({ ...p, position: { ...p.position } }));
     this.monsters = this.turnStartSnapshot.monsters.map((m) => ({ ...m, position: { ...m.position } }));
-    this.history = [];
     this.pendingEvents = []; // whatever this turn had done is undone — nothing left to show feedback for
   }
 
@@ -303,10 +327,6 @@ export class BattleEngine {
     // turn, same as a player who ended their turn standing on it.
     this.applyPoisonMistDamage();
 
-    // Base HP only ever changes above (a monster's stored intent resolving),
-    // never during the player's own turn — so undo/pushHistory doesn't need
-    // to snapshot it; clearing history here is enough.
-    this.history = [];
     this.turnNumber += 1;
     this.monsters = this.monsters.filter((m) => m.hp > 0);
 
@@ -388,10 +408,13 @@ export class BattleEngine {
     this.startFreshTurn();
   }
 
-  /** Refills every living unit's own AP, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
+  /** Resets every living unit's moved/acted flags, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
   private startFreshTurn(): void {
     for (const p of this.players) {
-      if (p.hp > 0) p.ap = p.maxAp;
+      if (p.hp > 0) {
+        p.moved = false;
+        p.acted = false;
+      }
     }
     this.currentIntents = this.computeIntents();
     this.captureTurnStart();
@@ -402,8 +425,10 @@ export class BattleEngine {
     this.waveIndex = 0;
     this.turnNumber = 1;
     this.pendingOutcome = null;
-    this.history = [];
     this.pendingEvents = [];
+    // The per-level turn-reset budget comes back with every full level reset,
+    // and ONLY with a full level reset (see resetTurn()).
+    this.resetTurnUsed = false;
     this.baseHp = this.baseMaxHp;
     this.turnsLeftInWave = this.map.waves[0].turns;
 
@@ -416,8 +441,9 @@ export class BattleEngine {
         hp: def.maxHp,
         maxHp: def.maxHp,
         shield: 0,
-        ap: def.actionPoints,
-        maxAp: def.actionPoints,
+        moved: false,
+        acted: false,
+        moveRange: def.moveRange,
         skillIds: def.skillIds,
         // resetRun() is the ONLY reset this game has (constructor, defeat,
         // victory, and manual "reset level" all funnel through it) — this is
@@ -1165,12 +1191,5 @@ export class BattleEngine {
       this.monsters.find((u) => u.hp > 0 && equalsVec2(u.position, p)) ??
       null
     );
-  }
-
-  private pushHistory(): void {
-    this.history.push({
-      players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
-      monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
-    });
   }
 }
