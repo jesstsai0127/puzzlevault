@@ -13,6 +13,7 @@ const TARGET_MODES = [
   'aoeArc3',
   'allEnemies',
   'allUnits',
+  'allAllies',
 ];
 /** Directional line-scan modes: same range>=1 requirement as firstInLine, since a 0-range line has nothing to scan. */
 const LINE_TARGET_MODES = ['firstInLine', 'pierceLine'];
@@ -78,6 +79,7 @@ export function validateCharacterDef(def: CharacterDef): string[] {
   if (!(def.maxHp > 0)) problems.push('maxHp must be > 0');
   if (!(def.actionPoints > 0)) problems.push('actionPoints must be > 0');
   if (!Array.isArray(def.skillIds) || def.skillIds.length === 0) problems.push('character has no skills');
+  if (!def.ultimateSkillId) problems.push('missing ultimateSkillId');
   return problems;
 }
 
