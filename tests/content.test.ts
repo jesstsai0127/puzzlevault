@@ -13,7 +13,6 @@ const meleeSkill = {
   nameKey: 'skill.sword_qi.name',
   descKey: 'skill.sword_qi.desc',
   range: 1,
-  mpCost: 2,
   effects: [{ type: 'damage', amount: 2, target: 'firstInLine' }],
 };
 
@@ -23,7 +22,6 @@ const qiShieldSkill = {
   nameKey: 'skill.qi_shield.name',
   descKey: 'skill.qi_shield.desc',
   range: 0,
-  mpCost: 1,
   effects: [{ type: 'shield', amount: 1, target: 'self' }],
 };
 
@@ -63,7 +61,7 @@ const liYanCharacter = {
   nameKey: 'character.li_yan.name',
   spriteRef: 'char_li_yan',
   maxHp: 6,
-  actionPoints: 4,
+  moveRange: 3,
   skillIds: ['sword_qi', 'palm_wave'],
   ultimateSkillId: 'sword_tempest',
 };
