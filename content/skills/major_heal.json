@@ -4,6 +4,5 @@
   "nameKey": "skill.major_heal.name",
   "descKey": "skill.major_heal.desc",
   "range": 2,
-  "mpCost": 3,
   "effects": [{ "type": "heal", "amount": 4, "target": "firstInLine" }]
 }
