@@ -13,19 +13,28 @@ export interface PlayerUnitState {
   hp: number;
   maxHp: number;
   shield: number;
-  /** This character's own per-turn action points — moving and casting skills both draw from this one pool. */
-  ap: number;
-  maxAp: number;
+  /**
+   * ITB-style action economy: each unit's turn is "move (at most moveRange
+   * tiles, committed as ONE whole move), then ONE action (skill or rest)" —
+   * in that fixed order. `moved` locks further movement the moment a move
+   * commits; `acted` locks BOTH further actions and movement (acting ends
+   * the unit's turn). Either phase may be skipped. Both reset at the start
+   * of every fresh player turn (startFreshTurn()).
+   */
+  moved: boolean;
+  acted: boolean;
+  /** Copied from CharacterDef.moveRange so the UI/BFS can read it off the snapshot without a registry lookup. */
+  moveRange: number;
   skillIds: string[];
   /**
    * Whether this unit's Ultimate (CharacterDef.ultimateSkillId) has already
    * been cast THIS LEVEL RUN. Reset to false only by BattleEngine.resetRun()
    * (the level-reset path — constructor and confirmOutcome()/manual reset),
    * never by resetTurn() — an Ultimate spent earlier in the run stays spent
-   * across turns/waves, that's the whole point of its cost. Ordinary undo()/
-   * resetTurn() restore it correctly for free because both work by restoring
-   * whole-object snapshots of `players` (pushHistory()/captureTurnStart()),
-   * which already spread-copy every field on this interface.
+   * across turns/waves, that's the whole point of its cost. resetTurn()
+   * restores it correctly for free because it restores whole-object
+   * snapshots of `players` (captureTurnStart()), which already spread-copy
+   * every field on this interface.
    */
   ultimateUsed: boolean;
 }
@@ -96,4 +105,6 @@ export interface BattleSnapshot {
   turnsLeftInWave: number;
   /** This wave's total turn budget (e.g. for a "2/4" display). */
   waveTurns: number;
+  /** Whether this level run's single turn-reset (ITB-style: one per battle) has been spent — cleared only by resetLevel()/resetRun(). */
+  resetTurnUsed: boolean;
 }
