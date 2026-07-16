@@ -692,7 +692,15 @@ export class BattleScene extends Phaser.Scene {
       if (event.kind === 'damage') {
         if (event.blocked) {
           this.spawnFloatingText(pos, i18n.t('ui.blocked'), '#4cc9f0');
-        } else if (event.amount > 0) {
+        } else if (event.amount === 0) {
+          // A percent-damage hit floored to 0 (fizzle) — deliberately loud,
+          // not silent: the cast DID land and DID spend AP, so showing
+          // nothing would read as "did my click even register?". A muted
+          // gray "no effect" marker (visually distinct from the bright
+          // blue shield block) tells the player the skill connected but
+          // this target is too small for percent damage to bite.
+          this.spawnFloatingText(pos, i18n.t('ui.no_effect'), '#8d99ae');
+        } else {
           this.spawnFloatingText(pos, `-${event.amount}`, '#ff4d4d');
           this.flashSprite(event.target, 0xff6666);
           // Bigger hits shake harder — capped so a multi-hit combo turn
@@ -1213,8 +1221,14 @@ export class BattleScene extends Phaser.Scene {
     this.rulesPanelMaxScroll = Math.max(0, this.rulesPanelText.height - this.rulesPanelBounds.height);
     this.rulesPanelText.y = Phaser.Math.Clamp(this.rulesPanelText.y, -this.rulesPanelMaxScroll, 0);
 
+    // Two distinct defeat causes share one engine outcome ('defeat'): the
+    // base dying, and the whole squad dying (total party wipe). The engine
+    // doesn't tag which one froze the board, but the snapshot disambiguates
+    // them exactly — a wipe defeat is the only defeat where the base is
+    // still standing (the base-death branch fires first in endTurn).
+    const defeatKey = snap.baseHp > 0 ? 'ui.outcome_wipe' : 'ui.outcome_defeat';
     const OUTCOME_KEY: Record<RunOutcome, string> = {
-      defeat: 'ui.outcome_defeat',
+      defeat: defeatKey,
       victory: 'ui.outcome_victory',
     };
     this.outcomeOverlay.setVisible(outcomePending);
