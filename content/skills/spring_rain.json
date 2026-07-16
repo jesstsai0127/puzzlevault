@@ -4,6 +4,5 @@
   "nameKey": "skill.spring_rain.name",
   "descKey": "skill.spring_rain.desc",
   "range": 0,
-  "mpCost": 4,
   "effects": [{ "type": "heal", "amount": 3, "target": "allAllies" }]
 }
