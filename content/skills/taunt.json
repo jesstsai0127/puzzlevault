@@ -4,6 +4,5 @@
   "nameKey": "skill.taunt.name",
   "descKey": "skill.taunt.desc",
   "range": 3,
-  "mpCost": 2,
   "effects": [{ "type": "taunt", "amount": 2, "target": "firstInLine" }]
 }
