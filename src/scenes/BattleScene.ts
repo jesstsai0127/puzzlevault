@@ -11,6 +11,15 @@ import { levelSelectUrl } from './levelNav';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
+/**
+ * ITB alignment (2026-07-16 定案): the Ultimate system is shelved — not
+ * deleted — while the game is brought rule-for-rule in line with Into the
+ * Breach. Engine logic (ultimateUsed, useSkill's ultimate path) stays live
+ * and tested; only this UI entry point is hidden. Flip to true in the
+ * post-alignment optimization phase to bring the button back.
+ */
+const ULTIMATES_ENABLED = false;
+
 /** Every skill's numeric effects, exactly as the engine will apply them — e.g. "⚔2" or "⚔1 ➜2". */
 function effectSummary(skill: SkillDef): string {
   return skill.effects.map((e) => `${EFFECT_ICON[e.type]}${e.amount}`).join(' ');
@@ -59,15 +68,21 @@ const RULES_PANEL_STATIC = [
   '',
   '👻 頭上的箭頭是它下一步的動作，出手前就看得到。',
   '',
+  '每位俠客每回合：先移動、再做一個動作。移動一次走完（點亮起的格子，最遠走到自己的移動力）；動作是技能或『調息』擇一，做完這回合就結束。',
+  '',
+  '順序固定：先移動後動作——出手之後就不能再走位了。移動或動作也都可以放棄不做。',
+  '',
+  '『調息』：不出招，原地回 1 點血（不超過上限）。任何俠客都會，跟技能一樣算掉這回合的動作。',
+  '',
   '點角色→點亮起的格子移動；點技能→點目標施放。用『排雲掌』把妖物推開或推進深淵 ▽。',
   '',
   '俠客擋在妖物往陣的路上，妖物會改打俠客——用身體擋路要付出血量代價，要衡量值不值得。',
   '',
-  '行動點 💧：每位俠客自己的一本帳，每回合 4 點——走一步花 1 點、技能費用標在按鈕上的『💧數字』，同一池點數，不分開算。',
+  '做完動作的俠客圖示會變暗，表示這回合他沒事可做了。',
   '',
-  '行動點用完的俠客圖示會變暗，表示這回合他沒事可做了。',
+  '『重置本回合』整關只能用一次——用掉之後按鈕變灰，每一步都要想清楚再走。',
   '',
-  '鍵盤：方向鍵移動／瞄準、1・2・3 選技能、Q 換人、Z 重置本回合、Enter 結束回合。',
+  '鍵盤：方向鍵規劃路線、空白鍵確認移動、1・2・3 選技能（再按方向鍵瞄準）、R 調息、Q 換人、Z 重置本回合、Enter 結束回合。',
   '',
   '每一波是倒數計時：歸零時下一波直接加進場，沒殺完的妖物會留著疊上去；最後一波倒數完、陣還活著就贏——不用殺光。',
 ].join('\n');
@@ -98,13 +113,12 @@ export class BattleScene extends Phaser.Scene {
   private playerSprites: Phaser.GameObjects.Text[] = [];
   private playerHpBars: Phaser.GameObjects.Rectangle[] = [];
   private playerHpTexts: Phaser.GameObjects.Text[] = [];
-  private playerApTexts: Phaser.GameObjects.Text[] = [];
   private playerShieldIcons: Phaser.GameObjects.Arc[] = [];
   private monsterSprites: Map<string, Phaser.GameObjects.Text> = new Map();
   private monsterHpBars: Map<string, Phaser.GameObjects.Rectangle> = new Map();
   private monsterHpTexts: Map<string, Phaser.GameObjects.Text> = new Map();
   private intentMarkers: Phaser.GameObjects.GameObject[] = [];
-  private reachableCostMarkers: Phaser.GameObjects.GameObject[] = [];
+  private pendingPathMarkers: Phaser.GameObjects.GameObject[] = [];
   private damagePreviewMarkers: Phaser.GameObjects.GameObject[] = [];
   private spawnPreviewMarkers: Phaser.GameObjects.GameObject[] = [];
   private selectionRing!: Phaser.GameObjects.Rectangle;
@@ -118,7 +132,9 @@ export class BattleScene extends Phaser.Scene {
   private instructionText!: Phaser.GameObjects.Text;
   private skillDescText!: Phaser.GameObjects.Text;
   private skillButtons: Button[] = [];
-  private ultimateButton!: Button;
+  private restButton!: Button;
+  /** Only built when ULTIMATES_ENABLED — the whole Ultimate system is shelved during ITB alignment (see the flag's doc comment). */
+  private ultimateButton?: Button;
   private endTurnButton!: Button;
   private resetTurnButton!: Button;
   private resetLevelButton!: Button;
@@ -134,6 +150,18 @@ export class BattleScene extends Phaser.Scene {
   private announcedLastWave = false;
   private reachable: Map<string, CardinalDir[]> = new Map();
   private targetable: Map<string, CardinalDir> = new Map();
+  /**
+   * Keyboard move planning: the engine now takes a whole move as ONE
+   * committed destination (moveUnit(unitIndex, to)), so arrow keys can't
+   * fire a step each anymore — a keyboard player would burn their entire
+   * move phase on a single tile. Instead the arrows ACCUMULATE a path
+   * (each step validated against the same BFS-reachable set the mouse
+   * highlight uses; pressing back along the path pops a step), rendered as
+   * an outline trail, and Space commits the destination in one moveUnit()
+   * call — mirroring the mouse's click-a-destination interaction instead
+   * of crippling it. Cleared on select/skill/reset/endTurn/commit.
+   */
+  private pendingSteps: Array<{ x: number; y: number }> = [];
 
   constructor() {
     super('BattleScene');
@@ -158,11 +186,12 @@ export class BattleScene extends Phaser.Scene {
     this.monsterHpBars = new Map();
     this.monsterHpTexts = new Map();
     this.intentMarkers = [];
-    this.reachableCostMarkers = [];
+    this.pendingPathMarkers = [];
     this.damagePreviewMarkers = [];
     this.spawnPreviewMarkers = [];
     this.selectedUnit = 0;
     this.armedSkillId = null;
+    this.pendingSteps = [];
     this.announcedLastWave = false;
   }
 
@@ -216,12 +245,6 @@ export class BattleScene extends Phaser.Scene {
     this.playerHpTexts = squad.map(() =>
       this.add
         .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 })
-        .setOrigin(0.5)
-        .setDepth(3),
-    );
-    this.playerApTexts = squad.map(() =>
-      this.add
-        .text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#4cc9f0', stroke: '#000000', strokeThickness: 3 })
         .setOrigin(0.5)
         .setDepth(3),
     );
@@ -410,15 +433,20 @@ export class BattleScene extends Phaser.Scene {
     this.skillButtons = Array.from({ length: skillButtonCount }, (_, i) =>
       this.makeButton(20 + i * 210, barY, 200, 40, () => this.toggleSkill(i)),
     );
-    // Placed right after the regular skill buttons (whose count varies per
-    // squad — see skillButtonCount above), before the reset/end-turn
-    // buttons on the right, so it never collides regardless of how many
-    // ordinary skills a character has. Gold border (see COLORS.ultimateBorder)
-    // is the visual cue that sets it apart from a normal skill button.
-    this.ultimateButton = this.makeButton(20 + skillButtonCount * 210 + 20, barY, 200, 40, () =>
-      this.toggleUltimate(),
-    );
-    this.ultimateButton.bg.setStrokeStyle(3, COLORS.ultimateBorder);
+    // The built-in rest action ("調息", ITB's repair): shared by every
+    // character, so it lives right after the per-character skill buttons.
+    // Narrower than a skill button — its label is a fixed short verb.
+    this.restButton = this.makeButton(20 + skillButtonCount * 210 + 10, barY, 140, 40, () => this.handleRest());
+    if (ULTIMATES_ENABLED) {
+      // Placed after the rest button, before the reset/end-turn buttons on
+      // the right, so it never collides regardless of how many ordinary
+      // skills a character has. Gold border (see COLORS.ultimateBorder) is
+      // the visual cue that sets it apart from a normal skill button.
+      this.ultimateButton = this.makeButton(20 + skillButtonCount * 210 + 160, barY, 200, 40, () =>
+        this.toggleUltimate(),
+      );
+      this.ultimateButton.bg.setStrokeStyle(3, COLORS.ultimateBorder);
+    }
     this.resetTurnButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleResetTurn());
     this.endTurnButton = this.makeButton(this.scale.width - 170, barY, 150, 40, () => this.handleEndTurn());
     // Full manual restart — always clickable, independent of resetTurn/endTurn
@@ -528,6 +556,13 @@ export class BattleScene extends Phaser.Scene {
         case '3':
           this.toggleSkill(2);
           break;
+        case ' ':
+          this.commitPendingMove();
+          break;
+        case 'r':
+        case 'R':
+          this.handleRest();
+          break;
         case 'q':
         case 'Q':
           this.selectNextUnit();
@@ -536,6 +571,11 @@ export class BattleScene extends Phaser.Scene {
         case 'Z':
           this.handleResetTurn();
           break;
+        case 'Escape':
+          this.pendingSteps = [];
+          this.armedSkillId = null;
+          this.render();
+          break;
         case 'Enter':
           this.handleEndTurn();
           break;
@@ -543,7 +583,13 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
-  /** Arrow keys move one step, or fire an armed skill in that direction — mirrors clicking an adjacent highlighted tile. */
+  /**
+   * Arrow keys: fire an armed skill in that direction, or EXTEND the pending
+   * move path by one tile (Space commits it — see the pendingSteps doc
+   * comment for why keyboard movement plans-then-commits instead of moving
+   * per keypress). Pressing back onto the previous path tile pops a step,
+   * so a mis-planned route is walked back key by key, no Escape needed.
+   */
   private stepFromKeyboard(dir: CardinalDir) {
     if (this.engine.getSnapshot().outcome) return;
     if (this.armedSkillId) {
@@ -552,11 +598,45 @@ export class BattleScene extends Phaser.Scene {
       const res = this.engine.useSkill(this.selectedUnit, skillId, dir);
       if (!res.ok) this.cameras.main.shake(80, 0.002);
       else this.playHitFeedback(this.engine.getLastEvents());
-    } else {
-      const res = this.engine.moveUnit(this.selectedUnit, dir);
-      if (!res.ok) this.cameras.main.shake(80, 0.002);
-      else this.playHitFeedback(this.engine.getLastEvents());
+      this.render();
+      return;
     }
+
+    const unit = this.engine.getSnapshot().players[this.selectedUnit];
+    if (!unit || unit.hp <= 0 || unit.moved || unit.acted) {
+      this.cameras.main.shake(80, 0.002);
+      return;
+    }
+    const cur = this.pendingSteps.length > 0 ? this.pendingSteps[this.pendingSteps.length - 1] : unit.position;
+    const v = DIR_VECTORS[dir];
+    const next = { x: cur.x + v.x, y: cur.y + v.y };
+
+    // Backtrack: stepping onto the previous tile of the planned path (or
+    // back onto the unit itself from the first step) pops the last step.
+    const prev = this.pendingSteps.length > 1 ? this.pendingSteps[this.pendingSteps.length - 2] : unit.position;
+    if (this.pendingSteps.length > 0 && next.x === prev.x && next.y === prev.y) {
+      this.pendingSteps.pop();
+      this.render();
+      return;
+    }
+
+    const key = `${next.x},${next.y}`;
+    const alreadyOnPath = this.pendingSteps.some((p) => p.x === next.x && p.y === next.y);
+    if (!this.reachable.has(key) || alreadyOnPath || this.pendingSteps.length >= unit.moveRange) {
+      this.cameras.main.shake(80, 0.002); // out of range / revisiting / budget spent
+      return;
+    }
+    this.pendingSteps.push(next);
+    this.render();
+  }
+
+  /** Space: commit the keyboard-planned path as one whole move — the engine only sees the destination, same as a mouse click. */
+  private commitPendingMove() {
+    if (this.pendingSteps.length === 0) return;
+    const dest = this.pendingSteps[this.pendingSteps.length - 1];
+    this.pendingSteps = [];
+    const res = this.engine.moveUnit(this.selectedUnit, dest);
+    if (!res.ok) this.cameras.main.shake(80, 0.002);
     this.render();
   }
 
@@ -569,6 +649,7 @@ export class BattleScene extends Phaser.Scene {
     if (!unit || unit.hp <= 0) return;
     this.selectedUnit = index;
     this.armedSkillId = null;
+    this.pendingSteps = [];
     this.render();
   }
 
@@ -589,26 +670,43 @@ export class BattleScene extends Phaser.Scene {
     if (!unit || unit.hp <= 0) return;
     const skillId = unit.skillIds[skillIndex];
     const skill = skillId ? registry.skills[skillId] : undefined;
-    if (!skillId || !skill || unit.ap < skill.mpCost) return;
+    if (!skillId || !skill || unit.acted) return; // acting once per turn is the only gate — skills have no cost of their own anymore
     this.armedSkillId = this.armedSkillId === skillId ? null : skillId;
+    this.pendingSteps = [];
     this.render();
   }
 
-  /** Arms the selected unit's Ultimate (CharacterDef.ultimateSkillId) — mirrors toggleSkill(), gated additionally on ultimateUsed (this level run only allows one cast). */
+  /** Arms the selected unit's Ultimate (CharacterDef.ultimateSkillId) — mirrors toggleSkill(), gated additionally on ultimateUsed (this level run only allows one cast). Unreachable while ULTIMATES_ENABLED is false (the button is never built). */
   private toggleUltimate() {
     const unit = this.engine.getSnapshot().players[this.selectedUnit];
     if (!unit || unit.hp <= 0) return;
     const charDef = registry.characters[unit.characterId];
     const skillId = charDef?.ultimateSkillId;
     const skill = skillId ? registry.skills[skillId] : undefined;
-    if (!skillId || !skill || unit.ap < skill.mpCost || unit.ultimateUsed) return;
+    if (!skillId || !skill || unit.acted || unit.ultimateUsed) return;
     this.armedSkillId = this.armedSkillId === skillId ? null : skillId;
+    this.pendingSteps = [];
+    this.render();
+  }
+
+  /** The built-in rest action ("調息"): self-heal 1, spends the unit's one action — no arming/aiming step, it fires immediately. */
+  private handleRest() {
+    if (this.engine.getSnapshot().outcome) return;
+    const res = this.engine.rest(this.selectedUnit);
+    if (!res.ok) {
+      this.cameras.main.shake(80, 0.002);
+    } else {
+      this.playHitFeedback(this.engine.getLastEvents());
+    }
+    this.armedSkillId = null;
+    this.pendingSteps = [];
     this.render();
   }
 
   private handleResetTurn() {
     this.engine.resetTurn();
     this.armedSkillId = null;
+    this.pendingSteps = [];
     this.render();
   }
 
@@ -634,23 +732,16 @@ export class BattleScene extends Phaser.Scene {
       return;
     }
 
-    const path = this.reachable.get(key);
-    if (!path) {
+    if (!this.reachable.has(key)) {
       this.cameras.main.shake(80, 0.002); // clicked a tile out of movement range
       return;
     }
-    for (const dir of path) {
-      const res = this.engine.moveUnit(this.selectedUnit, dir);
-      if (!res.ok) {
-        this.cameras.main.shake(80, 0.002);
-        break;
-      }
-      // getLastEvents() only reflects the most recent moveUnit() call, so a
-      // multi-tile path (click-to-move) needs feedback fired per step —
-      // otherwise an opportunity attack triggered by an early step in the
-      // path gets silently overwritten by the next step's (empty) events.
-      this.playHitFeedback(this.engine.getLastEvents());
-    }
+    // One committed move: the engine validates BFS reachability itself and
+    // the whole path is walked in a single call — there is no per-step
+    // movement (and no opportunity attacks) under the ITB action economy.
+    const res = this.engine.moveUnit(this.selectedUnit, { x, y });
+    if (!res.ok) this.cameras.main.shake(80, 0.002);
+    this.pendingSteps = [];
     this.render();
   }
 
@@ -659,6 +750,7 @@ export class BattleScene extends Phaser.Scene {
     this.engine.endTurn();
     this.playHitFeedback(this.engine.getLastEvents());
     this.armedSkillId = null;
+    this.pendingSteps = [];
     this.render();
   }
 
@@ -805,14 +897,13 @@ export class BattleScene extends Phaser.Scene {
     );
   }
 
-  /** BFS over remaining move budget; returns tile -> path (list of steps) for every reachable tile. */
+  /** BFS over the unit's moveRange; returns tile -> path (list of steps) for every reachable tile. Empty once the unit has moved or acted (movement strictly precedes the one action). */
   private computeReachable(unitIndex: number): Map<string, CardinalDir[]> {
     const result = new Map<string, CardinalDir[]>();
     const snap = this.engine.getSnapshot();
     const unit = snap.players[unitIndex];
-    if (!unit || unit.hp <= 0) return result;
-    const budget = unit.ap;
-    if (budget <= 0) return result;
+    if (!unit || unit.hp <= 0 || unit.moved || unit.acted) return result;
+    const budget = unit.moveRange;
 
     const start = unit.position;
     const queue: Array<{ x: number; y: number; path: CardinalDir[] }> = [{ ...start, path: [] }];
@@ -919,8 +1010,9 @@ export class BattleScene extends Phaser.Scene {
     this.reachable = this.armedSkillId ? new Map() : this.computeReachable(this.selectedUnit);
     this.targetable = this.armedSkillId ? this.computeTargetable(this.selectedUnit, this.armedSkillId) : new Map();
 
-    this.reachableCostMarkers.forEach((o) => o.destroy());
-    this.reachableCostMarkers = [];
+    // Reachable tiles carry no per-tile step cost anymore: a move is one
+    // committed action regardless of distance, so "can I get there" (the
+    // highlight) is the whole answer — there is no "what will it cost me."
     this.map.grid.forEach((row, y) => {
       row.split('').forEach((_ch, x) => {
         const rect = this.tileHighlights[y][x];
@@ -929,45 +1021,40 @@ export class BattleScene extends Phaser.Scene {
           rect.setFillStyle(COLORS.targetable, 0.35);
         } else if (this.reachable.has(key)) {
           rect.setFillStyle(COLORS.reachable, 0.25);
-          // Steps to get here == AP it'll cost — the highlight alone answers
-          // "can I get there," not "what will it cost me," and AP now pays
-          // for skills too so spending it carelessly on distance bites later.
-          const steps = this.reachable.get(key)!.length;
-          const { px, py } = this.tileCenter(x, y);
-          const cost = this.add
-            .text(px, py, `${steps}`, {
-              fontFamily: 'monospace',
-              fontSize: '13px',
-              color: '#4cc9f0',
-              stroke: '#000000',
-              strokeThickness: 3,
-            })
-            .setOrigin(0.5)
-            .setDepth(1);
-          this.reachableCostMarkers.push(cost);
         } else {
           rect.setFillStyle(0xffffff, 0);
         }
       });
     });
 
+    // Keyboard-planned (not yet committed) path — outlined so it reads as a
+    // plan on top of the reachable highlight, with the would-be destination
+    // drawn heavier. See the pendingSteps doc comment for the interaction.
+    this.pendingPathMarkers.forEach((o) => o.destroy());
+    this.pendingPathMarkers = [];
+    this.pendingSteps.forEach((step, i) => {
+      const { px, py } = this.tileCenter(step.x, step.y);
+      const isDest = i === this.pendingSteps.length - 1;
+      const marker = this.add
+        .rectangle(px, py, TILE - 18, TILE - 18)
+        .setStrokeStyle(isDest ? 3 : 2, COLORS.selected, isDest ? 1 : 0.7)
+        .setFillStyle(0x000000, 0)
+        .setDepth(1);
+      this.pendingPathMarkers.push(marker);
+    });
+
     snap.players.forEach((p, i) => {
       const { px, py } = this.tileCenter(p.position.x, p.position.y);
-      // Dead → 0.25 (barely there). Alive but out of AP → 0.5 ("nothing left
-      // to do this turn" — AP now pays for both movement and skills, so
-      // ap===0 means truly nothing, not just "out of one of two resources").
-      // Alive with AP left → fully lit.
-      const alpha = p.hp <= 0 ? 0.25 : p.ap === 0 ? 0.5 : 1;
+      // Dead → 0.25 (barely there). Acted → 0.5 (the unit's turn is over —
+      // acting is what ends it; a unit that has only MOVED stays fully lit,
+      // it still has its one action left).
+      const alpha = p.hp <= 0 ? 0.25 : p.acted ? 0.5 : 1;
       this.playerSprites[i].setPosition(px, py).setAlpha(alpha);
       const bar = this.playerHpBars[i];
       const ratio = Math.max(0, p.hp / p.maxHp);
       bar.setPosition(px, py + TILE / 2 - 10).setSize((TILE - 20) * ratio, 6);
       bar.setFillStyle(ratio > 0.34 ? COLORS.hpBarFill : COLORS.hpBarFillLow);
       this.playerHpTexts[i].setPosition(px, py + TILE / 2 - 20).setText(`${Math.max(0, p.hp)}/${p.maxHp}`);
-      this.playerApTexts[i]
-        .setPosition(px - TILE / 2 + 14, py - TILE / 2 + 12)
-        .setText(`${p.ap}/${p.maxAp}`)
-        .setVisible(p.hp > 0);
       const shieldIcon = this.playerShieldIcons[i];
       shieldIcon.setPosition(px + TILE / 2 - 12, py - TILE / 2 + 12).setVisible(p.shield > 0);
     });
@@ -1109,18 +1196,16 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
+    const unitAlive = (selected?.hp ?? 0) > 0;
+    const unitActed = !!selected?.acted;
     this.skillButtons.forEach((btn, i) => {
       const skillId = selected?.skillIds[i];
       const skill = skillId ? registry.skills[skillId] : undefined;
-      const unitAlive = (selected?.hp ?? 0) > 0;
-      // Distinguished from "unit dead" / "no skill" so a player can tell
-      // "not enough Qi" apart from a click that simply didn't land.
-      const notEnoughAp = !!skill && unitAlive && selected!.ap < skill.mpCost;
-      const nameWithStats = skill
-        ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)} 💧${skill.mpCost}`
-        : '';
-      const label = notEnoughAp ? `${nameWithStats}\n${i18n.t('ui.not_enough_ap')}` : nameWithStats;
-      if (!skillId || notEnoughAp || !unitAlive || outcomePending) {
+      const nameWithStats = skill ? `${i18n.t(`skill.${skillId}.name`)} ${effectSummary(skill)}` : '';
+      // "Already acted" is the only economy gate left — shown explicitly so
+      // a disabled button reads as "this unit's turn is spent," not a bug.
+      const label = skill && unitActed && unitAlive ? `${nameWithStats}\n${i18n.t('ui.already_acted')}` : nameWithStats;
+      if (!skillId || unitActed || !unitAlive || outcomePending) {
         btn.bg.setFillStyle(COLORS.buttonBg, 0.4);
         btn.label.setText(label);
         btn.bg.disableInteractive();
@@ -1132,27 +1217,41 @@ export class BattleScene extends Phaser.Scene {
       }
     });
 
-    // Ultimate button — separate from the skillButtons loop above since it's
-    // driven by CharacterDef.ultimateSkillId, not skillIds, and has its own
-    // once-per-level lock (PlayerUnitState.ultimateUsed) on top of the usual
-    // AP/alive/outcome gates.
+    // Rest button — the built-in action every character shares. Same gates
+    // as a skill button (one action per turn), no arming step.
     {
+      const restLabel = `${i18n.t('ui.rest')} ✚1`;
+      const label = unitActed && unitAlive ? `${restLabel}\n${i18n.t('ui.already_acted')}` : restLabel;
+      if (unitActed || !unitAlive || outcomePending) {
+        this.restButton.bg.setFillStyle(COLORS.buttonBg, 0.4);
+        this.restButton.label.setText(label);
+        this.restButton.bg.disableInteractive();
+      } else {
+        this.restButton.bg.setFillStyle(COLORS.buttonBg, 1);
+        this.restButton.label.setText(restLabel);
+        this.restButton.bg.setInteractive({ useHandCursor: true });
+      }
+    }
+
+    // Ultimate button — only exists while ULTIMATES_ENABLED (the system is
+    // shelved during ITB alignment). Driven by CharacterDef.ultimateSkillId,
+    // not skillIds, with its own once-per-level lock (ultimateUsed) on top
+    // of the usual acted/alive/outcome gates.
+    if (this.ultimateButton) {
       const charDef = selected ? registry.characters[selected.characterId] : undefined;
       const ultimateId = charDef?.ultimateSkillId;
       const ultimateSkill = ultimateId ? registry.skills[ultimateId] : undefined;
-      const unitAlive = (selected?.hp ?? 0) > 0;
       const ultimateUsed = !!selected?.ultimateUsed;
-      const notEnoughApUlt = !!ultimateSkill && unitAlive && selected!.ap < ultimateSkill.mpCost;
       const nameWithStatsUlt = ultimateSkill
-        ? `★${i18n.t(`skill.${ultimateId}.name`)} ${effectSummary(ultimateSkill)} 💧${ultimateSkill.mpCost}`
+        ? `★${i18n.t(`skill.${ultimateId}.name`)} ${effectSummary(ultimateSkill)}`
         : '';
       let statusLine = '';
       if (ultimateUsed) statusLine = i18n.t('ui.ultimate_used');
-      else if (notEnoughApUlt) statusLine = i18n.t('ui.not_enough_ap');
+      else if (unitActed && unitAlive) statusLine = i18n.t('ui.already_acted');
       else if (ultimateSkill) statusLine = i18n.t('ui.ultimate_hint');
       const labelUlt = statusLine ? `${nameWithStatsUlt}\n${statusLine}` : nameWithStatsUlt;
 
-      if (!ultimateId || !ultimateSkill || notEnoughApUlt || !unitAlive || outcomePending || ultimateUsed) {
+      if (!ultimateId || !ultimateSkill || unitActed || !unitAlive || outcomePending || ultimateUsed) {
         this.ultimateButton.bg.setFillStyle(COLORS.ultimateBg, 0.35);
         this.ultimateButton.label.setText(labelUlt);
         this.ultimateButton.bg.disableInteractive();
@@ -1164,15 +1263,23 @@ export class BattleScene extends Phaser.Scene {
       }
     }
 
-    this.resetTurnButton.label.setText(i18n.t('ui.reset_turn'));
+    // Reset-turn is a once-per-level resource now (ITB rule): once spent it
+    // stays grayed out with an explicit "used up" label until resetLevel().
+    this.resetTurnButton.label.setText(
+      snap.resetTurnUsed ? `${i18n.t('ui.reset_turn')}\n${i18n.t('ui.reset_turn_used')}` : i18n.t('ui.reset_turn'),
+    );
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
     this.resetLevelButton.label.setText(i18n.t('ui.reset_level'));
     this.backToLevelSelectButton.label.setText(i18n.t('ui.select_level'));
-    [this.resetTurnButton, this.endTurnButton].forEach((btn) => {
-      btn.bg.setFillStyle(COLORS.buttonBg, outcomePending ? 0.4 : 1);
-      if (outcomePending) btn.bg.disableInteractive();
-      else btn.bg.setInteractive({ useHandCursor: true });
-    });
+    {
+      const resetDisabled = outcomePending || snap.resetTurnUsed;
+      this.resetTurnButton.bg.setFillStyle(COLORS.buttonBg, resetDisabled ? 0.4 : 1);
+      if (resetDisabled) this.resetTurnButton.bg.disableInteractive();
+      else this.resetTurnButton.bg.setInteractive({ useHandCursor: true });
+      this.endTurnButton.bg.setFillStyle(COLORS.buttonBg, outcomePending ? 0.4 : 1);
+      if (outcomePending) this.endTurnButton.bg.disableInteractive();
+      else this.endTurnButton.bg.setInteractive({ useHandCursor: true });
+    }
 
     this.skillDescText.setText(
       (selected?.skillIds ?? [])
@@ -1208,12 +1315,10 @@ export class BattleScene extends Phaser.Scene {
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
 
-    const selectedAp = selected ? `${selected.ap}/${selected.maxAp}` : '-';
     const liveStatus = [
       `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
       `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}`,
       waveCountdown,
-      `AP ${selectedAp}`,
     ].join('\n');
     // A lesson-level's one-off tip (see MapDef.hintKey) sits right under the
     // general rules panel, in the same static-text style — not a separate
