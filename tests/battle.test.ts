@@ -1411,6 +1411,14 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     };
     const map: MapDef = {
       ...tauntArena(),
+      // A second hero (li_yan, far from the assassin) keeps the squad alive
+      // when ling_er dies — otherwise her death is a total party wipe, which
+      // now freezes a defeat outcome BEFORE the next computeIntents() runs,
+      // and the fall-back-to-normal-AI behavior under test never happens.
+      playerStarts: [
+        { x: 8, y: 1 },
+        { x: 1, y: 1 },
+      ],
       waves: [
         {
           turns: AMPLE_TURNS,
@@ -1421,7 +1429,7 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
         },
       ],
     };
-    const engine = new BattleEngine(map, ['ling_er'], deathRegistry);
+    const engine = new BattleEngine(map, ['ling_er', 'li_yan'], deathRegistry);
     engine.useSkill(0, 'taunt', 'down'); // taunts base_ghost before ending the turn
 
     const baseGhostId = engine.getSnapshot().monsters.find((m) => m.monsterId === 'base_ghost')!.instanceId;
@@ -1895,7 +1903,7 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
       expect(unitHpAt(engine, 5, 4)).toBe(2); // floor(4 * 0.5) = 2 dmg -> 4-2=2
     });
 
-    it('rounds down but always deals at least 1 damage, never a rounding-to-zero fizzle', () => {
+    it('floors to a 0-damage fizzle on a small target — no minimum-1 execute (the cast still lands and spends AP)', () => {
       const map: MapDef = {
         formatVersion: 1,
         id: 'percent-min-test',
@@ -1906,14 +1914,18 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'hp1_ghost', spawn: { x: 3, y: 4 } }] }],
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
-      // 10% of 1 hp = floor(0.1) = 0 raw, but the minimum-1 rule forces a
-      // real, lethal hit instead of a silent no-op that still spent the AP.
+      // 10% of 1 hp = floor(0.1) = 0 — the old minimum-1 rule turned every
+      // whole-map percent Ultimate into a free execute on 1-2 HP tutorial
+      // monsters, so a fizzle is now genuinely 0: the target survives, the
+      // event records the honest amount (0), and the AP is still spent.
+      const apBefore = engine.getSnapshot().players[0].ap;
       const res = engine.useSkill(0, 'percent_bolt_min', 'right');
       expect(res).toEqual({ ok: true });
       expect(engine.getLastEvents()).toEqual([
-        { kind: 'damage', target: { kind: 'monster', instanceId: expect.any(String) }, amount: 1, blocked: false },
+        { kind: 'damage', target: { kind: 'monster', instanceId: expect.any(String) }, amount: 0, blocked: false },
       ]);
-      expect(unitHpAt(engine, 3, 4)).toBe(0);
+      expect(unitHpAt(engine, 3, 4)).toBe(1); // untouched — the hit fizzled
+      expect(engine.getSnapshot().players[0].ap).toBe(apBefore - 1); // mpCost 1 still paid
     });
   });
 });
@@ -2169,5 +2181,148 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     engine.resetLevel();
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
     expect(engine.getSnapshot().players[0].hp).toBe(10); // full reset, not just the flag
+  });
+});
+
+describe('BattleEngine: total party wipe is a defeat', () => {
+  // A monster hard enough to one-shot any hero in these fixtures, so a wipe
+  // can be produced in a controlled number of endTurn() calls.
+  const heavyClaw: SkillDef = {
+    formatVersion: 1,
+    id: 'heavy_claw',
+    nameKey: 'skill.heavy_claw.name',
+    descKey: 'skill.heavy_claw.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 99, target: 'firstInLine' }],
+  };
+  const brute: MonsterDef = {
+    formatVersion: 1,
+    id: 'brute',
+    nameKey: 'monster.brute.name',
+    spriteRef: 'mon_brute',
+    maxHp: 50,
+    moveRange: 1,
+    skillIds: ['heavy_claw'],
+    aiRules: [
+      { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'heavy_claw' } },
+      { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+    ],
+  };
+  const wipeRegistry: ContentRegistry = {
+    characters: { li_yan, su_qing },
+    skills: { ...registry.skills, heavy_claw: heavyClaw },
+    monsters: { ...registry.monsters, brute },
+  };
+
+  it('all players dead at endTurn freezes a defeat outcome even though the base is untouched', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 2, y: 1 },
+        { x: 2, y: 2 },
+      ],
+      // One brute adjacent to each hero — both telegraphed claws land on the
+      // same endTurn, killing the entire squad in a single resolution.
+      waves: [
+        {
+          turns: AMPLE_TURNS,
+          monsters: [
+            { monsterId: 'brute', spawn: { x: 3, y: 1 } },
+            { monsterId: 'brute', spawn: { x: 3, y: 2 } },
+          ],
+        },
+      ],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], wipeRegistry);
+    engine.endTurn();
+    const snap = engine.getSnapshot();
+    expect(snap.players.every((p) => p.hp <= 0)).toBe(true);
+    expect(snap.outcome).toBe('defeat');
+    expect(snap.baseHp).toBe(snap.baseMaxHp); // the base did NOT fall — this is the wipe branch
+    // Same freeze-then-confirm flow as a base death: the board is locked
+    // until confirmOutcome(), which restarts the level from wave 1.
+    expect(engine.moveUnit(1, 'right')).toEqual({ ok: false, reason: 'outcome-pending' });
+    engine.confirmOutcome();
+    const fresh = engine.getSnapshot();
+    expect(fresh.outcome).toBeNull();
+    expect(fresh.players.every((p) => p.hp > 0)).toBe(true);
+  });
+
+  it('one hero dead, one alive is NOT a wipe — play continues', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 2, y: 1 },
+        { x: 2, y: 2 },
+      ],
+      // Only the first hero has a brute in claw range; the second is safe.
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'brute', spawn: { x: 3, y: 1 } }] }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], wipeRegistry);
+    engine.endTurn();
+    const snap = engine.getSnapshot();
+    expect(snap.players[0].hp).toBe(0);
+    expect(snap.players[1].hp).toBeGreaterThan(0);
+    expect(snap.outcome).toBeNull();
+  });
+});
+
+describe('BattleEngine: shield stacking cap', () => {
+  const heavyShieldSkill: SkillDef = {
+    formatVersion: 1,
+    id: 'heavy_shield_skill',
+    nameKey: 'skill.heavy_shield_skill.name',
+    descKey: 'skill.heavy_shield_skill.desc',
+    range: 0,
+    mpCost: 1,
+    effects: [{ type: 'shield', amount: 2, target: 'self' }],
+  };
+  const shieldCaster: CharacterDef = {
+    formatVersion: 1,
+    id: 'shield_caster',
+    nameKey: 'character.shield_caster.name',
+    spriteRef: 'char_shield_caster',
+    maxHp: 10,
+    actionPoints: 10,
+    skillIds: ['shield_skill', 'heavy_shield_skill'],
+    ultimateSkillId: 'shield_caster_ultimate_unused',
+  };
+  const capRegistry: ContentRegistry = {
+    characters: { ...registry.characters, shield_caster: shieldCaster },
+    skills: { ...registry.skills, heavy_shield_skill: heavyShieldSkill },
+    monsters: registry.monsters,
+  };
+  const farMap = (): MapDef => ({
+    ...twoWaveMap(),
+    playerStarts: [{ x: 1, y: 1 }],
+    waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }],
+  });
+
+  it('+1 shield stacks to 2 but a third cast does not push it past the cap (and reports no gain)', () => {
+    const engine = new BattleEngine(farMap(), ['shield_caster'], capRegistry);
+    engine.useSkill(0, 'shield_skill', 'down');
+    engine.useSkill(0, 'shield_skill', 'down');
+    expect(engine.getSnapshot().players[0].shield).toBe(2);
+    engine.useSkill(0, 'shield_skill', 'down'); // at the cap — wasted AP, no gain
+    expect(engine.getSnapshot().players[0].shield).toBe(2);
+    expect(engine.getLastEvents()).toEqual([]); // zero charges gained -> no shield event to show
+  });
+
+  it('+2 shield lands exactly at the cap in one cast; the event reports only the charges actually gained', () => {
+    const engine = new BattleEngine(farMap(), ['shield_caster'], capRegistry);
+    engine.useSkill(0, 'heavy_shield_skill', 'down');
+    expect(engine.getSnapshot().players[0].shield).toBe(2);
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'shield', target: { kind: 'player', unitIndex: 0 }, amount: 2 },
+    ]);
+    // +1 on top of an existing 1: only 1 real charge gained, capped at 2.
+    const engine2 = new BattleEngine(farMap(), ['shield_caster'], capRegistry);
+    engine2.useSkill(0, 'shield_skill', 'down');
+    engine2.useSkill(0, 'heavy_shield_skill', 'down');
+    expect(engine2.getSnapshot().players[0].shield).toBe(2);
+    expect(engine2.getLastEvents()).toEqual([
+      { kind: 'shield', target: { kind: 'player', unitIndex: 0 }, amount: 1 },
+    ]);
   });
 });
