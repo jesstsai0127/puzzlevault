@@ -30,6 +30,16 @@ const PUSH_COLLISION_DAMAGE = 1;
 /** Flat, unavoidable damage to any living unit still standing on a poison-mist ('*') tile at endTurn() — see applyPoisonMistDamage(). */
 const POISON_MIST_DAMAGE = 1;
 
+/**
+ * A unit can never hold more than this many shield charges at once — each
+ * charge blocks one full hit (see dealDamage), so an uncapped stack would let
+ * a hero pre-cast themselves into a turret that no amount of monsters can
+ * ever chew through. Heavy Shield's single cast (+2) lands exactly at the
+ * cap; stacking casts beyond it are wasted AP, and the shield event reports
+ * only the charges actually gained.
+ */
+const SHIELD_STACK_CAP = 2;
+
 type ResolvedTarget =
   | { kind: 'self' }
   | { kind: 'player'; unit: PlayerUnitState }
@@ -307,6 +317,16 @@ export class BattleEngine {
       // NOT clearing currentIntents: the frozen screen should still show which
       // monsters' telegraphed attacks just landed, so the player can review
       // exactly what killed them instead of staring at a blank board.
+      this.pendingOutcome = 'defeat';
+      return;
+    }
+
+    if (this.players.every((p) => p.hp <= 0)) {
+      // Total party wipe is a loss in its own right, not a spectator mode:
+      // without this, a dead squad could idle out the wave clock and still
+      // "win" any level whose monsters only hunt players. Same freeze-then-
+      // confirmOutcome() flow as the base-death branch above — the wiping
+      // turn stays on screen, intents included, until the player confirms.
       this.pendingOutcome = 'defeat';
       return;
     }
@@ -929,15 +949,17 @@ export class BattleEngine {
    * The actual damage amount for `effect` against a target currently at
    * `currentHp`. Flat damage just returns `effect.amount`; percent damage
    * (amountIsPercent) reinterprets `amount` as a 0-100 percentage of the
-   * target's CURRENT hp, floored, with a floor of 1 — a percent-damage skill
-   * should never fizzle to a 0-damage hit purely from rounding down while
-   * still spending the caster's AP; dealing a guaranteed minimum tick is the
-   * less absurd outcome. Only `damage` effects ever set amountIsPercent
-   * (format.ts rejects it on other effect types), so this is only called
-   * from damage-effect code paths.
+   * target's CURRENT hp, floored — floored all the way to a 0-damage fizzle
+   * when the target is small enough. Deliberate (reversing the old minimum-1
+   * rule): percent damage is a chip tool for big targets, not an execute —
+   * a guaranteed 1 turned every whole-map percent Ultimate into a free
+   * finisher on 1-2 HP tutorial monsters, bypassing the lesson those levels
+   * teach. Only `damage` effects ever set amountIsPercent (format.ts rejects
+   * it on other effect types), so this is only called from damage-effect
+   * code paths.
    */
   private effectAmount(effect: EffectPrimitive, currentHp: number): number {
-    if (effect.amountIsPercent) return Math.max(1, Math.floor((currentHp * effect.amount) / 100));
+    if (effect.amountIsPercent) return Math.floor((currentHp * effect.amount) / 100);
     return effect.amount;
   }
 
@@ -970,10 +992,15 @@ export class BattleEngine {
         if (distance > 0) this.pendingEvents.push({ kind: 'push', target: combatTarget, distance });
         break;
       }
-      case 'shield':
-        unit.shield += effect.amount;
-        this.pendingEvents.push({ kind: 'shield', target: combatTarget, amount: effect.amount });
+      case 'shield': {
+        const before = unit.shield;
+        unit.shield = Math.min(SHIELD_STACK_CAP, unit.shield + effect.amount);
+        const gained = unit.shield - before;
+        // Only report charges actually gained — a cast that hits the cap
+        // shows the real (possibly zero) gain, not the nominal amount.
+        if (gained > 0) this.pendingEvents.push({ kind: 'shield', target: combatTarget, amount: gained });
         break;
+      }
       case 'heal': {
         const before = unit.hp;
         unit.hp = Math.min(unit.maxHp, unit.hp + effect.amount);
