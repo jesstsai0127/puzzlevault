@@ -110,6 +110,9 @@ export class BattleScene extends Phaser.Scene {
   private selectionRing!: Phaser.GameObjects.Rectangle;
   private baseHpText?: Phaser.GameObjects.Text;
   private rulesPanelText!: Phaser.GameObjects.Text;
+  private rulesPanelContainer!: Phaser.GameObjects.Container;
+  private rulesPanelBounds = { x: 0, y: 0, width: 0, height: 0 };
+  private rulesPanelMaxScroll = 0;
 
   private hudText!: Phaser.GameObjects.Text;
   private instructionText!: Phaser.GameObjects.Text;
@@ -242,17 +245,7 @@ export class BattleScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    this.rulesPanelText = this.add.text(this.offsetX + this.map.grid[0].length * TILE + 20, this.offsetY, '', {
-      fontFamily: 'monospace',
-      fontSize: '13px',
-      color: '#c9c9d6',
-      // useAdvancedWrap is required for CJK text: Phaser's wordWrap only ever
-      // breaks on whitespace by default, and Chinese sentences have none —
-      // without it, a long line silently overflows the box width instead of
-      // wrapping, which reads as "text got clipped" at the panel's right edge.
-      wordWrap: { width: this.scale.width - (this.offsetX + this.map.grid[0].length * TILE) - 40, useAdvancedWrap: true },
-      lineSpacing: 4,
-    });
+    this.buildRulesPanel();
 
     this.buildBottomButtons();
     this.buildOutcomeOverlay();
@@ -343,6 +336,66 @@ export class BattleScene extends Phaser.Scene {
       .setOrigin(0.5);
     bg.on('pointerdown', onClick);
     return { bg, label };
+  }
+
+  /**
+   * The rules panel's content grows with a map's hintKey plus the live
+   * status block appended every render() call, and the design canvas is a
+   * fixed 1200x720 — a canvas has no native scrolling, so text that outgrows
+   * the panel's box used to just render past the bottom edge of the canvas
+   * and become permanently invisible (no amount of page-scrolling helps,
+   * since it's not DOM content). Fix: mask the panel to a fixed rectangle
+   * that stops short of the bottom button bar, and let the mouse wheel pan
+   * the text within it.
+   */
+  private buildRulesPanel() {
+    const panelX = this.offsetX + this.map.grid[0].length * TILE + 20;
+    const panelY = this.offsetY;
+    const panelWidth = this.scale.width - panelX - 20;
+    // Stops above the bottom button bar (barY = scale.height - 92) with a
+    // gap so the panel's mask edge never visually collides with it.
+    const panelHeight = this.scale.height - 92 - 20 - panelY;
+    this.rulesPanelBounds = { x: panelX, y: panelY, width: panelWidth, height: panelHeight };
+
+    this.rulesPanelText = this.add.text(0, 0, '', {
+      fontFamily: 'monospace',
+      fontSize: '13px',
+      color: '#c9c9d6',
+      // useAdvancedWrap is required for CJK text: Phaser's wordWrap only ever
+      // breaks on whitespace by default, and Chinese sentences have none —
+      // without it, a long line silently overflows the box width instead of
+      // wrapping, which reads as "text got clipped" at the panel's right edge.
+      wordWrap: { width: panelWidth - 20, useAdvancedWrap: true },
+      lineSpacing: 4,
+    });
+
+    this.rulesPanelContainer = this.add.container(panelX, panelY, [this.rulesPanelText]);
+
+    // A graphics object used purely as a mask shape — created with add:false
+    // so it never itself renders (a visible mask shape would paint an extra
+    // rectangle on top of the panel).
+    const maskShape = this.make.graphics({ x: 0, y: 0 }, false);
+    maskShape.fillStyle(0xffffff);
+    maskShape.fillRect(panelX, panelY, panelWidth, panelHeight);
+    this.rulesPanelContainer.setMask(maskShape.createGeometryMask());
+
+    // Faint scroll hint so a player with overflowing content (a lesson-level
+    // hint pushes the panel past one screen) knows scrolling is possible
+    // instead of assuming the text is simply cut off.
+    this.add
+      .text(panelX + panelWidth - 4, panelY - 18, '↕ 滾輪捲動', {
+        fontFamily: 'monospace',
+        fontSize: '11px',
+        color: '#6a6a78',
+      })
+      .setOrigin(1, 0);
+
+    this.input.on('wheel', (pointer: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) => {
+      const b = this.rulesPanelBounds;
+      if (pointer.x < b.x || pointer.x > b.x + b.width || pointer.y < b.y || pointer.y > b.y + b.height) return;
+      const nextY = Phaser.Math.Clamp(this.rulesPanelText.y - dy * 0.6, -this.rulesPanelMaxScroll, 0);
+      this.rulesPanelText.y = nextY;
+    });
   }
 
   private buildBottomButtons() {
@@ -1153,6 +1206,12 @@ export class BattleScene extends Phaser.Scene {
     // hintKey at all and this block is simply skipped for them.
     const hintBlock = this.map.hintKey ? `\n\n【本關提示】\n${i18n.t(this.map.hintKey)}` : '';
     this.rulesPanelText.setText(`${RULES_PANEL_STATIC}${hintBlock}\n\n${liveStatus}`);
+    // Content height changes every render (live status ticks each turn) —
+    // reclamp so a previously-scrolled position doesn't leave blank space
+    // dangling below the text once it shrinks, and so newly-overflowing
+    // content becomes scrollable the instant it exceeds the panel height.
+    this.rulesPanelMaxScroll = Math.max(0, this.rulesPanelText.height - this.rulesPanelBounds.height);
+    this.rulesPanelText.y = Phaser.Math.Clamp(this.rulesPanelText.y, -this.rulesPanelMaxScroll, 0);
 
     const OUTCOME_KEY: Record<RunOutcome, string> = {
       defeat: 'ui.outcome_defeat',
