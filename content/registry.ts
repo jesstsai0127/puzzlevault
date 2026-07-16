@@ -15,6 +15,10 @@ import minorHeal from './skills/minor_heal.json';
 import majorHeal from './skills/major_heal.json';
 import heavyShield from './skills/heavy_shield.json';
 import tauntSkill from './skills/taunt.json';
+import swordTempest from './skills/sword_tempest.json';
+import swordRampage from './skills/sword_rampage.json';
+import roaringShockwave from './skills/roaring_shockwave.json';
+import springRain from './skills/spring_rain.json';
 
 import liYan from './characters/li_yan.json';
 import suQing from './characters/su_qing.json';
@@ -61,6 +65,10 @@ const skills = [
   majorHeal,
   heavyShield,
   tauntSkill,
+  swordTempest,
+  swordRampage,
+  roaringShockwave,
+  springRain,
 ].map(parseSkillDef);
 const characters = [liYan, suQing, baiZhi, lingEr].map(parseCharacterDef);
 const monsters = [yinGhost, jiangshi, yuanLing, tengYao, yaoLang].map(parseMonsterDef);
