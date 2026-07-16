@@ -1,6 +1,8 @@
-# ITB 化第一批:行動經濟轉換方案(2026-07-16 草案,待確認後動工)
+# ITB 化第一批:行動經濟轉換方案(2026-07-16 定案)
 
 依 `itb-alignment-spec.md` A1/A7/A8。目標:AP 共用池 → 每單位「移動+一個動作」。
+
+**總策略(使用者 2026-07-16 定案)**:玩法與規則**先做到跟 ITB 完全一樣**,之後再迭代我們自己的優化版本。對齊期間自製疊加內容(大絕系統)先下架不刪(程式碼保留、UI 隱藏),優化迭代階段再重新開啟並重驗。
 
 ## 核心規則(轉換後)
 
@@ -15,7 +17,7 @@
 |---|---|
 | `CharacterDef.actionPoints: 4` | 改為 `moveRange`。換算:現行 4 AP 扣掉平均技能費 1~2 點,實際移動力約 2~3 → 全員預設 `moveRange: 3`(ITB 機甲典型 3~4),坦克靈兒 2、遠程蘇晴 4,做出差異化 |
 | `SkillDef.mpCost` | 移除。所有技能同價:一個動作。原本的費用差(排雲掌 1 vs 劍氣斬 2)轉化為效果差,平衡在內容重驗批處理 |
-| 大絕 `mpCost = 滿額 AP` | 移除。大絕=一個動作+每關一次鎖(既有 `ultimateUsed` 不變),「用大絕的代價」由每關一次承擔 |
+| 大絕 `mpCost = 滿額 AP` | 對齊期整個大絕系統下架:UI 按鈕隱藏、引擎邏輯與 `ultimateUsed` 保留不刪。優化迭代階段重新開啟時,大絕=一個動作+每關一次鎖 |
 | `PlayerUnitState.ap/maxAp` | 改為 `moved: boolean`、`acted: boolean`(每回合開始重置) |
 | 新增 | 「調息」內建動作:自癒 1,不需技能定義,人人可用(ITB 修理) |
 
@@ -24,7 +26,7 @@
 - `moveUnit()`:整段路徑一次提交(UI 點目的格),檢查 `!moved && !acted`,BFS 距離 ≤ moveRange;成功後 `moved = true`。機會攻擊邏輯**整段移除**(A7 已定案)。
 - `useSkill()`:檢查 `!acted`(移動過沒關係);成功後 `acted = true`。
 - 新增 `rest()`(調息):同 `useSkill` 的門檻,自癒 1(上限 maxHp),`acted = true`。
-- `resetTurn()`:加每關 1 次限制(`resetTurnUsed`,存關卡層,`resetLevel()` 才清)。undo 單步(pushHistory 快照機制)不受限——ITB 的限制對象是「整回合重置」;若要更嚴格連 undo 都算,在內容重驗批依實測再議。
+- `resetTurn()`:加每關 1 次限制(`resetTurnUsed`,存關卡層,`resetLevel()` 才清)。**單步 undo 一併移除**(ITB 沒有單步 undo;「先做到一樣」原則,2026-07-16 定案)——pushHistory 快照機制保留(回合重置仍需要它),只拿掉 UI 的 undo 入口與對應快捷鍵。
 - `startFreshTurn()`:重置全員 `moved/acted`。
 
 ## UI 層改動(BattleScene.ts)
