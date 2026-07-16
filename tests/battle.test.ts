@@ -2299,14 +2299,19 @@ describe('BattleEngine: shield stacking cap', () => {
     waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }],
   });
 
-  it('+1 shield stacks to 2 but a third cast does not push it past the cap (and reports no gain)', () => {
+  it('+1 shield stacks to 2 but a third cast does not push it past the cap (and reports zero gain)', () => {
     const engine = new BattleEngine(farMap(), ['shield_caster'], capRegistry);
     engine.useSkill(0, 'shield_skill', 'down');
     engine.useSkill(0, 'shield_skill', 'down');
     expect(engine.getSnapshot().players[0].shield).toBe(2);
-    engine.useSkill(0, 'shield_skill', 'down'); // at the cap — wasted AP, no gain
+    engine.useSkill(0, 'shield_skill', 'down'); // at the cap — wasted cast, zero gain
     expect(engine.getSnapshot().players[0].shield).toBe(2);
-    expect(engine.getLastEvents()).toEqual([]); // zero charges gained -> no shield event to show
+    // A zero-gain event still fires so the UI can show "no effect" — the
+    // cast spent the player's resources, and a silent no-op reads as a
+    // dropped click (same rationale as the percent-damage fizzle event).
+    expect(engine.getLastEvents()).toEqual([
+      { kind: 'shield', target: { kind: 'player', unitIndex: 0 }, amount: 0 },
+    ]);
   });
 
   it('+2 shield lands exactly at the cap in one cast; the event reports only the charges actually gained', () => {
