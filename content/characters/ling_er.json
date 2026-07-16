@@ -4,7 +4,7 @@
   "nameKey": "character.ling_er.name",
   "spriteRef": "char_ling_er",
   "maxHp": 9,
-  "actionPoints": 4,
+  "moveRange": 2,
   "skillIds": ["heavy_shield", "taunt"],
   "ultimateSkillId": "roaring_shockwave"
 }
