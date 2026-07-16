@@ -4,7 +4,7 @@
   "nameKey": "character.bai_zhi.name",
   "spriteRef": "char_bai_zhi",
   "maxHp": 5,
-  "actionPoints": 4,
+  "moveRange": 3,
   "skillIds": ["minor_heal", "major_heal"],
   "ultimateSkillId": "spring_rain"
 }
