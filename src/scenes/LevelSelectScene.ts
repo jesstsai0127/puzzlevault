@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { maps, LESSON_MAP_IDS, LEVEL_GROUPS } from '../../content/registry';
+import { maps, WORLD_STRUCTURE, LEVEL_GROUPS } from '../../content/registry';
 import { MAP_QUERY_PARAM } from './levelNav';
 
 const i18n = new I18n(en, zhTW);
@@ -12,6 +12,17 @@ const i18n = new I18n(en, zhTW);
  * design/roadmap.md ch.5. This screen exists so different playtesters can be
  * pointed at different levels without a build swap, and so their feedback on
  * one mechanic doesn't tangle with feedback on another.
+ *
+ * World-structure batch: levels are grouped by WORLD_STRUCTURE (content/
+ * registry.ts) into "World N" blocks — lesson level(s) first, that world's
+ * finale last — instead of the old flat "all lessons, then all demos" split.
+ * LEVEL_GROUPS (demo1's easy/normal/hard tier buttons) still layers on top
+ * of whichever WORLD_STRUCTURE entry is that group's `normal` map; see the
+ * per-level rendering below for how the two combine without regressing the
+ * "four buttons for one map" bug fixed in commit 5bc5427 (grouped maps'
+ * main row must NOT also be independently clickable, or demo1 ends up with
+ * a generic button AND a redundant "normal" tier button both going to the
+ * same place).
  *
  * Navigation between this screen and BattleScene goes through a real page
  * load (see levelNav.ts) rather than Phaser's scene.start() — Phaser's
@@ -30,9 +41,9 @@ export class LevelSelectScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#14141a');
 
     this.add
-      .text(this.scale.width / 2, 100, i18n.t('ui.select_level'), {
+      .text(this.scale.width / 2, 40, i18n.t('ui.select_level'), {
         fontFamily: 'monospace',
-        fontSize: '32px',
+        fontSize: '26px',
         color: '#f1f1f6',
       })
       .setOrigin(0.5);
@@ -43,103 +54,97 @@ export class LevelSelectScene extends Phaser.Scene {
       window.location.href = url.toString();
     };
 
-    // Lesson levels (LESSON_MAP_IDS, content/registry.ts) are listed first —
-    // they're the suggested starting point, not a gate: every demo map below
-    // is always clickable too, nothing here is locked/unlocked. Each lesson
-    // is a real, playable MapDef (see registry.ts) — clicking one goes
-    // straight into a real, winnable/losable battle, same as any other level;
-    // a distinct fill color + "【小關】" prefix is the only thing that tells
-    // them apart from a finale-style demo map in this list.
-    LESSON_MAP_IDS.forEach((lessonId, i) => {
-      const lesson = maps[lessonId];
-      const y = 220 + i * 70;
-      const bg = this.add
-        .rectangle(this.scale.width / 2, y, 360, 50, 0x1f3a2e)
-        .setStrokeStyle(1, 0x2e5a44)
-        .setInteractive({ useHandCursor: true });
-      const label = this.add
-        .text(this.scale.width / 2, y, `${i18n.t('ui.lesson_label')} ${i18n.t(lesson.nameKey)}`, {
-          fontFamily: 'monospace',
-          fontSize: '18px',
-          color: '#8fe3b0',
-        })
-        .setOrigin(0.5);
-      bg.on('pointerover', () => bg.setFillStyle(0x2e5a44));
-      bg.on('pointerout', () => bg.setFillStyle(0x1f3a2e));
-      bg.on('pointerdown', () => goToMap(lessonId));
-      label.setDepth(1);
-    });
-
-    // Difficulty tiers (LEVEL_GROUPS, content/registry.ts) are a pure
-    // selection-screen grouping on top of `maps` — the easy/hard mapIds they
-    // reference are real entries in `maps` (so autoplay-harness etc. can
-    // still address them directly by id) but must NOT also get their own
-    // top-level row here, or demo1's three difficulty variants would show up
-    // as four confusing entries (one generic + three tiered). Hide them from
-    // the normal per-map loop below; the group's own row (rendered right
-    // after) is what surfaces them. Lesson maps already got their own row
-    // above, so they're excluded here too.
-    const tieredMapIds = new Set(LEVEL_GROUPS.flatMap((g) => [g.easy, g.hard].filter((id): id is string => !!id)));
-    const lessonMapIds = new Set(LESSON_MAP_IDS);
-    const mapIds = Object.keys(maps).filter((id) => !tieredMapIds.has(id) && !lessonMapIds.has(id));
+    // A grouped map's own easy/normal/hard tier buttons (rendered per-level
+    // below) are the only way to reach it — see the "four buttons" note
+    // above. Today only demo1 (WORLD_STRUCTURE's 1-4) has a LEVEL_GROUPS
+    // entry; demo2/3/4 and every lesson level render as a single plain row.
     const groupByNormalMapId = new Map(LEVEL_GROUPS.map((g) => [g.normal, g]));
 
-    mapIds.forEach((mapId, i) => {
-      const map = maps[mapId];
-      const y = 220 + (LESSON_MAP_IDS.length + i) * 70;
-      const group = groupByNormalMapId.get(mapId);
+    const ROW_H = 36;
+    const HEADER_H = 22;
+    const WORLD_GAP = 8;
+    let y = 80;
 
-      // A grouped map's "normal" difficulty is already a clickable tier
-      // button (rendered below) — the main row here is just a label for
-      // grouped maps, not a second, redundant button for the same map.
-      // Ungrouped maps (demo2/3/4) behave exactly as before: the whole row
-      // is the one and only button.
-      const bg = this.add.rectangle(this.scale.width / 2, y, 360, 50, 0x2a2a35).setStrokeStyle(1, 0x3a3a46);
-      const label = this.add
-        .text(this.scale.width / 2, y, `${mapId} — ${i18n.t(map.nameKey)}`, {
+    for (const world of WORLD_STRUCTURE) {
+      this.add
+        .text(this.scale.width / 2, y, i18n.t(world.worldNameKey), {
           fontFamily: 'monospace',
-          fontSize: '18px',
-          color: '#f1f1f6',
+          fontSize: '17px',
+          color: '#c9c9d6',
         })
         .setOrigin(0.5);
-      label.setDepth(1);
+      y += HEADER_H;
 
-      if (!group) {
-        bg.setInteractive({ useHandCursor: true });
-        bg.on('pointerover', () => bg.setFillStyle(0x3a3a46));
-        bg.on('pointerout', () => bg.setFillStyle(0x2a2a35));
-        bg.on('pointerdown', () => goToMap(mapId));
-        return;
-      }
+      for (const level of world.levels) {
+        const map = maps[level.mapId];
+        const group = groupByNormalMapId.get(level.mapId);
+        const rowY = y;
 
-      // Difficulty-tier buttons: small, color-coded, stacked to the right of
-      // the main row so demo1's easy/normal/hard choice reads as one level
-      // with three doors, not three separate levels.
-      const tierX = this.scale.width / 2 + 260;
-      const tiers: { key: 'easy' | 'normal' | 'hard'; mapId?: string; color: number; hoverColor: number }[] = [
-        { key: 'easy', mapId: group.easy, color: 0x1f3a2e, hoverColor: 0x2e5a44 },
-        { key: 'normal', mapId: group.normal, color: 0x2a2a35, hoverColor: 0x3a3a46 },
-        { key: 'hard', mapId: group.hard, color: 0x3a1f1f, hoverColor: 0x5a2e2e },
-      ];
-      tiers.forEach((tier, ti) => {
-        if (!tier.mapId) return;
-        const tx = tierX + ti * 90;
-        const tierBg = this.add
-          .rectangle(tx, y, 80, 50, tier.color)
-          .setStrokeStyle(1, tier.hoverColor)
-          .setInteractive({ useHandCursor: true });
-        const tierLabel = this.add
-          .text(tx, y, i18n.t(`ui.difficulty_${tier.key}`), {
+        // Small-lesson visual treatment (green tint + 【小關】 prefix) is the
+        // same visual language LESSON_MAP_IDS levels already use — carried
+        // over here via WorldLevelEntry.isLesson so a world's finale (the
+        // one isLesson:false entry, always last) still reads as the "real"
+        // battle at the end of the world.
+        const baseColor = level.isLesson ? 0x1f3a2e : 0x2a2a35;
+        const hoverColor = level.isLesson ? 0x2e5a44 : 0x3a3a46;
+        const textColor = level.isLesson ? '#8fe3b0' : '#f1f1f6';
+        const labelText = level.isLesson
+          ? `${level.label} ${i18n.t('ui.lesson_label')} ${i18n.t(map.nameKey)}`
+          : `${level.label} ${i18n.t(map.nameKey)}`;
+
+        const bg = this.add.rectangle(this.scale.width / 2, rowY, 340, ROW_H - 4, baseColor).setStrokeStyle(1, hoverColor);
+        const label = this.add
+          .text(this.scale.width / 2, rowY, labelText, {
             fontFamily: 'monospace',
             fontSize: '14px',
-            color: '#f1f1f6',
+            color: textColor,
           })
           .setOrigin(0.5);
-        tierBg.on('pointerover', () => tierBg.setFillStyle(tier.hoverColor));
-        tierBg.on('pointerout', () => tierBg.setFillStyle(tier.color));
-        tierBg.on('pointerdown', () => goToMap(tier.mapId!));
-        tierLabel.setDepth(1);
-      });
-    });
+        label.setDepth(1);
+
+        if (!group) {
+          bg.setInteractive({ useHandCursor: true });
+          bg.on('pointerover', () => bg.setFillStyle(hoverColor));
+          bg.on('pointerout', () => bg.setFillStyle(baseColor));
+          bg.on('pointerdown', () => goToMap(level.mapId));
+        } else {
+          // Grouped map (today: only demo1 / WORLD_STRUCTURE's 1-4) — the
+          // main row above stays a non-interactive label; its own tier
+          // buttons here are the only way to reach it. Same fix as commit
+          // 5bc5427 ("grouped maps no longer show a redundant fourth
+          // button"): making the main row ALSO clickable here would put
+          // both a generic button and a "normal" tier button on the same
+          // map again.
+          const tierX = this.scale.width / 2 + 230;
+          const tiers: { key: 'easy' | 'normal' | 'hard'; mapId?: string; color: number; hoverColor: number }[] = [
+            { key: 'easy', mapId: group.easy, color: 0x1f3a2e, hoverColor: 0x2e5a44 },
+            { key: 'normal', mapId: group.normal, color: 0x2a2a35, hoverColor: 0x3a3a46 },
+            { key: 'hard', mapId: group.hard, color: 0x3a1f1f, hoverColor: 0x5a2e2e },
+          ];
+          tiers.forEach((tier, ti) => {
+            if (!tier.mapId) return;
+            const tx = tierX + ti * 80;
+            const tierBg = this.add
+              .rectangle(tx, rowY, 72, ROW_H - 4, tier.color)
+              .setStrokeStyle(1, tier.hoverColor)
+              .setInteractive({ useHandCursor: true });
+            const tierLabel = this.add
+              .text(tx, rowY, i18n.t(`ui.difficulty_${tier.key}`), {
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: '#f1f1f6',
+              })
+              .setOrigin(0.5);
+            tierBg.on('pointerover', () => tierBg.setFillStyle(tier.hoverColor));
+            tierBg.on('pointerout', () => tierBg.setFillStyle(tier.color));
+            tierBg.on('pointerdown', () => goToMap(tier.mapId!));
+            tierLabel.setDepth(1);
+          });
+        }
+
+        y += ROW_H;
+      }
+      y += WORLD_GAP;
+    }
   }
 }
