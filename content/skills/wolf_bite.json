@@ -4,6 +4,5 @@
   "nameKey": "skill.wolf_bite.name",
   "descKey": "skill.wolf_bite.desc",
   "range": 1,
-  "mpCost": 2,
   "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
 }
