@@ -185,7 +185,7 @@ export class BattleEngine {
     const skill = skillId ? this.registry.skills[skillId] : undefined;
     if (!skill) return;
     for (const effect of skill.effects) {
-      if (effect.type === 'damage') this.dealDamageWithEvent(target, effect.amount);
+      if (effect.type === 'damage') this.dealDamageWithEvent(target, this.effectAmount(effect, target.hp));
     }
   }
 
@@ -202,8 +202,15 @@ export class BattleEngine {
     this.pushHistory();
     const dirVec = MOVE_VECTORS[dir];
     for (const effect of skill.effects) {
-      const target = this.resolveTarget(unit.position, dirVec, skill.range, effect.target, true, effect.type === 'heal');
-      this.applyEffect(effect, target, unit);
+      // `dir` is required by this method's signature for every skill, even
+      // ones whose target mode doesn't need a direction (aoeCross/aoeRing/
+      // allEnemies/allUnits) — resolveTargets() simply ignores dirVec for
+      // those modes. Keeping useSkill's signature unchanged (rather than
+      // making dir optional) is the smallest change that supports the new
+      // modes; a caller casting a directionless skill can pass any
+      // CardinalDir as a meaningless-but-format-valid placeholder.
+      const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, effect.type === 'heal');
+      for (const target of targets) this.applyEffect(effect, target, unit);
     }
     unit.ap -= skill.mpCost;
     return { ok: true };
@@ -264,8 +271,8 @@ export class BattleEngine {
         if (!skill) continue;
         const dirVec = MOVE_VECTORS[intent.direction];
         for (const effect of skill.effects) {
-          const target = this.resolveTarget(monster.position, dirVec, skill.range, effect.target, false, effect.type === 'heal');
-          this.applyEffect(effect, target, monster);
+          const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, effect.type === 'heal');
+          for (const target of targets) this.applyEffect(effect, target, monster);
         }
       }
     }
@@ -605,24 +612,29 @@ export class BattleEngine {
       const dirVec = MOVE_VECTORS[intent.direction];
       for (const effect of skill.effects) {
         if (effect.type !== 'damage') continue;
-        const target = this.resolveTarget(monster.position, dirVec, skill.range, effect.target, false);
-        if (!target || target.kind === 'self') continue; // a monster hitting itself isn't a player-facing threat preview
-        if (target.kind === 'base') {
-          addPreview({ kind: 'base' }, effect.amount); // push/shield/heal are no-ops on the base — nothing to block
-          continue;
+        const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target);
+        for (const target of targets) {
+          if (target.kind === 'self') continue; // a monster hitting itself isn't a player-facing threat preview
+          if (target.kind === 'base') {
+            // push/shield/heal are no-ops on the base — nothing to block. Percent damage is
+            // read off the base's own current hp, same rule as effectAmount() uses for units.
+            addPreview({ kind: 'base' }, this.effectAmount(effect, this.baseHp));
+            continue;
+          }
+          const previewTarget: CombatTarget =
+            target.kind === 'player'
+              ? { kind: 'player', unitIndex: this.players.indexOf(target.unit) }
+              : { kind: 'monster', instanceId: target.unit.instanceId };
+          const key = targetKey(previewTarget);
+          if (!shieldRemaining.has(key)) shieldRemaining.set(key, target.unit.shield);
+          const remaining = shieldRemaining.get(key)!;
+          const amount = this.effectAmount(effect, target.unit.hp);
+          if (remaining > 0) {
+            shieldRemaining.set(key, remaining - 1); // this hit is fully blocked, consumes a charge
+            continue;
+          }
+          addPreview(previewTarget, amount);
         }
-        const previewTarget: CombatTarget =
-          target.kind === 'player'
-            ? { kind: 'player', unitIndex: this.players.indexOf(target.unit) }
-            : { kind: 'monster', instanceId: target.unit.instanceId };
-        const key = targetKey(previewTarget);
-        if (!shieldRemaining.has(key)) shieldRemaining.set(key, target.unit.shield);
-        const remaining = shieldRemaining.get(key)!;
-        if (remaining > 0) {
-          shieldRemaining.set(key, remaining - 1); // this hit is fully blocked, consumes a charge
-          continue;
-        }
-        addPreview(previewTarget, effect.amount);
       }
     }
     return previews;
@@ -730,60 +742,186 @@ export class BattleEngine {
   // Effect resolution
   // ---------------------------------------------------------------------
 
+  /** Whether `unit` is a monster — the same 'instanceId' narrowing combatTargetFor()/the taunt case already rely on. */
+  private isMonster(unit: PlayerUnitState | MonsterUnitState): unit is MonsterUnitState {
+    return 'instanceId' in unit;
+  }
+
+  /** A single relative-offset AOE shape: 4 orthogonal neighbors, no direction needed — see TargetMode 'aoeCross'. */
+  private static readonly CROSS_OFFSETS: Vec2[] = [
+    { x: 0, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 },
+  ];
+
+  /** All 8 neighbors (orthogonal + diagonal), no direction needed — see TargetMode 'aoeRing'. */
+  private static readonly RING_OFFSETS: Vec2[] = [
+    { x: 0, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 },
+    { x: -1, y: -1 },
+    { x: 1, y: -1 },
+    { x: -1, y: 1 },
+    { x: 1, y: 1 },
+  ];
+
+  /** The live unit of the requested side standing on tile `p`, if any (dead units never match). */
+  private liveUnitAt(p: Vec2, wantPlayer: boolean): PlayerUnitState | MonsterUnitState | undefined {
+    return wantPlayer
+      ? this.players.find((x) => x.hp > 0 && equalsVec2(x.position, p))
+      : this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
+  }
+
+  /** Wraps a found unit as a ResolvedTarget of the matching kind. */
+  private wrapTarget(unit: PlayerUnitState | MonsterUnitState): ResolvedTarget {
+    return this.isMonster(unit) ? { kind: 'monster', unit } : { kind: 'player', unit };
+  }
+
   /**
-   * `targetsAllies` flips WHICH side's units this ray can land on — false
-   * (damage/push/shield's usual case) means a player's shot only ever finds
-   * a monster and a monster's shot only ever finds a player, same as before;
-   * true (heal) means a player's cast only ever finds a fellow player and a
-   * monster's cast only ever finds a fellow monster. applyEffect()'s heal
-   * case has no ally/enemy check of its own — this is the one place that
-   * decides who a heal can legally land on, so a healer can never be aimed
-   * at a monster (see computeTargetable() in BattleScene for the matching UI
-   * restriction that keeps the player from even trying).
+   * Resolves every tile/unit a single effect actually lands on, for every
+   * TargetMode. Returns 0-to-many targets (`self`/no-hit cases in the old
+   * single-target `firstInLine` now come back as a 1- or 0-length array
+   * instead of a value / null — callers loop over the result either way, so
+   * behavior for those two modes is unchanged).
+   *
+   * `targetsAllies` flips WHICH side's units a directional/mixed-side ray or
+   * area can land on — false (damage/push/shield's usual case) means a
+   * player's cast only ever finds monsters and a monster's cast only ever
+   * finds players, same as before; true (heal) means a player's cast only
+   * ever finds fellow players and a monster's cast only ever finds fellow
+   * monsters. applyEffect()'s heal case has no ally/enemy check of its own —
+   * this is the one place that decides who a heal can legally land on (see
+   * computeTargetable() in BattleScene for the matching UI restriction).
+   * This flag only affects the "mixed crowd" modes (firstInLine, pierceLine,
+   * aoeCross, aoeRing, aoeArc3) — the two whole-map modes below hardcode
+   * their own side rules and ignore it entirely.
    */
-  private resolveTarget(
-    casterPos: Vec2,
+  private resolveTargets(
+    caster: PlayerUnitState | MonsterUnitState,
     dir: Vec2,
     range: number,
     mode: TargetMode,
-    casterIsPlayer: boolean,
     targetsAllies = false,
-  ): ResolvedTarget | null {
-    if (mode === 'self') return { kind: 'self' };
+  ): ResolvedTarget[] {
+    if (mode === 'self') return [{ kind: 'self' }];
+
+    const casterIsPlayer = !this.isMonster(caster);
+    const casterPos = caster.position;
+
+    // allEnemies: literally every living monster on the map, full stop — not
+    // "the caster's enemies" in the abstract (there's no monster-cast use of
+    // this in the current content, but the engine stays symmetric rather
+    // than special-casing caster side here).
+    if (mode === 'allEnemies') {
+      return this.monsters.filter((m) => m.hp > 0).map((m) => ({ kind: 'monster', unit: m }) as ResolvedTarget);
+    }
+
+    // allUnits: every living unit, both sides, EXCLUDING the caster itself —
+    // confirmed assumption (see TargetMode doc comment in content/types.ts):
+    // a self-sacrifice cast already pays its own cost, so the skill itself
+    // shouldn't additionally hit its own caster. Identity is checked by
+    // object reference since `caster` is always the same array element
+    // living in this.players/this.monsters.
+    if (mode === 'allUnits') {
+      const targets: ResolvedTarget[] = [];
+      for (const p of this.players) {
+        if (p.hp > 0 && p !== caster) targets.push({ kind: 'player', unit: p });
+      }
+      for (const m of this.monsters) {
+        if (m.hp > 0 && m !== caster) targets.push({ kind: 'monster', unit: m });
+      }
+      return targets;
+    }
 
     const searchPlayers = targetsAllies ? casterIsPlayer : !casterIsPlayer;
+
+    // Point-blank area shapes around the caster — no line of sight check
+    // (they're adjacent tiles, not a projectile), no direction needed.
+    if (mode === 'aoeCross' || mode === 'aoeRing') {
+      const offsets = mode === 'aoeCross' ? BattleEngine.CROSS_OFFSETS : BattleEngine.RING_OFFSETS;
+      const targets: ResolvedTarget[] = [];
+      for (const offset of offsets) {
+        const unit = this.liveUnitAt(add(casterPos, offset), searchPlayers);
+        if (unit) targets.push(this.wrapTarget(unit));
+      }
+      return targets;
+    }
+
+    // aoeArc3: a 3-tile fan one step ahead of the caster in the aimed
+    // direction — the forward cell, plus that same forward cell shifted one
+    // tile left and one tile right (perpendicular to the aim), forming a
+    // short row/column of 3 cells facing the caster. E.g. aiming 'up' hits
+    // (cx-1,cy-1), (cx,cy-1), (cx+1,cy-1); aiming 'right' hits (cx+1,cy-1),
+    // (cx+1,cy), (cx+1,cy+1). No line-of-sight check, same as the other AOE
+    // shapes — it's a melee-range fan, not a projectile.
+    if (mode === 'aoeArc3') {
+      const forward = add(casterPos, dir);
+      const perp: Vec2 = dir.x === 0 ? { x: 1, y: 0 } : { x: 0, y: 1 };
+      const cells = [forward, add(forward, perp), add(forward, { x: -perp.x, y: -perp.y })];
+      const targets: ResolvedTarget[] = [];
+      for (const cell of cells) {
+        const unit = this.liveUnitAt(cell, searchPlayers);
+        if (unit) targets.push(this.wrapTarget(unit));
+      }
+      return targets;
+    }
+
+    // firstInLine / pierceLine: scan the aimed direction tile by tile.
+    // Line of sight is only blocked by a real wall or the base tile — both
+    // fly over hazard AND poison-mist tiles. firstInLine stops (returns)
+    // the instant it finds a target OR anything blocking; pierceLine keeps
+    // scanning past a found target (collecting every hit within range) but
+    // still stops dead at a wall/base, same as firstInLine — it pierces
+    // *targets*, not terrain.
+    const targets: ResolvedTarget[] = [];
     for (let step = 1; step <= range; step++) {
       const p = add(casterPos, { x: dir.x * step, y: dir.y * step });
-      // A monster's shot reaching its own base tile hits the base; a
-      // player's shot never targets the base — it just stops there instead.
-      // A heal ray never targets the base either (nothing to apply there).
       if (this.isBaseTile(p)) {
-        return casterIsPlayer || targetsAllies ? null : { kind: 'base' };
+        // A monster's shot reaching its own base tile hits the base; a
+        // player's shot (or any heal) never targets the base — it just
+        // stops there instead. Either way the base blocks further travel.
+        if (!casterIsPlayer && !targetsAllies) targets.push({ kind: 'base' });
+        break;
       }
-      // A shot's line of sight is only blocked by real walls — it flies over hazard AND poison-mist tiles.
-      if (this.isWall(p)) return null;
-      if (searchPlayers) {
-        const pl = this.players.find((x) => x.hp > 0 && equalsVec2(x.position, p));
-        if (pl) return { kind: 'player', unit: pl };
-      } else {
-        const m = this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
-        if (m) return { kind: 'monster', unit: m };
+      if (this.isWall(p)) break;
+      const unit = this.liveUnitAt(p, searchPlayers);
+      if (unit) {
+        targets.push(this.wrapTarget(unit));
+        if (mode === 'firstInLine') break;
       }
     }
-    return null;
+    return targets;
+  }
+
+  /**
+   * The actual damage amount for `effect` against a target currently at
+   * `currentHp`. Flat damage just returns `effect.amount`; percent damage
+   * (amountIsPercent) reinterprets `amount` as a 0-100 percentage of the
+   * target's CURRENT hp, floored, with a floor of 1 — a percent-damage skill
+   * should never fizzle to a 0-damage hit purely from rounding down while
+   * still spending the caster's AP; dealing a guaranteed minimum tick is the
+   * less absurd outcome. Only `damage` effects ever set amountIsPercent
+   * (format.ts rejects it on other effect types), so this is only called
+   * from damage-effect code paths.
+   */
+  private effectAmount(effect: EffectPrimitive, currentHp: number): number {
+    if (effect.amountIsPercent) return Math.max(1, Math.floor((currentHp * effect.amount) / 100));
+    return effect.amount;
   }
 
   private applyEffect(
     effect: EffectPrimitive,
-    target: ResolvedTarget | null,
+    target: ResolvedTarget,
     caster: PlayerUnitState | MonsterUnitState,
   ): void {
-    if (!target) return;
     if (target.kind === 'base') {
       // Only damage makes sense against the base — push/shield/heal are no-ops on it.
       if (effect.type === 'damage') {
         const before = this.baseHp;
-        this.baseHp = Math.max(0, this.baseHp - effect.amount);
+        const amount = this.effectAmount(effect, this.baseHp);
+        this.baseHp = Math.max(0, this.baseHp - amount);
         this.pendingEvents.push({ kind: 'damage', target: { kind: 'base' }, amount: before - this.baseHp, blocked: false });
       }
       return;
@@ -793,7 +931,7 @@ export class BattleEngine {
 
     switch (effect.type) {
       case 'damage':
-        this.dealDamageWithEvent(unit, effect.amount);
+        this.dealDamageWithEvent(unit, this.effectAmount(effect, unit.hp));
         break;
       case 'push': {
         const from = { ...unit.position };
