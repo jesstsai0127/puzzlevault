@@ -1,0 +1,16 @@
+{
+  "formatVersion": 1,
+  "id": "lesson_poison_mist",
+  "nameKey": "map.lesson_poison_mist.name",
+  "hintKey": "map.lesson_poison_mist.hint",
+  "grid": ["#####", "#  B#", "#   #", "#  *#", "#   #", "#####"],
+  "baseHp": 6,
+  "playerStarts": [{ "x": 1, "y": 4 }],
+  "squadCharacterIds": ["li_yan"],
+  "waves": [
+    {
+      "turns": 12,
+      "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 3, "y": 4 } }]
+    }
+  ]
+}
