@@ -193,7 +193,14 @@ export class BattleEngine {
     if (this.pendingOutcome) return { ok: false, reason: 'outcome-pending' };
     const unit = this.players[unitIndex];
     if (!unit || unit.hp <= 0) return { ok: false, reason: 'invalid-unit' };
-    if (!unit.skillIds.includes(skillId)) return { ok: false, reason: 'unknown-skill' };
+    // A character's Ultimate is deliberately NOT in skillIds (see CharacterDef.
+    // ultimateSkillId doc comment) — it's cast through this same method, so it
+    // needs its own membership check here rather than falling through to the
+    // 'unknown-skill' rejection every other skillId gets.
+    const charDef = this.registry.characters[unit.characterId];
+    const isUltimate = !!charDef && charDef.ultimateSkillId === skillId;
+    if (!unit.skillIds.includes(skillId) && !isUltimate) return { ok: false, reason: 'unknown-skill' };
+    if (isUltimate && unit.ultimateUsed) return { ok: false, reason: 'ultimate-already-used' };
     const skill = this.registry.skills[skillId];
     if (!skill) return { ok: false, reason: 'unknown-skill' };
     if (unit.ap < skill.mpCost) return { ok: false, reason: 'not-enough-ap' };
@@ -204,15 +211,16 @@ export class BattleEngine {
     for (const effect of skill.effects) {
       // `dir` is required by this method's signature for every skill, even
       // ones whose target mode doesn't need a direction (aoeCross/aoeRing/
-      // allEnemies/allUnits) — resolveTargets() simply ignores dirVec for
-      // those modes. Keeping useSkill's signature unchanged (rather than
-      // making dir optional) is the smallest change that supports the new
-      // modes; a caller casting a directionless skill can pass any
-      // CardinalDir as a meaningless-but-format-valid placeholder.
+      // allEnemies/allUnits/allAllies) — resolveTargets() simply ignores
+      // dirVec for those modes. Keeping useSkill's signature unchanged
+      // (rather than making dir optional) is the smallest change that
+      // supports the new modes; a caller casting a directionless skill can
+      // pass any CardinalDir as a meaningless-but-format-valid placeholder.
       const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, effect.type === 'heal');
       for (const target of targets) this.applyEffect(effect, target, unit);
     }
     unit.ap -= skill.mpCost;
+    if (isUltimate) unit.ultimateUsed = true;
     return { ok: true };
   }
 
@@ -391,6 +399,12 @@ export class BattleEngine {
         ap: def.actionPoints,
         maxAp: def.actionPoints,
         skillIds: def.skillIds,
+        // resetRun() is the ONLY reset this game has (constructor, defeat,
+        // victory, and manual "reset level" all funnel through it) — this is
+        // deliberately the one place that clears ultimateUsed. resetTurn()
+        // restores an in-progress turn from a snapshot taken AFTER this
+        // constructor already ran, so it never touches this field.
+        ultimateUsed: false,
       };
     });
 
@@ -831,6 +845,22 @@ export class BattleEngine {
       }
       for (const m of this.monsters) {
         if (m.hp > 0 && m !== caster) targets.push({ kind: 'monster', unit: m });
+      }
+      return targets;
+    }
+
+    // allAllies: every living unit on the SAME SIDE as the caster, EXCLUDING
+    // the caster itself — same exclusion rationale as allUnits above (a
+    // self-sacrifice cast already pays its own cost). "Same side" is
+    // caster-relative, not hardcoded to players: a player caster hits other
+    // living players, a monster caster would hit other living monsters, even
+    // though no monster content uses this mode today (only player Ultimates
+    // do). Identity checked by object reference, same as allUnits.
+    if (mode === 'allAllies') {
+      const roster = casterIsPlayer ? this.players : this.monsters;
+      const targets: ResolvedTarget[] = [];
+      for (const u of roster) {
+        if (u.hp > 0 && u !== caster) targets.push(this.wrapTarget(u));
       }
       return targets;
     }
