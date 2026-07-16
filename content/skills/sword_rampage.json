@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "sword_rampage",
+  "nameKey": "skill.sword_rampage.name",
+  "descKey": "skill.sword_rampage.desc",
+  "range": 0,
+  "mpCost": 4,
+  "effects": [{ "type": "damage", "amount": 20, "target": "allUnits", "amountIsPercent": true }]
+}
