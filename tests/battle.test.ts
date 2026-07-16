@@ -75,6 +75,13 @@ const li_yan: CharacterDef = {
   maxHp: 6,
   actionPoints: 4,
   skillIds: ['strike', 'push_skill'],
+  // Placeholder, deliberately NOT one of this character's own skillIds —
+  // these test fixtures don't exercise Ultimate behavior, just satisfy the
+  // now-required field. Reusing a real skillId here (e.g. 'strike') would
+  // silently make useSkill() treat that normal skill as a once-per-level
+  // Ultimate too, tripping the ultimateUsed lock on tests that cast it
+  // twice on the same engine instance (e.g. the AP-pool exhaustion test).
+  ultimateSkillId: 'li_yan_ultimate_unused',
 };
 
 const su_qing: CharacterDef = {
@@ -85,6 +92,7 @@ const su_qing: CharacterDef = {
   maxHp: 5,
   actionPoints: 4,
   skillIds: ['ranged_skill', 'shield_skill'],
+  ultimateSkillId: 'su_qing_ultimate_unused',
 };
 
 const registry: ContentRegistry = {
@@ -798,6 +806,7 @@ describe('BattleEngine: heal targeting (bai_zhi-style skills — allies only, ne
     maxHp: 5,
     actionPoints: 4,
     skillIds: ['minor_heal'],
+    ultimateSkillId: 'bai_zhi_ultimate_unused', // placeholder, see li_yan fixture's comment above for why
   };
   const healRegistry: ContentRegistry = {
     characters: { ...registry.characters, bai_zhi: baiZhi },
@@ -1276,6 +1285,7 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
     maxHp: 9,
     actionPoints: 4,
     skillIds: ['heavy_shield', 'taunt'],
+    ultimateSkillId: 'ling_er_ultimate_unused', // placeholder, see li_yan fixture's comment above for why
   };
   // A pure base-seeker, like content/monsters/yin_ghost.json's real Phase 1
   // aiRules — never attacks a player, only ever aims at nearestBaseTile. The
@@ -1596,6 +1606,7 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
       'percent_bolt',
       'percent_bolt_min',
     ],
+    ultimateSkillId: 'shape_caster_ultimate_unused', // placeholder, see li_yan fixture's comment above for why
   };
 
   const hp10Ghost: MonsterDef = { ...yinGhost, id: 'hp10_ghost', maxHp: 10 };
@@ -1904,5 +1915,259 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
       ]);
       expect(unitHpAt(engine, 3, 4)).toBe(0);
     });
+  });
+});
+
+describe('BattleEngine: allAllies targeting mode', () => {
+  const openRoomGrid = [
+    '#############',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#          B#',
+    '#############',
+  ];
+
+  // 'shield' rather than 'heal' deliberately — a heal event only registers
+  // when the target's hp actually rises, which a fresh-spawn unit at full
+  // hp would never do (see applyEffect's heal branch), making the assertion
+  // below flaky based on incidental hp state. shield always applies
+  // unconditionally, so the event count cleanly proves who resolveTargets()
+  // did and didn't reach.
+  const rallyCry: SkillDef = {
+    formatVersion: 1,
+    id: 'rally_cry',
+    nameKey: 'skill.rally_cry.name',
+    descKey: 'skill.rally_cry.desc',
+    range: 0,
+    mpCost: 1,
+    effects: [{ type: 'shield', amount: 1, target: 'allAllies' }],
+  };
+
+  const rallyCaster: CharacterDef = {
+    formatVersion: 1,
+    id: 'rally_caster',
+    nameKey: 'character.rally_caster.name',
+    spriteRef: 'char_rally_caster',
+    maxHp: 20,
+    actionPoints: 10,
+    skillIds: ['rally_cry'],
+    ultimateSkillId: 'rally_cry',
+  };
+
+  const allyRegistry: ContentRegistry = {
+    characters: { rally_caster: rallyCaster },
+    skills: { rally_cry: rallyCry },
+    monsters: { yin_ghost: yinGhost },
+  };
+
+  function unitHpAt(engine: BattleEngine, x: number, y: number): number | undefined {
+    const snap = engine.getSnapshot();
+    return (
+      snap.players.find((p) => p.position.x === x && p.position.y === y)?.hp ??
+      snap.monsters.find((m) => m.position.x === x && m.position.y === y)?.hp
+    );
+  }
+
+  it('hits every other living ally, never a monster and never the caster itself', () => {
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'all-allies-test',
+      nameKey: 'map.allalliestest.name',
+      grid: openRoomGrid,
+      baseHp: 8,
+      playerStarts: [
+        { x: 6, y: 4 }, // caster
+        { x: 2, y: 2 }, // ally — should be hit
+        { x: 10, y: 5 }, // second ally — should be hit
+      ],
+      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 9, y: 3 } }] }],
+    };
+    const engine = new BattleEngine(map, ['rally_caster', 'rally_caster', 'rally_caster'], allyRegistry);
+    const res = engine.useSkill(0, 'rally_cry', 'down'); // direction irrelevant for allAllies
+    expect(res).toEqual({ ok: true });
+    const snap = engine.getSnapshot();
+    expect(snap.players[0].shield).toBe(0); // caster itself, untouched
+    expect(snap.players[1].shield).toBe(1); // ally, hit
+    expect(snap.players[2].shield).toBe(1); // ally, hit
+    const events = engine.getLastEvents();
+    // Exactly 2 shield events: the other two players. The monster and the
+    // caster itself must not appear.
+    expect(events).toHaveLength(2);
+    for (const ev of events) {
+      expect(ev.kind).toBe('shield');
+      expect(ev.target.kind).toBe('player');
+      if (ev.target.kind === 'player') expect(ev.target.unitIndex).not.toBe(0);
+    }
+    expect(unitHpAt(engine, 9, 3)).toBe(2); // monster, untouched (yin_ghost maxHp 2)
+  });
+
+  it('for a monster caster, allAllies is caster-relative (would hit other monsters, not players) — verified via resolveTargets through a monster-cast skill', () => {
+    // No monster content actually ships an allAllies skill (only player
+    // Ultimates use this mode), but the engine's exclusion logic must stay
+    // side-relative rather than hardcoded to "players", per the TargetMode
+    // doc comment. This is exercised through the monster AI skill path
+    // (endTurn's intent resolution) to prove the branch isn't player-only.
+    const monsterRally: SkillDef = { ...rallyCry, id: 'monster_rally' };
+    const rallyGhost: MonsterDef = {
+      formatVersion: 1,
+      id: 'rally_ghost',
+      nameKey: 'monster.rally_ghost.name',
+      spriteRef: 'mon_rally_ghost',
+      maxHp: 5,
+      moveRange: 1,
+      skillIds: ['monster_rally'],
+      aiRules: [{ when: { kind: 'always' }, action: { kind: 'useSkill', skillId: 'monster_rally' } }],
+    };
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'monster-allies-test',
+      nameKey: 'map.monsteralliestest.name',
+      grid: openRoomGrid,
+      baseHp: 8,
+      playerStarts: [{ x: 1, y: 1 }],
+      waves: [
+        {
+          turns: AMPLE_TURNS,
+          monsters: [
+            { monsterId: 'rally_ghost', spawn: { x: 6, y: 4 } }, // caster
+            { monsterId: 'rally_ghost', spawn: { x: 7, y: 4 } }, // ally monster — should be hit
+          ],
+        },
+      ],
+    };
+    const monsterAllyRegistry: ContentRegistry = {
+      characters: { rally_caster: rallyCaster },
+      skills: { monster_rally: monsterRally },
+      monsters: { rally_ghost: rallyGhost },
+    };
+    const engine = new BattleEngine(map, ['rally_caster'], monsterAllyRegistry);
+    engine.endTurn(); // resolves both monsters' telegraphed 'monster_rally' casts
+    const events = engine.getLastEvents();
+    // Both ghosts cast allAllies shield at each other (each targets the
+    // OTHER monster, never itself, never the human player) — 2 shield
+    // events total, both landing on 'monster' targets, none on the player.
+    expect(events.length).toBeGreaterThan(0);
+    for (const ev of events) {
+      expect(ev.kind).toBe('shield');
+      expect(ev.target.kind).toBe('monster');
+    }
+  });
+});
+
+describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUnitState.ultimateUsed)', () => {
+  const openRoomGrid = [
+    '#############',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#############',
+  ];
+
+  const zap: SkillDef = {
+    formatVersion: 1,
+    id: 'zap',
+    nameKey: 'skill.zap.name',
+    descKey: 'skill.zap.desc',
+    range: 1,
+    mpCost: 1,
+    effects: [{ type: 'damage', amount: 1, target: 'firstInLine' }],
+  };
+
+  const ultimateNuke: SkillDef = {
+    formatVersion: 1,
+    id: 'ultimate_nuke',
+    nameKey: 'skill.ultimate_nuke.name',
+    descKey: 'skill.ultimate_nuke.desc',
+    range: 0,
+    mpCost: 4, // == the character's full actionPoints, by design (see ling_er/li_yan/su_qing/bai_zhi content)
+    effects: [{ type: 'damage', amount: 50, target: 'allEnemies', amountIsPercent: true }],
+  };
+
+  const ultimateCaster: CharacterDef = {
+    formatVersion: 1,
+    id: 'ultimate_caster',
+    nameKey: 'character.ultimate_caster.name',
+    spriteRef: 'char_ultimate_caster',
+    maxHp: 10,
+    actionPoints: 4,
+    skillIds: ['zap'],
+    ultimateSkillId: 'ultimate_nuke',
+  };
+
+  const ultimateRegistry: ContentRegistry = {
+    characters: { ultimate_caster: ultimateCaster },
+    skills: { zap, ultimate_nuke: ultimateNuke },
+    monsters: { yin_ghost: yinGhost },
+  };
+
+  function baseMap(): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'ultimate-test',
+      nameKey: 'map.ultimatetest.name',
+      grid: openRoomGrid,
+      baseHp: 8,
+      playerStarts: [{ x: 2, y: 2 }],
+      waves: [
+        { turns: 1, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 2 } }] },
+        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 2 } }] },
+      ],
+    };
+  }
+
+  it("can be cast even though it isn't in skillIds, hits its declared targets, spends the caster's full AP, and locks ultimateUsed", () => {
+    const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
+    const res = engine.useSkill(0, 'ultimate_nuke', 'right');
+    expect(res).toEqual({ ok: true });
+    const snap = engine.getSnapshot();
+    expect(snap.players[0].ap).toBe(0); // full 4 AP spent
+    expect(snap.players[0].ultimateUsed).toBe(true);
+    expect(snap.monsters[0].hp).toBe(1); // yin_ghost maxHp 2, 50% percent damage -> 1 dmg
+  });
+
+  it('is rejected with a distinct reason once already used this level run, even with full AP restored on a later turn', () => {
+    const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
+    engine.useSkill(0, 'ultimate_nuke', 'right');
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+
+    engine.endTurn(); // wave 1's 1-turn budget elapses -> reinforce, fresh AP
+    expect(engine.getSnapshot().players[0].ap).toBe(4); // AP refilled by the new turn
+    const res = engine.useSkill(0, 'ultimate_nuke', 'right');
+    expect(res).toEqual({ ok: false, reason: 'ultimate-already-used' });
+    expect(engine.getSnapshot().players[0].ap).toBe(4); // rejected cast spends nothing
+  });
+
+  it('resetTurn() undoes an ultimate cast made THIS turn (ordinary undo semantics), unlocking it again', () => {
+    const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
+    engine.useSkill(0, 'ultimate_nuke', 'right');
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+    engine.resetTurn();
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
+    expect(engine.getSnapshot().players[0].ap).toBe(4);
+  });
+
+  it('resetTurn() does NOT unlock an ultimate that was used in an earlier turn (only undoes THIS turn\'s actions)', () => {
+    const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
+    engine.useSkill(0, 'ultimate_nuke', 'right');
+    engine.endTurn(); // ultimate cast is now locked in from a PRIOR turn
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+    engine.moveUnit(0, 'right'); // take some unrelated action this turn
+    engine.resetTurn(); // should only undo the move, not reach back into last turn
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+  });
+
+  it('resetLevel() (full level reset — constructor / defeat / victory / manual restart) is the only thing that clears ultimateUsed', () => {
+    const engine = new BattleEngine(baseMap(), ['ultimate_caster'], ultimateRegistry);
+    engine.useSkill(0, 'ultimate_nuke', 'right');
+    engine.endTurn();
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+    engine.resetLevel();
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
+    expect(engine.getSnapshot().players[0].hp).toBe(10); // full reset, not just the flag
   });
 });
