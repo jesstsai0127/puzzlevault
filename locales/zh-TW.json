@@ -110,6 +110,8 @@
 
   "ui.confirm": "確認",
   "ui.blocked": "格擋！",
+  "ui.no_effect": "無效",
+  "ui.outcome_wipe": "全隊陣亡！從第一波重新開始",
   "ui.reset_level": "重置關卡",
   "ui.outcome_defeat": "陣被攻破！從第一波重新開始",
   "ui.outcome_victory": "撐住了！全部波次守住",
