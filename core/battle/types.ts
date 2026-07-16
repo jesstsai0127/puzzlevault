@@ -17,6 +17,17 @@ export interface PlayerUnitState {
   ap: number;
   maxAp: number;
   skillIds: string[];
+  /**
+   * Whether this unit's Ultimate (CharacterDef.ultimateSkillId) has already
+   * been cast THIS LEVEL RUN. Reset to false only by BattleEngine.resetRun()
+   * (the level-reset path — constructor and confirmOutcome()/manual reset),
+   * never by resetTurn() — an Ultimate spent earlier in the run stays spent
+   * across turns/waves, that's the whole point of its cost. Ordinary undo()/
+   * resetTurn() restore it correctly for free because both work by restoring
+   * whole-object snapshots of `players` (pushHistory()/captureTurnStart()),
+   * which already spread-copy every field on this interface.
+   */
+  ultimateUsed: boolean;
 }
 
 export interface MonsterUnitState {
