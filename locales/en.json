@@ -65,6 +65,20 @@
   "map.lesson_poison_mist.name": "Lesson: Poison Mist Terrain",
   "map.lesson_poison_mist.hint": "This level: that green mist chips anyone standing on it at turn's end, monster included. The ghost's route crosses it, so it's already weakened before you land the finishing blow.",
 
+  "map.world2_yuan_ling.name": "Lesson: The Vengeful Spirit Bites Back",
+  "map.world2_yuan_ling.hint": "This level: the vengeful spirit backs away the moment melee closes in, so chasing it on foot alone never lands a hit — it just retreats toward your base and snipes it with spirit bolts along the way. Pick it off with a ranged skill like Flying Sword, or use terrain to cut off its retreat.",
+  "map.world2_pincer_practice.name": "Lesson: Pincer From Both Sides",
+  "map.world2_pincer_practice.hint": "This level: yin ghosts close in from both sides of your base at once. Splitting your squad to cover both sides and committing to hold one side while conceding the other both cost something — watch the base HP and pick your trade-off.",
+  "map.world3_wolf_vine.name": "Lesson: Fast Wolf, Fixed Vine",
+  "map.world3_wolf_vine.hint": "This level: the demon wolf is fast and closes to melee quickly, while the vine demon is a stationary turret that keeps lashing out with Vine Lash from range. You can't ignore either one — decide who to kill first.",
+  "map.world3_jiangshi.name": "Lesson: The Jiangshi Is a Handful",
+  "map.world3_jiangshi.hint": "This level: the jiangshi is a 6-HP melee tank — fail to drop it in one go and it counters with Corpse Smash. Line up two turns of burst damage to finish it, or shove it into the abyss with Cloud-Parting Palm — don't just trade blows with it toe to toe.",
+
+  "world.1.name": "World 1 - Sparring Grounds",
+  "world.2.name": "World 2 - Pincer Assault",
+  "world.3.name": "World 3 - Wolfhowl Trail",
+  "world.4.name": "World 4 - Miasma Hollow",
+
   "ui.hp": "HP",
   "ui.wave": "Wave",
   "ui.end_turn": "End Turn",
