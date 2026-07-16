@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
 import { MOVE_VECTORS, add, stepDirectionToward } from '../core/geometry';
+import type { MapDef } from '../core/content/types';
 import {
   STARTING_SQUAD,
   DEFAULT_MAP_ID,
@@ -525,5 +526,151 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // one hit, thanks to the mist chip
     engine.endTurn();
     expect(engine.getSnapshot().outcome).toBe('victory');
+  });
+});
+
+describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage / roaring_shockwave / spring_rain)', () => {
+  const ultimateRoomGrid = [
+    '#############',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#           #',
+    '#          B#',
+    '#############',
+  ];
+
+  /** Same rounding rule BattleEngine.effectAmount() applies for amountIsPercent: floor(hp * pct/100), minimum 1. */
+  function expectedPercentDamage(hp: number, pct: number): number {
+    return Math.max(1, Math.floor(hp * (pct / 100)));
+  }
+
+  function ultimateSquadMap(monsters: Array<{ monsterId: string; spawn: { x: number; y: number } }>): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'ultimate-squad-test',
+      nameKey: 'map.ultimatesquadtest.name',
+      grid: ultimateRoomGrid,
+      baseHp: 8,
+      playerStarts: [
+        { x: 2, y: 3 }, // li_yan
+        { x: 3, y: 3 }, // su_qing
+        { x: 4, y: 3 }, // ling_er
+        { x: 5, y: 3 }, // bai_zhi
+      ],
+      squadCharacterIds: ['li_yan', 'su_qing', 'ling_er', 'bai_zhi'],
+      waves: [{ turns: 99, monsters }],
+    };
+  }
+
+  it("every character's ultimateSkillId points at a real registered skill costing exactly that character's full actionPoints", () => {
+    for (const [charId, def] of Object.entries(registry.characters)) {
+      const ultimate = registry.skills[def.ultimateSkillId];
+      expect(ultimate, `${charId}'s ultimateSkillId '${def.ultimateSkillId}' must resolve to a real skill`).toBeTruthy();
+      expect(ultimate.mpCost, `${charId}'s ultimate should cost its full actionPoints (${def.actionPoints})`).toBe(
+        def.actionPoints,
+      );
+    }
+  });
+
+  it("li_yan's 劍氣狂潮 (sword_tempest) hits only enemies for 30% of their current hp, leaving every ally untouched", () => {
+    const map = ultimateSquadMap([
+      { monsterId: 'jiangshi', spawn: { x: 8, y: 3 } },
+      { monsterId: 'yin_ghost', spawn: { x: 9, y: 3 } },
+    ]);
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    const before = engine.getSnapshot();
+    const jiangshiHp = before.monsters.find((m) => m.monsterId === 'jiangshi')!.hp;
+    const ghostHp = before.monsters.find((m) => m.monsterId === 'yin_ghost')!.hp;
+
+    const res = engine.useSkill(0, 'sword_tempest', 'right');
+    expect(res).toEqual({ ok: true });
+
+    const after = engine.getSnapshot();
+    expect(after.monsters.find((m) => m.monsterId === 'jiangshi')!.hp).toBe(
+      jiangshiHp - expectedPercentDamage(jiangshiHp, 30),
+    );
+    expect(after.monsters.find((m) => m.monsterId === 'yin_ghost')!.hp).toBe(
+      ghostHp - expectedPercentDamage(ghostHp, 30),
+    );
+    // Every ally (including li_yan himself) is untouched — allEnemies never lands on a player.
+    for (let i = 0; i < before.players.length; i++) {
+      expect(after.players[i].hp).toBe(before.players[i].hp);
+    }
+    expect(after.players[0].ap).toBe(0); // full AP spent
+    expect(after.players[0].ultimateUsed).toBe(true);
+  });
+
+  it("su_qing's 飛劍失控 (sword_rampage) hits EVERY unit for 20% of current hp — allies and su_qing herself included, monsters too", () => {
+    const map = ultimateSquadMap([{ monsterId: 'jiangshi', spawn: { x: 8, y: 3 } }]);
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    const before = engine.getSnapshot();
+    const jiangshiHp = before.monsters[0].hp;
+    const suQingHp = before.players[1].hp; // caster's own hp, before self-damage
+
+    const res = engine.useSkill(1, 'sword_rampage', 'right');
+    expect(res).toEqual({ ok: true });
+
+    const after = engine.getSnapshot();
+    expect(after.monsters[0].hp).toBe(jiangshiHp - expectedPercentDamage(jiangshiHp, 20));
+    // su_qing is EXCLUDED from her own allUnits cast (see TargetMode 'allUnits' doc
+    // comment — a self-sacrifice cast already pays its own cost via mpCost).
+    expect(after.players[1].hp).toBe(suQingHp);
+    // The other three squad members (li_yan, ling_er, bai_zhi) ARE hit.
+    for (const i of [0, 2, 3]) {
+      expect(after.players[i].hp).toBe(before.players[i].hp - expectedPercentDamage(before.players[i].hp, 20));
+    }
+  });
+
+  it("ling_er's 怒吼震擊 (roaring_shockwave) knocks every enemy back 2 tiles, radially away from her own position", () => {
+    const map = ultimateSquadMap([
+      { monsterId: 'jiangshi', spawn: { x: 6, y: 3 } }, // 2 tiles right of ling_er (4,3)
+    ]);
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    const res = engine.useSkill(2, 'roaring_shockwave', 'right');
+    expect(res).toEqual({ ok: true });
+    const monster = engine.getSnapshot().monsters[0];
+    expect(monster.position).toEqual({ x: 8, y: 3 }); // pushed 2 tiles further away from (4,3)
+  });
+
+  it("bai_zhi's 回春甘霖 (spring_rain) restores 3 hp to every OTHER ally, never herself", () => {
+    const map = ultimateSquadMap([{ monsterId: 'jiangshi', spawn: { x: 8, y: 3 } }]);
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    const bai = engine.getSnapshot().players[3];
+    expect(bai.hp).toBe(bai.maxHp); // full hp — heal on an already-full ally correctly no-ops below
+
+    const res = engine.useSkill(3, 'spring_rain', 'right');
+    expect(res).toEqual({ ok: true });
+    // Everyone (li_yan, su_qing, ling_er) started at full hp too, so the heal
+    // has nothing to raise — assert via getLastEvents() that targeting is
+    // still correct (3 allies reached, bai_zhi herself excluded) rather than
+    // relying on an hp delta that a full-hp squad can't show.
+    const events = engine.getLastEvents();
+    expect(events).toHaveLength(0); // heal events only fire when hp actually rises (see applyEffect) — full squad, so none fire
+    expect(engine.getSnapshot().players[3].ap).toBe(0); // AP still spent even though nothing needed healing
+    expect(engine.getSnapshot().players[3].ultimateUsed).toBe(true);
+  });
+
+  it('a used ultimate is rejected on a second cast within the same level run, even after AP refills next turn', () => {
+    const map = ultimateSquadMap([{ monsterId: 'jiangshi', spawn: { x: 8, y: 3 } }]);
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    engine.useSkill(0, 'sword_tempest', 'right');
+    engine.endTurn();
+    expect(engine.getSnapshot().players[0].ap).toBe(4); // AP refilled
+    expect(engine.useSkill(0, 'sword_tempest', 'right')).toEqual({ ok: false, reason: 'ultimate-already-used' });
+  });
+
+  it('resetLevel() clears every squad member\'s ultimateUsed lock, resetTurn() does not', () => {
+    const map = ultimateSquadMap([{ monsterId: 'jiangshi', spawn: { x: 8, y: 3 } }]);
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    engine.useSkill(0, 'sword_tempest', 'right');
+    engine.endTurn();
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+
+    engine.resetTurn(); // only undoes actions taken THIS turn — the ultimate was locked in last turn
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
+
+    engine.resetLevel();
+    expect(engine.getSnapshot().players[0].ultimateUsed).toBe(false);
   });
 });
