@@ -32,6 +32,15 @@
   "skill.taunt.name": "嘲諷",
   "skill.taunt.desc": "直線挑釁一名敵人，最遠 3 格，逼它連續 2 回合只鎖定你。",
 
+  "skill.sword_tempest.name": "劍氣狂潮",
+  "skill.sword_tempest.desc": "大絕：釋放漫天劍氣，扣場上所有敵人目前生命 30%。本關卡僅限一次。",
+  "skill.sword_rampage.name": "飛劍失控",
+  "skill.sword_rampage.desc": "大絕：飛劍徹底失控亂舞，不分敵我，扣場上所有單位（包含隊友與自己）目前生命 20%。本關卡僅限一次。",
+  "skill.roaring_shockwave.name": "怒吼震擊",
+  "skill.roaring_shockwave.desc": "大絕：一聲怒吼震開全場敵人 2 格。本關卡僅限一次。",
+  "skill.spring_rain.name": "回春甘霖",
+  "skill.spring_rain.desc": "大絕：甘霖普降，為所有隊友（不含自己）恢復 3 點生命。本關卡僅限一次。",
+
   "monster.yin_ghost.name": "陰魂",
   "monster.jiangshi.name": "殭屍",
   "monster.yuan_ling.name": "怨靈",
@@ -78,6 +87,8 @@
   "ui.turns_left": "本波剩餘回合",
 
   "ui.not_enough_ap": "行動點不足",
+  "ui.ultimate_used": "本關卡已使用",
+  "ui.ultimate_hint": "大絕：本關卡僅限一次",
   "ui.next_wave_in": "下一波還有",
   "ui.turns_suffix": "回合",
   "ui.last_wave_hold": "最後一波！撐住",
