@@ -58,7 +58,9 @@ describe('Phase 0 content registry', () => {
         if (nearestGhost && Math.abs(nearestGhost.position.x - unit.position.x) <= 1 && nearestGhost.position.y === unit.position.y) {
           engine.useSkill(unitIndex, unit.skillIds[0], 'right');
         } else {
-          engine.moveUnit(unitIndex, 'right');
+          // One committed one-tile move under the ITB economy — a rejected
+          // move (occupied tile ahead) is harmless here, same as before.
+          engine.moveUnit(unitIndex, { x: unit.position.x + 1, y: unit.position.y });
         }
       }
       engine.endTurn();
@@ -442,38 +444,35 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     },
   );
 
-  it('lesson_ap_cost: closing the distance and swinging Sword Qi Slash in the same turn spends the full 4-AP pool (movement and skills share it)', () => {
+  it('lesson_ap_cost: one committed move + one action per turn — and after acting, movement is locked', () => {
     const map = maps.lesson_ap_cost;
     const engine = new BattleEngine(map, STARTING_SQUAD, registry);
-    // Li Yan (unit 0) closes to melee range and strikes — 2 tiles of
-    // movement (2 AP) plus Sword Qi Slash (2 AP) exactly exhausts the pool.
-    expect(engine.moveUnit(0, 'down').ok).toBe(true);
-    expect(engine.moveUnit(0, 'right').ok).toBe(true);
-    const beforeSkill = engine.getSnapshot().players[0];
-    expect(beforeSkill.ap).toBe(2); // 4 - 2 moves
-    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
-    expect(engine.getSnapshot().players[0].ap).toBe(0); // 2 - sword_qi's mpCost(2)
+    // Li Yan (2,1) commits his whole move phase in one call: 2 BFS tiles to
+    // (3,2), landing adjacent to the ghost at (4,2).
+    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true); // move-then-act: the intended flow
+    expect(engine.getSnapshot().monsters[0].hp).toBe(1); // yin_ghost 3 - sword_qi 2
+    // The lesson's core rule: acting ends the unit's turn — no more movement.
+    expect(engine.moveUnit(0, { x: 2, y: 2 })).toEqual({ ok: false, reason: 'already-acted' });
     engine.endTurn();
-    engine.moveUnit(0, 'right');
+    // Finish it next turn from the same tile.
     expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // the ghost is dead
     expect(engine.getSnapshot().baseHp).toBe(map.baseHp); // base never took a hit
   });
 
-  it('lesson_opportunity_attack: retreating from an adjacent, still-living ghost actually costs Li Yan HP via the counter-hit', () => {
+  it('lesson_opportunity_attack: the tile you strike from is the tile you stay on — no retreat after acting', () => {
     const map = maps.lesson_opportunity_attack;
     const engine = new BattleEngine(map, STARTING_SQUAD, registry);
-    const startHp = engine.getSnapshot().players[0].maxHp;
-    expect(engine.moveUnit(0, 'down').ok).toBe(true); // now adjacent to the ghost
+    expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true); // step down, adjacent to the ghost at (2,3)
     expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true); // hurt it, but it survives (3 - 2 = 1hp)
     expect(engine.getSnapshot().monsters[0].hp).toBeGreaterThan(0);
-    expect(engine.moveUnit(0, 'up').ok).toBe(true); // deliberate retreat while it's still alive
-    const afterRetreat = engine.getSnapshot().players[0];
-    expect(afterRetreat.hp).toBeLessThan(startHp); // the opportunity attack actually landed
-    engine.endTurn();
-    // Finish the job next turn — still a clean win despite having eaten the counter-hit.
-    expect(engine.moveUnit(0, 'down').ok).toBe(true);
-    expect(engine.moveUnit(0, 'down').ok).toBe(true);
+    // The lesson: there is no walking away from the swing — position IS the commitment.
+    expect(engine.moveUnit(0, { x: 2, y: 1 })).toEqual({ ok: false, reason: 'already-acted' });
+    engine.endTurn(); // the ghost's telegraphed move (toward the base) resolves
+    // Finish the job next turn — reposition to line it up, then strike.
+    const ghost = engine.getSnapshot().monsters[0];
+    expect(engine.moveUnit(0, { x: ghost.position.x + 1, y: ghost.position.y }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
     engine.endTurn();
@@ -491,27 +490,25 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     expect(engine.getSnapshot().baseHp).toBe(map.baseHp);
   });
 
-  it("lesson_healer: Bai Zhi's minor_heal actually raises Li Yan's HP back up after the jiangshi lands a hit", () => {
+  it("lesson_healer: Bai Zhi's minor_heal actually raises Li Yan's HP back up after the wolf lands a hit", () => {
     const map = maps.lesson_healer;
     const squad = map.squadCharacterIds!;
     expect(squad).toEqual(['li_yan', 'bai_zhi']);
     const engine = new BattleEngine(map, squad, registry);
     const liYanMaxHp = engine.getSnapshot().players[0].maxHp;
-    // Li Yan starts adjacent to the jiangshi — dashing off to block the
-    // yin_ghost's lane to the base means disengaging from it, which costs an
-    // opportunity-attack hit (jiangshi's corpse_smash, damage-only).
-    expect(engine.moveUnit(0, 'right').ok).toBe(true);
+    // The yao_lang spawns at (1,3), adjacent to Li Yan at (1,2) — its very
+    // first telegraphed wolf_bite lands on the first endTurn, giving a real,
+    // non-full HP target to heal (no synthetic damage mutation needed).
+    engine.endTurn();
     const hpAfterHit = engine.getSnapshot().players[0].hp;
     expect(hpAfterHit).toBeLessThan(liYanMaxHp);
     expect(hpAfterHit).toBeGreaterThan(0);
-    expect(engine.moveUnit(0, 'right').ok).toBe(true);
-    expect(engine.moveUnit(0, 'right').ok).toBe(true); // Li Yan now blocks the ghost's lane
-    expect(engine.moveUnit(1, 'right').ok).toBe(true);
-    expect(engine.moveUnit(1, 'right').ok).toBe(true);
-    expect(engine.moveUnit(1, 'down').ok).toBe(true); // Bai Zhi closes to heal range
-    expect(engine.useSkill(1, 'minor_heal', 'right').ok).toBe(true);
+    // Bai Zhi (1,1) heals straight down at Li Yan (1,2) — under the ITB
+    // economy the heal is her one action for the turn.
+    expect(engine.useSkill(1, 'minor_heal', 'down').ok).toBe(true);
     const hpAfterHeal = engine.getSnapshot().players[0].hp;
     expect(hpAfterHeal).toBeGreaterThan(hpAfterHit);
+    expect(engine.getSnapshot().players[1].acted).toBe(true); // healing spent Bai Zhi's action
   });
 
   it('lesson_poison_mist: the ghost takes a free poison-mist tick crossing the mist tile, so a single Sword Qi Slash finishes it', () => {
@@ -520,14 +517,14 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     expect(squad).toEqual(['li_yan']);
     const engine = new BattleEngine(map, squad, registry);
     const ghostMaxHp = engine.getSnapshot().monsters[0].maxHp;
-    engine.moveUnit(0, 'up');
-    engine.moveUnit(0, 'up');
-    engine.moveUnit(0, 'right');
-    engine.moveUnit(0, 'right');
-    engine.endTurn(); // the ghost crosses the mist tile on its way to the block point, taking a free tick
+    // One committed move (2 BFS tiles, within Li Yan's moveRange 3) to
+    // (2,3), right beside the mist tile the ghost's route crosses.
+    expect(engine.moveUnit(0, { x: 2, y: 3 }).ok).toBe(true);
+    engine.endTurn(); // the ghost steps onto the mist tile (3,3) en route to the base and takes the free tick
     const ghostHpAfterMist = engine.getSnapshot().monsters[0].hp;
     expect(ghostHpAfterMist).toBeLessThan(ghostMaxHp);
-    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 3, y: 3 }); // standing on the mist
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // one hit, thanks to the mist chip
     engine.endTurn();
     expect(engine.getSnapshot().outcome).toBe('victory');
@@ -648,13 +645,13 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
     };
   }
 
-  it("every character's ultimateSkillId points at a real registered skill costing exactly that character's full actionPoints", () => {
+  it("every character's ultimateSkillId points at a real registered skill", () => {
+    // Skills carry no cost of their own under the ITB economy — an ultimate
+    // is one action like any other (its extra price is the once-per-level
+    // lock), so resolving to a real skill is the whole contract now.
     for (const [charId, def] of Object.entries(registry.characters)) {
       const ultimate = registry.skills[def.ultimateSkillId];
       expect(ultimate, `${charId}'s ultimateSkillId '${def.ultimateSkillId}' must resolve to a real skill`).toBeTruthy();
-      expect(ultimate.mpCost, `${charId}'s ultimate should cost its full actionPoints (${def.actionPoints})`).toBe(
-        def.actionPoints,
-      );
     }
   });
 
@@ -682,7 +679,7 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
     for (let i = 0; i < before.players.length; i++) {
       expect(after.players[i].hp).toBe(before.players[i].hp);
     }
-    expect(after.players[0].ap).toBe(0); // full AP spent
+    expect(after.players[0].acted).toBe(true); // the ultimate was the caster's one action
     expect(after.players[0].ultimateUsed).toBe(true);
   });
 
@@ -732,7 +729,7 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
     // relying on an hp delta that a full-hp squad can't show.
     const events = engine.getLastEvents();
     expect(events).toHaveLength(0); // heal events only fire when hp actually rises (see applyEffect) — full squad, so none fire
-    expect(engine.getSnapshot().players[3].ap).toBe(0); // AP still spent even though nothing needed healing
+    expect(engine.getSnapshot().players[3].acted).toBe(true); // the action is still spent even though nothing needed healing
     expect(engine.getSnapshot().players[3].ultimateUsed).toBe(true);
   });
 
@@ -741,7 +738,7 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
     engine.useSkill(0, 'sword_tempest', 'right');
     engine.endTurn();
-    expect(engine.getSnapshot().players[0].ap).toBe(4); // AP refilled
+    expect(engine.getSnapshot().players[0].acted).toBe(false); // fresh action economy on the new turn
     expect(engine.useSkill(0, 'sword_tempest', 'right')).toEqual({ ok: false, reason: 'ultimate-already-used' });
   });
 
