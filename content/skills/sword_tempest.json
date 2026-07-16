@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "id": "sword_tempest",
+  "nameKey": "skill.sword_tempest.name",
+  "descKey": "skill.sword_tempest.desc",
+  "range": 0,
+  "mpCost": 4,
+  "effects": [{ "type": "damage", "amount": 30, "target": "allEnemies", "amountIsPercent": true }]
+}
