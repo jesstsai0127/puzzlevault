@@ -7,7 +7,7 @@ import {
   maps,
   yanwuGroundMap,
   registry,
-  tutorials,
+  LESSON_MAP_IDS,
   LEVEL_GROUPS,
 } from '../content/registry';
 
@@ -77,6 +77,11 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
       'demo2',
       'demo3',
       'demo4',
+      'lesson_ap_cost',
+      'lesson_opportunity_attack',
+      'lesson_push_abyss',
+      'lesson_healer',
+      'lesson_poison_mist',
     ]);
     expect(maps.demo1).toBe(yanwuGroundMap);
     expect(DEFAULT_MAP_ID).toBe('demo1');
@@ -356,125 +361,169 @@ describe('demo4 (mist hollow) — 3-hero squad + healer + poison mist, world-2 s
   });
 });
 
-describe('tutorials registry (scripted teaching levels)', () => {
-  it('parses all five builtin tutorials without throwing, each with a non-empty script', () => {
-    expect(Object.keys(tutorials)).toEqual([
-      'tut_ap_cost',
-      'tut_dot_terrain',
-      'tut_healer',
-      'tut_opportunity_attack',
-      'tut_push_into_abyss',
+describe('lesson levels (real, playable single-mechanic practice maps — replaces the old scripted TutorialDef system)', () => {
+  it('LESSON_MAP_IDS names exactly five real entries in `maps`, each a genuine MapDef (not a special content kind)', () => {
+    expect(LESSON_MAP_IDS).toEqual([
+      'lesson_ap_cost',
+      'lesson_opportunity_attack',
+      'lesson_push_abyss',
+      'lesson_healer',
+      'lesson_poison_mist',
     ]);
-    for (const tutorial of Object.values(tutorials)) {
-      expect(tutorial.script.length).toBeGreaterThan(0);
-      // Tutorials without their own squadCharacterIds fall back to the
-      // global 2-hero STARTING_SQUAD (see MapDef.squadCharacterIds); ones
-      // that declare their own (e.g. tut_healer's li_yan+bai_zhi, or
-      // tut_dot_terrain's solo li_yan) must have playerStarts line up 1:1.
-      const squad = tutorial.map.squadCharacterIds ?? STARTING_SQUAD;
-      expect(tutorial.map.playerStarts.length).toBe(squad.length);
+    for (const id of LESSON_MAP_IDS) {
+      expect(maps[id]).toBeDefined();
+      expect(maps[id].waves.length).toBeGreaterThan(0);
+      expect(maps[id].waves.length).toBeLessThanOrEqual(2); // small practice levels: 1-2 waves, not a finale
     }
   });
 
-  it('builds a playable BattleEngine from each tutorial map and can replay its whole script without throwing', () => {
-    for (const tutorial of Object.values(tutorials)) {
-      const squad = tutorial.map.squadCharacterIds ?? STARTING_SQUAD;
-      const engine = new BattleEngine(tutorial.map, squad, registry);
-      for (const step of tutorial.script) {
-        if (!step.action) continue;
-        if (step.action.type === 'move') {
-          engine.moveUnit(step.action.unitIndex, step.action.dir);
-        } else if (step.action.type === 'useSkill') {
-          engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
-        } else {
-          engine.endTurn();
-        }
-      }
-      expect(engine.getSnapshot()).toBeDefined();
-    }
+  it.each(LESSON_MAP_IDS)('%s: builds a playable BattleEngine without throwing', (id) => {
+    const map = maps[id];
+    const squad = map.squadCharacterIds ?? STARTING_SQUAD;
+    const engine = new BattleEngine(map, squad, registry);
+    expect(engine.getSnapshot().players.length).toBe(squad.length);
+    expect(engine.getSnapshot().baseTiles.length).toBeGreaterThan(0);
   });
 
-  it('tut_push_into_abyss actually kills the ghost by pushing it into the hazard tile', () => {
-    const tutorial = tutorials.tut_push_into_abyss;
-    const engine = new BattleEngine(tutorial.map, STARTING_SQUAD, registry);
-    expect(engine.getSnapshot().monsters).toHaveLength(1);
-    const pushStep = tutorial.script.find((s) => s.action?.type === 'useSkill');
-    expect(pushStep?.action).toBeDefined();
-    const action = pushStep!.action!;
-    if (action.type === 'useSkill') {
-      engine.useSkill(action.unitIndex, action.skillId, action.dir);
-    }
-    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
-  });
-
-  it('tut_opportunity_attack script actually triggers a counter-hit on Li Yan when they retreat', () => {
-    const tutorial = tutorials.tut_opportunity_attack;
-    const engine = new BattleEngine(tutorial.map, STARTING_SQUAD, registry);
-    for (const step of tutorial.script) {
-      if (!step.action) continue;
-      if (step.action.type === 'move') engine.moveUnit(step.action.unitIndex, step.action.dir);
-      else if (step.action.type === 'useSkill') engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
-      else engine.endTurn();
-    }
-    const liYan = engine.getSnapshot().players[0];
-    // li_yan has 6 max HP; the ghost's ghost_claw deals 2 — a full-HP hero
-    // ending below max after a script with no monster-initiated turn (no
-    // endTurn was scripted) means the only thing that could have hit them
-    // is the disengage opportunity attack in the retreat step.
-    expect(liYan.hp).toBeLessThan(liYan.maxHp);
-  });
-
-  it('tut_healer script actually drops Li Yan below max HP via the jiangshi hit, then Bai Zhi\'s minor_heal actually raises it back', () => {
-    const tutorial = tutorials.tut_healer;
-    const squad = tutorial.map.squadCharacterIds!;
-    expect(squad).toEqual(['li_yan', 'bai_zhi']);
-    const engine = new BattleEngine(tutorial.map, squad, registry);
-    const liYanMaxHp = engine.getSnapshot().players[0].maxHp;
-
-    let hpAfterHit = -1;
-    let sawHeal = false;
-    for (const step of tutorial.script) {
-      if (!step.action) continue;
-      if (step.action.type === 'move') {
-        engine.moveUnit(step.action.unitIndex, step.action.dir);
-      } else if (step.action.type === 'useSkill') {
-        engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
-        if (step.action.skillId === 'minor_heal' || step.action.skillId === 'major_heal') sawHeal = true;
-      } else {
+  it.each(LESSON_MAP_IDS)(
+    '%s: a fully passive run (never acting, only ending turns) loses within 60 turns — doing nothing is not a viable strategy',
+    (id) => {
+      const map = maps[id];
+      const squad = map.squadCharacterIds ?? STARTING_SQUAD;
+      const engine = new BattleEngine(map, squad, registry);
+      let turns = 0;
+      while (!engine.getSnapshot().outcome && turns < 60) {
         engine.endTurn();
-        // The only scripted endTurn is the one that lets the jiangshi hit
-        // Li Yan — capture the resulting HP right after it resolves.
-        hpAfterHit = engine.getSnapshot().players[0].hp;
+        turns += 1;
       }
-    }
-    expect(hpAfterHit).toBeGreaterThanOrEqual(0);
-    expect(hpAfterHit).toBeLessThan(liYanMaxHp); // jiangshi's corpse_smash actually landed
-    expect(sawHeal).toBe(true);
-    const liYanFinal = engine.getSnapshot().players[0];
-    expect(liYanFinal.hp).toBeGreaterThan(hpAfterHit); // Bai Zhi's heal actually raised it back up
+      expect(engine.getSnapshot().outcome).toBe('defeat');
+    },
+  );
+
+  it.each(LESSON_MAP_IDS)(
+    '%s: no monster ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/3/4 guard against)',
+    (id) => {
+      const map = maps[id];
+      const squad = map.squadCharacterIds ?? STARTING_SQUAD;
+      const engine = new BattleEngine(map, squad, registry);
+      for (let i = 0; i < 60; i++) {
+        const snap = engine.getSnapshot();
+        if (snap.outcome) {
+          engine.confirmOutcome();
+          continue;
+        }
+        const occupied = new Set(
+          [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
+            (u) => `${u.position.x},${u.position.y}`,
+          ),
+        );
+        const playersAlive = snap.players.some((p) => p.hp > 0);
+        for (const intent of engine.getIntents()) {
+          if (intent.kind !== 'move') continue;
+          const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+          expect(m).toBeDefined();
+          if (!intent.aim) {
+            expect(playersAlive).toBe(false);
+            continue;
+          }
+          if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
+            const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
+            expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
+          }
+        }
+        engine.endTurn();
+      }
+    },
+  );
+
+  it('lesson_ap_cost: closing the distance and swinging Sword Qi Slash in the same turn spends the full 4-AP pool (movement and skills share it)', () => {
+    const map = maps.lesson_ap_cost;
+    const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+    // Li Yan (unit 0) closes to melee range and strikes — 2 tiles of
+    // movement (2 AP) plus Sword Qi Slash (2 AP) exactly exhausts the pool.
+    expect(engine.moveUnit(0, 'down').ok).toBe(true);
+    expect(engine.moveUnit(0, 'right').ok).toBe(true);
+    const beforeSkill = engine.getSnapshot().players[0];
+    expect(beforeSkill.ap).toBe(2); // 4 - 2 moves
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    expect(engine.getSnapshot().players[0].ap).toBe(0); // 2 - sword_qi's mpCost(2)
+    engine.endTurn();
+    engine.moveUnit(0, 'right');
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // the ghost is dead
+    expect(engine.getSnapshot().baseHp).toBe(map.baseHp); // base never took a hit
   });
 
-  it('tut_dot_terrain script actually ticks poison-mist damage on both Li Yan and the yin_ghost after endTurn', () => {
-    const tutorial = tutorials.tut_dot_terrain;
-    const squad = tutorial.map.squadCharacterIds!;
-    expect(squad).toEqual(['li_yan']);
-    const engine = new BattleEngine(tutorial.map, squad, registry);
+  it('lesson_opportunity_attack: retreating from an adjacent, still-living ghost actually costs Li Yan HP via the counter-hit', () => {
+    const map = maps.lesson_opportunity_attack;
+    const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+    const startHp = engine.getSnapshot().players[0].maxHp;
+    expect(engine.moveUnit(0, 'down').ok).toBe(true); // now adjacent to the ghost
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true); // hurt it, but it survives (3 - 2 = 1hp)
+    expect(engine.getSnapshot().monsters[0].hp).toBeGreaterThan(0);
+    expect(engine.moveUnit(0, 'up').ok).toBe(true); // deliberate retreat while it's still alive
+    const afterRetreat = engine.getSnapshot().players[0];
+    expect(afterRetreat.hp).toBeLessThan(startHp); // the opportunity attack actually landed
+    engine.endTurn();
+    // Finish the job next turn — still a clean win despite having eaten the counter-hit.
+    expect(engine.moveUnit(0, 'down').ok).toBe(true);
+    expect(engine.moveUnit(0, 'down').ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('victory');
+  });
+
+  it('lesson_push_abyss: Cloud-Parting Palm shoves the ghost into the hazard tile and kills it outright', () => {
+    const map = maps.lesson_push_abyss;
+    const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+    expect(engine.getSnapshot().monsters).toHaveLength(1);
+    expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('victory'); // last wave cleared, base untouched
+    expect(engine.getSnapshot().baseHp).toBe(map.baseHp);
+  });
+
+  it("lesson_healer: Bai Zhi's minor_heal actually raises Li Yan's HP back up after the jiangshi lands a hit", () => {
+    const map = maps.lesson_healer;
+    const squad = map.squadCharacterIds!;
+    expect(squad).toEqual(['li_yan', 'bai_zhi']);
+    const engine = new BattleEngine(map, squad, registry);
     const liYanMaxHp = engine.getSnapshot().players[0].maxHp;
+    // Li Yan starts adjacent to the jiangshi — dashing off to block the
+    // yin_ghost's lane to the base means disengaging from it, which costs an
+    // opportunity-attack hit (jiangshi's corpse_smash, damage-only).
+    expect(engine.moveUnit(0, 'right').ok).toBe(true);
+    const hpAfterHit = engine.getSnapshot().players[0].hp;
+    expect(hpAfterHit).toBeLessThan(liYanMaxHp);
+    expect(hpAfterHit).toBeGreaterThan(0);
+    expect(engine.moveUnit(0, 'right').ok).toBe(true);
+    expect(engine.moveUnit(0, 'right').ok).toBe(true); // Li Yan now blocks the ghost's lane
+    expect(engine.moveUnit(1, 'right').ok).toBe(true);
+    expect(engine.moveUnit(1, 'right').ok).toBe(true);
+    expect(engine.moveUnit(1, 'down').ok).toBe(true); // Bai Zhi closes to heal range
+    expect(engine.useSkill(1, 'minor_heal', 'right').ok).toBe(true);
+    const hpAfterHeal = engine.getSnapshot().players[0].hp;
+    expect(hpAfterHeal).toBeGreaterThan(hpAfterHit);
+  });
+
+  it('lesson_poison_mist: the ghost takes a free poison-mist tick crossing the mist tile, so a single Sword Qi Slash finishes it', () => {
+    const map = maps.lesson_poison_mist;
+    const squad = map.squadCharacterIds!;
+    expect(squad).toEqual(['li_yan']);
+    const engine = new BattleEngine(map, squad, registry);
     const ghostMaxHp = engine.getSnapshot().monsters[0].maxHp;
-
-    for (const step of tutorial.script) {
-      if (!step.action) continue;
-      if (step.action.type === 'move') engine.moveUnit(step.action.unitIndex, step.action.dir);
-      else if (step.action.type === 'useSkill') engine.useSkill(step.action.unitIndex, step.action.skillId, step.action.dir);
-      else engine.endTurn();
-    }
-
-    const snap = engine.getSnapshot();
-    // Both units were still standing on a '*' tile when the scripted
-    // endTurn resolved — poison mist is flat, unblockable, and hits both
-    // player and monster the same way (see POISON_MIST_DAMAGE in engine.ts).
-    expect(snap.players[0].hp).toBeLessThan(liYanMaxHp);
-    expect(snap.monsters[0].hp).toBeLessThan(ghostMaxHp);
-    expect(snap.monsters[0].hp).toBeGreaterThan(0); // not lethal on its own
+    engine.moveUnit(0, 'up');
+    engine.moveUnit(0, 'up');
+    engine.moveUnit(0, 'right');
+    engine.moveUnit(0, 'right');
+    engine.endTurn(); // the ghost crosses the mist tile on its way to the block point, taking a free tick
+    const ghostHpAfterMist = engine.getSnapshot().monsters[0].hp;
+    expect(ghostHpAfterMist).toBeLessThan(ghostMaxHp);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // one hit, thanks to the mist chip
+    engine.endTurn();
+    expect(engine.getSnapshot().outcome).toBe('victory');
   });
 });
