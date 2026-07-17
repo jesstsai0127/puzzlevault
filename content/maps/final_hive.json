@@ -1,0 +1,33 @@
+{
+  "formatVersion": 1,
+  "id": "final_hive",
+  "nameKey": "map.final_hive.name",
+  "grid": [
+    "########",
+    "#      #",
+    "# ~  ~ #",
+    "#  BB  #",
+    "#      #",
+    "# ~  ~ #",
+    "#      #",
+    "########"
+  ],
+  "playerStarts": [
+    { "x": 2, "y": 4 },
+    { "x": 5, "y": 4 },
+    { "x": 4, "y": 5 }
+  ],
+  "squadCharacterIds": ["li_yan", "ling_er", "bai_zhi"],
+  "initialMonsters": [
+    { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 3 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 3 } },
+    { "monsterId": "teng_yao", "spawn": { "x": 2, "y": 1 } },
+    { "monsterId": "jiangshi", "spawn": { "x": 6, "y": 1 } }
+  ],
+  "spawnSchedule": [
+    { "telegraphTurn": 2, "monsterId": "jiangshi", "tile": { "x": 1, "y": 6 } },
+    { "telegraphTurn": 3, "monsterId": "teng_yao", "tile": { "x": 5, "y": 6 } }
+  ],
+  "totalTurns": 5,
+  "baseHp": 4
+}
