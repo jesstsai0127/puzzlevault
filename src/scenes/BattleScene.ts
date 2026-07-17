@@ -41,7 +41,16 @@ const COLORS = {
   hpBarFill: 0x70e000,
   hpBarFillLow: 0xef4444,
   reachable: 0x4cc9f0,
-  targetable: 0xef4444,
+  // Color language after the ITB telegraph upgrade: RED now exclusively
+  // means "enemy threat" (telegraph tiles below, intent labels, the live
+  // "-N" previews), so the player's own skill-target highlight moved to
+  // GOLD — the same family as the selection ring (selected) and the armed
+  // skill button (buttonBgArmed). Both highlights can appear on the same
+  // tile (you CAN strike from inside a telegraphed tile); telegraph draws
+  // as a stroked overlay on top of the flat targetable fill, so they stay
+  // readable together.
+  targetable: 0xf5b942,
+  telegraphTile: 0xef4444,
   buttonBg: 0x2a2a35,
   buttonBgArmed: 0x5a4520,
   buttonBorder: 0x3a3a46,
@@ -66,7 +75,9 @@ const RULES_PANEL_STATIC = [
   '',
   '守住左邊的『陣』🏯，別讓妖物 👻 打爆它。',
   '',
-  '👻 頭上的箭頭是它下一步的動作，出手前就看得到。',
+  '👻 的下一步出手前就全部看得到：要攻擊的妖物會把落點直接標成棋盤上的紅框格，格上的數字是那幾擊合計的傷害；👻 旁的 ①②③ 是出手順序（① 最先結算）。只會移動的妖物維持箭頭＋目的格描邊。',
+  '',
+  '紅框格是回合開始就鎖定的落點，不會跟著你走位改變——走出紅格（或把隊友推出紅格），那一擊就落空；反過來，走進妖物的攻擊路線上也可能挨打。單位頭上的紅色「-N」才是照你現在站位結算會掉的血，會隨走位即時更新。看紅格躲攻擊，是這遊戲的核心玩法。',
   '',
   '每位俠客每回合：先移動、再做一個動作。移動一次走完（點亮起的格子，最遠走到自己的移動力）；動作是技能或『調息』擇一，做完這回合就結束。',
   '',
@@ -74,7 +85,7 @@ const RULES_PANEL_STATIC = [
   '',
   '『調息』：不出招，原地回 1 點血（不超過上限）。任何俠客都會，跟技能一樣算掉這回合的動作。',
   '',
-  '點角色→點亮起的格子移動；點技能→點目標施放。用『排雲掌』把妖物推開或推進深淵 ▽。',
+  '點角色→點亮起的藍格移動；點技能→亮起的金格是你打得到的位置，點目標施放。用『排雲掌』把妖物推開或推進深淵 ▽。（金格=你可以打的，紅框格=妖物要打的，兩者可能同時出現在同一格。）',
   '',
   '俠客擋在妖物往陣的路上，妖物會改打俠客——用身體擋路要付出血量代價，要衡量值不值得。',
   '',
@@ -95,6 +106,12 @@ const DIR_VECTORS: Record<CardinalDir, { x: number; y: number }> = {
 };
 
 const DIR_ARROW: Record<CardinalDir, string> = { up: '↑', down: '↓', left: '←', right: '→' };
+
+/** Attack-resolution rank badges (MonsterIntent.order) — ① resolves first. Numeric fallback covers boards with more than 10 simultaneous attackers. */
+const ORDER_BADGES = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
+function orderBadge(order: number): string {
+  return ORDER_BADGES[order - 1] ?? `(${order})`;
+}
 
 const i18n = new I18n(en, zhTW);
 
@@ -1109,7 +1126,52 @@ export class BattleScene extends Phaser.Scene {
 
     this.intentMarkers.forEach((o) => o.destroy());
     this.intentMarkers = [];
-    for (const intent of this.engine.getIntents()) {
+    const intents = this.engine.getIntents().filter((i) => livingMonsters.some((m) => m.instanceId === i.instanceId));
+
+    // ITB-style attack telegraph: every tile a monster's telegraphed skill
+    // will strike, marked directly on the board. These tiles were resolved
+    // ONCE at turn start and are locked — they deliberately do NOT follow
+    // the player's mid-turn repositioning (walking OUT of a red tile is the
+    // dodge; the live consequence layer is the "-N" damagePreviewMarkers
+    // below, which DO re-resolve every render). Multiple monsters striking
+    // the same tile stack into one summed damage number.
+    const telegraphDamage = new Map<string, { x: number; y: number; damage: number }>();
+    for (const intent of intents) {
+      if (intent.kind !== 'skill') continue;
+      for (const tile of intent.tiles) {
+        const key = `${tile.pos.x},${tile.pos.y}`;
+        const agg = telegraphDamage.get(key);
+        if (agg) agg.damage += tile.damage;
+        else telegraphDamage.set(key, { x: tile.pos.x, y: tile.pos.y, damage: tile.damage });
+      }
+    }
+    for (const tile of telegraphDamage.values()) {
+      const { px, py } = this.tileCenter(tile.x, tile.y);
+      // Stroked frame + light fill, distinct from the FLAT gold fill of the
+      // player's own targetable tiles (see COLORS.targetable) — the two can
+      // legitimately overlap and must both stay readable.
+      const rect = this.add
+        .rectangle(px, py, TILE - 8, TILE - 8)
+        .setStrokeStyle(3, COLORS.telegraphTile, 0.95)
+        .setFillStyle(COLORS.telegraphTile, 0.2)
+        .setDepth(1);
+      this.intentMarkers.push(rect);
+      if (tile.damage > 0) {
+        const dmgText = this.add
+          .text(px + TILE / 2 - 8, py - TILE / 2 + 8, `${tile.damage}`, {
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            color: '#ef4444',
+            stroke: '#000000',
+            strokeThickness: 3,
+          })
+          .setOrigin(1, 0)
+          .setDepth(3);
+        this.intentMarkers.push(dmgText);
+      }
+    }
+
+    for (const intent of intents) {
       const m = livingMonsters.find((x) => x.instanceId === intent.instanceId);
       if (!m) continue;
       const { px, py } = this.tileCenter(m.position.x, m.position.y);
@@ -1120,7 +1182,9 @@ export class BattleScene extends Phaser.Scene {
         dir = intent.direction;
         color = '#ef4444';
         const skill = registry.skills[intent.skillId];
-        label = `${DIR_ARROW[dir]} ${skill ? effectSummary(skill) : ''}`.trim();
+        // ① = this attack resolves first among the turn's attacks (see
+        // MonsterIntent.order) — the arrow + effect summary stay as before.
+        label = `${orderBadge(intent.order)} ${DIR_ARROW[dir]} ${skill ? effectSummary(skill) : ''}`.trim();
       } else if (intent.to.x !== m.position.x || intent.to.y !== m.position.y) {
         if (intent.to.x > m.position.x) dir = 'right';
         else if (intent.to.x < m.position.x) dir = 'left';
