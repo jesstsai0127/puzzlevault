@@ -23,7 +23,10 @@ describe('Phase 0 content registry', () => {
       'teng_yao',
       'yao_lang',
     ]);
-    expect(yanwuGroundMap.waves).toHaveLength(5); // 1-5 finale spec: 5 waves (see roadmap ch.4 關卡結構)
+    // demo1's real content: 2 initialMonsters + 18 spawnSchedule emergences over a 16-turn mission.
+    expect(yanwuGroundMap.initialMonsters).toHaveLength(2);
+    expect(yanwuGroundMap.spawnSchedule).toHaveLength(18);
+    expect(yanwuGroundMap.totalTurns).toBe(16);
   });
 
   it('builds a playable BattleEngine from real content with a valid initial intent', () => {
@@ -96,11 +99,13 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
     expect(maps[DEFAULT_MAP_ID]).toBe(maps.demo1);
   });
 
-  it('demo2 (pincer) spawns its first wave from both flanks of a centered base', () => {
+  it('demo2 (pincer) spawns its initial monsters from both flanks of a centered base', () => {
     const demo2 = maps.demo2;
-    expect(demo2.waves).toHaveLength(4);
-    const firstWaveXs = demo2.waves[0].monsters.map((m) => m.spawn.x).sort((a, b) => a - b);
-    expect(firstWaveXs).toEqual([1, 7]); // one spawn near the west wall, one near the east wall
+    expect(demo2.initialMonsters).toHaveLength(2);
+    expect(demo2.spawnSchedule).toHaveLength(13);
+    expect(demo2.totalTurns).toBe(13);
+    const initialXs = demo2.initialMonsters.map((m) => m.spawn.x).sort((a, b) => a - b);
+    expect(initialXs).toEqual([1, 7]); // one spawn near the west wall, one near the east wall
   });
 
   it('builds a playable BattleEngine on demo2 without throwing', () => {
@@ -111,9 +116,12 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
     expect(snap.baseTiles.length).toBeGreaterThan(0);
   });
 
-  it("demo2's later waves include yuan_ling, giving it a second monster archetype (not just yin_ghost)", () => {
+  it("demo2's spawnSchedule includes yuan_ling, giving it a second monster archetype (not just yin_ghost)", () => {
     const demo2 = maps.demo2;
-    const allMonsterIds = new Set(demo2.waves.flatMap((w) => w.monsters.map((m) => m.monsterId)));
+    const allMonsterIds = new Set([
+      ...demo2.initialMonsters.map((m) => m.monsterId),
+      ...demo2.spawnSchedule.map((s) => s.monsterId),
+    ]);
     expect(allMonsterIds.has('yin_ghost')).toBe(true);
     expect(allMonsterIds.has('yuan_ling')).toBe(true);
   });
@@ -121,7 +129,7 @@ describe('maps registry (multi-level select, roadmap ch.5)', () => {
   it('no monster on demo2 ever gets stuck with a move intent that goes nowhere (regression: hazard tiles sat directly in the greedy spawn path)', () => {
     // Playing purely passively (no player actions) still cycles through
     // defeat -> confirm -> retry, which is enough to walk every spawn
-    // pattern across all four waves multiple times.
+    // pattern across every scheduled spawn multiple times.
     const engine = new BattleEngine(maps.demo2, STARTING_SQUAD, registry);
     for (let i = 0; i < 60; i++) {
       const snap = engine.getSnapshot();
@@ -227,16 +235,21 @@ describe('demo3 (wolf woods) — finale mixing all three unused monster archetyp
     const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
     const snap = engine.getSnapshot();
     expect(snap.players).toHaveLength(2);
-    expect(snap.monsters).toHaveLength(1); // wave 1: a single yao_lang, introducing the speed mechanic solo
+    expect(snap.monsters).toHaveLength(1); // initialMonsters: a single yao_lang, introducing the speed mechanic solo
     expect(snap.baseTiles.length).toBeGreaterThan(0);
-    expect(maps.demo3.waves).toHaveLength(5); // finale spec: 5 waves (roadmap ch.4 關卡結構)
+    expect(maps.demo3.initialMonsters).toHaveLength(1);
+    expect(maps.demo3.spawnSchedule).toHaveLength(15);
+    expect(maps.demo3.totalTurns).toBe(17);
   });
 
   it('covers all three new monster archetypes plus yin_ghost as base pressure', () => {
     // yao_lang / teng_yao / jiangshi all target nearestPlayer, never the base —
     // without yin_ghost in the mix the base could never fall, making the level
     // unlosable. The finale spec (混合該世界所有怪) wants the mix anyway.
-    const allMonsterIds = new Set(maps.demo3.waves.flatMap((w) => w.monsters.map((m) => m.monsterId)));
+    const allMonsterIds = new Set([
+      ...maps.demo3.initialMonsters.map((m) => m.monsterId),
+      ...maps.demo3.spawnSchedule.map((s) => s.monsterId),
+    ]);
     expect(allMonsterIds.has('yao_lang')).toBe(true);
     expect(allMonsterIds.has('teng_yao')).toBe(true);
     expect(allMonsterIds.has('jiangshi')).toBe(true);
@@ -318,11 +331,16 @@ describe('demo4 (mist hollow) — 3-hero squad + healer + poison mist, world-2 s
     expect(snap.players).toHaveLength(3);
     expect(snap.players[2].characterId).toBe('bai_zhi');
     expect(snap.baseTiles.length).toBeGreaterThan(0);
-    expect(maps.demo4.waves).toHaveLength(4); // world-2 small-level spec: world-1 small-level (3) + 1
+    expect(maps.demo4.initialMonsters).toHaveLength(1);
+    expect(maps.demo4.spawnSchedule).toHaveLength(9);
+    expect(maps.demo4.totalTurns).toBe(14);
   });
 
   it('covers both new-mechanic monster archetypes: yin_ghost (base-seeking, crosses the mist lanes) and jiangshi (player-seeking tank)', () => {
-    const allMonsterIds = new Set(maps.demo4.waves.flatMap((w) => w.monsters.map((m) => m.monsterId)));
+    const allMonsterIds = new Set([
+      ...maps.demo4.initialMonsters.map((m) => m.monsterId),
+      ...maps.demo4.spawnSchedule.map((s) => s.monsterId),
+    ]);
     expect(allMonsterIds.has('yin_ghost')).toBe(true);
     expect(allMonsterIds.has('jiangshi')).toBe(true);
   });
@@ -379,9 +397,11 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
       'lesson_poison_mist',
     ]);
     for (const id of LESSON_MAP_IDS) {
-      expect(maps[id]).toBeDefined();
-      expect(maps[id].waves.length).toBeGreaterThan(0);
-      expect(maps[id].waves.length).toBeLessThanOrEqual(2); // small practice levels: 1-2 waves, not a finale
+      const map = maps[id];
+      expect(map).toBeDefined();
+      expect(map.initialMonsters.length + map.spawnSchedule.length).toBeGreaterThan(0); // has some monster
+      expect(map.spawnSchedule).toHaveLength(0); // small practice levels: no emergence tiles, not a finale
+      expect(map.totalTurns).toBeLessThanOrEqual(12); // short mission, not a finale-length run
     }
   });
 
@@ -476,7 +496,10 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
     engine.endTurn();
-    expect(engine.getSnapshot().outcome).toBe('victory');
+    // Killing every monster is never victory by itself (A4) — this map's
+    // totalTurns is well beyond the couple of turns this test spends, so the
+    // run is still in progress, not won.
+    expect(engine.getSnapshot().outcome).toBeNull();
   });
 
   it('lesson_push_abyss: Cloud-Parting Palm shoves the ghost into the hazard tile and kills it outright', () => {
@@ -486,7 +509,9 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
     engine.endTurn();
-    expect(engine.getSnapshot().outcome).toBe('victory'); // last wave cleared, base untouched
+    // Killing the only monster is not victory by itself (A4) — the mission's
+    // totalTurns hasn't elapsed yet, so the run continues; the base is simply untouched.
+    expect(engine.getSnapshot().outcome).toBeNull();
     expect(engine.getSnapshot().baseHp).toBe(map.baseHp);
   });
 
@@ -527,7 +552,9 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
     expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // one hit, thanks to the mist chip
     engine.endTurn();
-    expect(engine.getSnapshot().outcome).toBe('victory');
+    // Killing the ghost doesn't win the level by itself (A4) — this map's
+    // totalTurns hasn't elapsed after just 2 turns, so the run is still open.
+    expect(engine.getSnapshot().outcome).toBeNull();
   });
 });
 
@@ -641,7 +668,9 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
         { x: 5, y: 3 }, // bai_zhi
       ],
       squadCharacterIds: ['li_yan', 'su_qing', 'ling_er', 'bai_zhi'],
-      waves: [{ turns: 99, monsters }],
+      initialMonsters: monsters,
+      spawnSchedule: [],
+      totalTurns: 99,
     };
   }
 
