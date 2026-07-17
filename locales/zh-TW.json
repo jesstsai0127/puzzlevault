@@ -80,7 +80,6 @@
   "world.4.name": "世界四・毒霧幽谷",
 
   "ui.hp": "生命值",
-  "ui.wave": "波次",
   "ui.end_turn": "結束回合",
   "ui.reset_turn": "重置本回合",
   "ui.reset_turn_used": "本關已用",
@@ -97,17 +96,15 @@
   "ui.turn": "回合",
   "ui.instruction_idle": "點選角色，再點選亮起的格子移動，或點下方的技能按鈕。",
   "ui.instruction_armed": "點選亮起的格子瞄準施放，或再點一次技能取消。",
-  "ui.wave_cleared_hint": "這波已清空！但增援還沒到——按「結束回合」只會讓時鐘往下走，不會馬上進入下一波。",
 
   "ui.base_hp": "陣血",
-  "ui.turns_left": "本波剩餘回合",
 
   "ui.ultimate_used": "本關卡已使用",
   "ui.ultimate_hint": "大絕：本關卡僅限一次",
-  "ui.next_wave_in": "下一波還有",
+  "ui.next_wave_in": "任務還剩",
   "ui.turns_suffix": "回合",
-  "ui.last_wave_hold": "最後一波！撐住",
-  "ui.last_wave_reminder": "最後一波了！不用殺光——撐到倒數結束、陣還活著就贏。",
+  "ui.last_wave_hold": "最後一回合！撐住",
+  "ui.last_wave_reminder": "最後一回合了！不用殺光——這回合撐完、陣還活著就贏。",
 
   "ui.confirm": "確認",
   "ui.blocked": "格擋！",
