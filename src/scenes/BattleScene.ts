@@ -4,10 +4,10 @@ import type { CardinalDir } from '../../core/geometry';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, registry } from '../../content/registry';
+import { STARTING_SQUAD, DEFAULT_MAP_ID, LESSON_MAP_IDS, maps, registry } from '../../content/registry';
 import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
-import { levelSelectUrl } from './levelNav';
+import { levelSelectUrl, tutorialStepUrl } from './levelNav';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
@@ -165,25 +165,29 @@ export class BattleScene extends Phaser.Scene {
    * of crippling it. Cleared on select/skill/reset/endTurn/commit.
    */
   private pendingSteps: Array<{ x: number; y: number }> = [];
+  /** ITB alignment (2026-07-17): set when this map is being played as a step of the standalone tutorial sequence (LESSON_MAP_IDS) — see handleConfirmOutcome()'s auto-advance. Undefined for every normal level. */
+  private tutorialIndex?: number;
 
   constructor() {
     super('BattleScene');
   }
 
   /**
-   * Phaser scene-data hook — receives { mapId } from main.ts's boot-time
-   * game.scene.start('BattleScene', { mapId }) when the URL names a level
-   * (?map=...). Switching levels goes through a real page navigation (see
-   * levelNav.ts), not a same-page scene.start() round-trip, so this only
-   * ever runs once per page load in normal use — but the caches below are
-   * still reset defensively: Phaser CAN reuse a scene instance across
-   * restarts, and if that ever happens again, a fresh engine's monster
-   * instanceIds collide with the previous run's (the spawn counter restarts
-   * at 0 each time), so a stale map-keyed cache entry would get silently
-   * reused instead of a fresh game object being created.
+   * Phaser scene-data hook — receives { mapId, tutorialIndex? } from main.ts's
+   * boot-time game.scene.start('BattleScene', ...) when the URL names a level
+   * (?map=...) and, for a tutorial step, an index (?tutorial=...). Switching
+   * levels goes through a real page navigation (see levelNav.ts), not a
+   * same-page scene.start() round-trip, so this only ever runs once per page
+   * load in normal use — but the caches below are still reset defensively:
+   * Phaser CAN reuse a scene instance across restarts, and if that ever
+   * happens again, a fresh engine's monster instanceIds collide with the
+   * previous run's (the spawn counter restarts at 0 each time), so a stale
+   * map-keyed cache entry would get silently reused instead of a fresh game
+   * object being created.
    */
-  init(data: { mapId?: string }) {
+  init(data: { mapId?: string; tutorialIndex?: number }) {
     this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
+    this.tutorialIndex = data.tutorialIndex;
     this.tileHighlights = [];
     this.monsterSprites = new Map();
     this.monsterHpBars = new Map();
@@ -757,8 +761,21 @@ export class BattleScene extends Phaser.Scene {
     this.render();
   }
 
-  /** Advances past whatever endTurn() froze the board on — see buildOutcomeOverlay(). */
+  /**
+   * Advances past whatever endTurn() froze the board on — see
+   * buildOutcomeOverlay(). ITB alignment (2026-07-17): a tutorial-sequence
+   * win auto-advances to the next step (or back to level select after the
+   * last one) instead of just resetting this same map — read BEFORE calling
+   * engine.confirmOutcome(), since that call clears the outcome.
+   */
   private handleConfirmOutcome() {
+    const outcome = this.engine.getSnapshot().outcome;
+    if (this.tutorialIndex !== undefined && outcome === 'victory') {
+      const nextIndex = this.tutorialIndex + 1;
+      window.location.href =
+        nextIndex < LESSON_MAP_IDS.length ? tutorialStepUrl(LESSON_MAP_IDS, nextIndex) : levelSelectUrl();
+      return;
+    }
     this.engine.confirmOutcome();
     this.armedSkillId = null;
     this.render();
@@ -1324,8 +1341,16 @@ export class BattleScene extends Phaser.Scene {
       ? i18n.t('ui.last_wave_hold')
       : `${i18n.t('ui.next_wave_in')} ${snap.totalTurns - snap.turnNumber} ${i18n.t('ui.turns_suffix')}`;
 
+    // ITB alignment (2026-07-17): a tutorial-sequence step shows its
+    // progress through the 5-step flow instead of the map's own name — the
+    // map name is an internal id ("lesson_ap_cost"), not something a player
+    // mid-tutorial needs to see.
+    const titleSegment =
+      this.tutorialIndex !== undefined
+        ? i18n.t('ui.tutorial_progress').replace('{n}', String(this.tutorialIndex + 1)).replace('{total}', String(LESSON_MAP_IDS.length))
+        : i18n.t(this.map.nameKey);
     this.hudText.setText(
-      `${i18n.t(this.map.nameKey)}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.turn')} ${snap.turnNumber}/${snap.totalTurns}   ${turnCountdown}`,
+      `${titleSegment}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.turn')} ${snap.turnNumber}/${snap.totalTurns}   ${turnCountdown}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
