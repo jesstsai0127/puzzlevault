@@ -15,51 +15,29 @@
     { "x": 1, "y": 1 },
     { "x": 1, "y": 4 }
   ],
-  "waves": [
-    {
-      "turns": 2,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } }
-      ]
-    },
-    {
-      "turns": 2,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } }
-      ]
-    },
-    {
-      "turns": 2,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } }
-      ]
-    },
-    {
-      "turns": 2,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 2 } }
-      ]
-    },
-    {
-      "turns": 3,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 6, "y": 3 } }
-      ]
-    }
-  ]
+  "initialMonsters": [
+    { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } }
+  ],
+  "spawnSchedule": [
+    { "telegraphTurn": 2, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 1 } },
+    { "telegraphTurn": 2, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 2 } },
+    { "telegraphTurn": 2, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 3 } },
+    { "telegraphTurn": 4, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 1 } },
+    { "telegraphTurn": 4, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 2 } },
+    { "telegraphTurn": 4, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 3 } },
+    { "telegraphTurn": 4, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 4 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 1 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 2 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 3 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 4 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 6, "y": 2 } },
+    { "telegraphTurn": 8, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 1 } },
+    { "telegraphTurn": 8, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 2 } },
+    { "telegraphTurn": 8, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 3 } },
+    { "telegraphTurn": 8, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 4 } },
+    { "telegraphTurn": 8, "monsterId": "yin_ghost", "tile": { "x": 6, "y": 2 } },
+    { "telegraphTurn": 8, "monsterId": "yin_ghost", "tile": { "x": 6, "y": 3 } }
+  ],
+  "totalTurns": 11
 }
