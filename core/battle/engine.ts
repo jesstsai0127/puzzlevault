@@ -30,6 +30,9 @@ const PUSH_COLLISION_DAMAGE = 1;
 /** Flat, unavoidable damage to any living unit still standing on a poison-mist ('*') tile at endTurn() — see applyPoisonMistDamage(). */
 const POISON_MIST_DAMAGE = 1;
 
+/** ITB emergence rule (A3): a player unit standing on a tile when its telegraphed spawn resolves blocks the monster entirely and takes this flat damage instead. */
+const EMERGENCE_BLOCK_DAMAGE = 1;
+
 /**
  * A unit can never hold more than this many shield charges at once — each
  * charge blocks one full hit (see dealDamage), so an uncapped stack would let
@@ -81,7 +84,6 @@ export class BattleEngine {
 
   private players: PlayerUnitState[] = [];
   private monsters: MonsterUnitState[] = [];
-  private waveIndex = 0;
   private turnNumber = 1;
   /** Set by endTurn() the instant a loss/win happens; the board is frozen on that turn's result until confirmOutcome() is called. */
   private pendingOutcome: RunOutcome | null = null;
@@ -90,7 +92,6 @@ export class BattleEngine {
   private baseTiles: Vec2[] = [];
   private baseMaxHp = 0;
   private baseHp = 0;
-  private turnsLeftInWave = 0;
 
   private currentIntents: MonsterIntent[] = [];
   /** What the most recent moveUnit/useSkill/rest/endTurn call actually did — see getLastEvents(). */
@@ -124,16 +125,22 @@ export class BattleEngine {
     return {
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
       monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
-      waveIndex: this.waveIndex,
       turnNumber: this.turnNumber,
+      totalTurns: this.map.totalTurns,
       outcome: this.pendingOutcome,
       baseHp: this.baseHp,
       baseMaxHp: this.baseMaxHp,
       baseTiles: this.baseTiles.map((t) => ({ ...t })),
-      turnsLeftInWave: this.turnsLeftInWave,
-      waveTurns: this.map.waves[this.waveIndex].turns,
+      pendingSpawnTiles: this.pendingSpawnTiles(),
       resetTurnUsed: this.resetTurnUsed,
     };
+  }
+
+  /** Tiles telegraphed to spawn a monster at the end of THIS turn (A3 emergence markers) — for UI warning glyphs. */
+  private pendingSpawnTiles(): Vec2[] {
+    return this.map.spawnSchedule
+      .filter((entry) => entry.telegraphTurn === this.turnNumber)
+      .map((entry) => ({ ...entry.tile }));
   }
 
   getIntents(): MonsterIntent[] {
@@ -327,8 +334,14 @@ export class BattleEngine {
     // turn, same as a player who ended their turn standing on it.
     this.applyPoisonMistDamage();
 
+    // Capture the turn that's ending BEFORE incrementing — spawnSchedule
+    // entries telegraphed for this turn (shown to the player all turn) now
+    // resolve: a living player standing on the tile blocks the spawn and
+    // eats EMERGENCE_BLOCK_DAMAGE; otherwise the monster appears.
+    const endingTurn = this.turnNumber;
     this.turnNumber += 1;
     this.monsters = this.monsters.filter((m) => m.hp > 0);
+    this.resolveScheduledSpawns(endingTurn);
 
     if (this.baseHp <= 0) {
       // Freeze right here on the position that killed the base — the board
@@ -343,7 +356,7 @@ export class BattleEngine {
 
     if (this.players.every((p) => p.hp <= 0)) {
       // Total party wipe is a loss in its own right, not a spectator mode:
-      // without this, a dead squad could idle out the wave clock and still
+      // without this, a dead squad could idle out the mission clock and still
       // "win" any level whose monsters only hunt players. Same freeze-then-
       // confirmOutcome() flow as the base-death branch above — the wiping
       // turn stays on screen, intents included, until the player confirms.
@@ -351,22 +364,14 @@ export class BattleEngine {
       return;
     }
 
-    this.turnsLeftInWave -= 1;
-
-    const isLastWave = this.waveIndex === this.map.waves.length - 1;
-    if (isLastWave && (this.monsters.length === 0 || this.turnsLeftInWave <= 0)) {
-      // Victory: outlasted the final assault's clock, or cleared the board
-      // after the last wave arrived. The base is alive (checked above).
+    if (this.turnNumber > this.map.totalTurns) {
+      // Victory (A4): survived the mission's fixed turn count with the base
+      // and squad alive — killing every monster was never required, matching
+      // ITB ("the grid doesn't zero out") rather than a kill-clear condition.
       this.pendingOutcome = 'victory';
       this.currentIntents = [];
-    } else if (!isLastWave && this.turnsLeftInWave <= 0) {
-      // Reinforce: the clock ran out before the last wave — survivors PERSIST
-      // and the next wave's monsters are ADDED on top of them, not a fresh start.
-      this.reinforce();
     } else {
-      // Continue: neither reinforcement time nor a last-wave win — including
-      // a non-final wave cleared early, which just gives a breather until the
-      // clock reinforces. Every turn is a fresh round regardless: each living
+      // Continue: every turn is a fresh round regardless — each living
       // unit's moved/acted flags reset here.
       this.startFreshTurn();
     }
@@ -394,20 +399,6 @@ export class BattleEngine {
     this.resetRun();
   }
 
-  /** Reinforcement clock hit zero before the last wave: add the next wave's monsters on top of any survivors. */
-  private reinforce(): void {
-    const nextWave = this.waveIndex + 1;
-    // Existing survivors (this.monsters) are passed as the avoid-list so
-    // reinforcements land beside them, never on top of them.
-    const reinforcements = this.spawnWave(nextWave, this.monsters);
-    this.monsters = [...this.monsters, ...reinforcements];
-    this.waveIndex = nextWave;
-    this.turnsLeftInWave = this.map.waves[nextWave].turns;
-    // Base HP is NOT reset here — it persists across waves within a run
-    // (only a defeat / manual reset restores it, in resetRun below).
-    this.startFreshTurn();
-  }
-
   /** Resets every living unit's moved/acted flags, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
   private startFreshTurn(): void {
     for (const p of this.players) {
@@ -420,9 +411,8 @@ export class BattleEngine {
     this.captureTurnStart();
   }
 
-  /** Reset players (full HP), base HP, and respawn wave 1's monsters (fresh HP) — the only reset state this game has. */
+  /** Reset players (full HP), base HP, and respawn the map's initial monsters (fresh HP) — the only reset state this game has. */
   private resetRun(): void {
-    this.waveIndex = 0;
     this.turnNumber = 1;
     this.pendingOutcome = null;
     this.pendingEvents = [];
@@ -430,7 +420,6 @@ export class BattleEngine {
     // and ONLY with a full level reset (see resetTurn()).
     this.resetTurnUsed = false;
     this.baseHp = this.baseMaxHp;
-    this.turnsLeftInWave = this.map.waves[0].turns;
 
     this.players = this.squadCharacterIds.map((charId, i) => {
       const def = this.registry.characters[charId];
@@ -454,29 +443,17 @@ export class BattleEngine {
       };
     });
 
-    this.monsters = this.spawnWave(0);
+    this.monsters = this.spawnInitialMonsters();
     this.currentIntents = this.computeIntents();
     this.captureTurnStart();
   }
 
-  /**
-   * `avoidMonsters` lets a reinforcement wave steer clear of survivors still
-   * on the board; a fresh wave spawn (resetRun) passes none, since those
-   * old monsters are being discarded, not stood beside.
-   */
-  private spawnWave(waveIndex: number, avoidMonsters: MonsterUnitState[] = []): MonsterUnitState[] {
-    const wave = this.map.waves[waveIndex];
+  /** Monsters present at turn 1 with no telegraph — the level's opening board state. */
+  private spawnInitialMonsters(): MonsterUnitState[] {
     const claimed = new Set<string>();
-    return wave.monsters.map((spawn) => {
+    return this.map.initialMonsters.map((spawn) => {
       const def = this.registry.monsters[spawn.monsterId];
-      const occupant = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, spawn.spawn));
-      if (occupant) {
-        // Standing on a spawn tile is a risk, not a free block: the monster
-        // gets one ambush hit in as it forces its way in, then still takes
-        // the nearest free tile (units never share a cell).
-        this.dealDamageWithEvent(occupant, this.ambushDamageFor(def));
-      }
-      const pos = this.findFreeSpawnTile(spawn.spawn, claimed, avoidMonsters);
+      const pos = this.findFreeSpawnTile(spawn.spawn, claimed, []);
       claimed.add(`${pos.x},${pos.y}`);
       this.monsterSpawnCounter += 1;
       return {
@@ -490,20 +467,41 @@ export class BattleEngine {
     });
   }
 
-  /** The damage a monster's ambush hit deals: its own first damage-effect amount, or 1 if it has none. */
-  private ambushDamageFor(def: MonsterDef): number {
-    for (const skillId of def.skillIds) {
-      const skill = this.registry.skills[skillId];
-      const dmg = skill?.effects.find((e) => e.type === 'damage');
-      if (dmg) return dmg.amount;
+  /**
+   * A3: resolve every spawnSchedule entry telegraphed for `endingTurn`. A
+   * living player unit still standing on the tile blocks the spawn entirely
+   * and takes EMERGENCE_BLOCK_DAMAGE instead — no ambush hit, no "monster
+   * still gets in nearby": the block is a real wall, at a real cost.
+   */
+  private resolveScheduledSpawns(endingTurn: number): void {
+    const due = this.map.spawnSchedule.filter((entry) => entry.telegraphTurn === endingTurn);
+    for (const entry of due) {
+      const blocker = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, entry.tile));
+      if (blocker) {
+        this.dealDamageWithEvent(blocker, EMERGENCE_BLOCK_DAMAGE);
+        continue;
+      }
+      const def = this.registry.monsters[entry.monsterId];
+      // Only other monsters can contest the tile now (players already handled
+      // above) — nudge to the nearest free tile rather than stacking on one.
+      const pos = this.monsters.some((m) => m.hp > 0 && equalsVec2(m.position, entry.tile))
+        ? this.findFreeSpawnTile(entry.tile, new Set(), this.monsters)
+        : { ...entry.tile };
+      this.monsterSpawnCounter += 1;
+      this.monsters.push({
+        instanceId: `${entry.monsterId}#${this.monsterSpawnCounter}`,
+        monsterId: entry.monsterId,
+        position: pos,
+        hp: def.maxHp,
+        maxHp: def.maxHp,
+        shield: 0,
+      });
     }
-    return 1;
   }
 
   /**
-   * A wave's designated spawn tile can end up occupied by a player who
-   * wandered there in a previous wave. BFS outward for the nearest free
-   * tile instead of spawning on top of them.
+   * A spawn tile can end up occupied by a monster already on the board.
+   * BFS outward for the nearest free tile instead of stacking on top of it.
    */
   private findFreeSpawnTile(preferred: Vec2, claimed: Set<string>, avoidMonsters: MonsterUnitState[]): Vec2 {
     const isFree = (p: Vec2) =>
