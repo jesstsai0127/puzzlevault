@@ -59,6 +59,7 @@ const MONSTER_GLYPH = '👻'; // every Phase 1 monster is yin_ghost.
 const BASE_GLYPH = '🏯';
 const HAZARD_GLYPH = '▽';
 const POISON_MIST_GLYPH = '☠';
+const EMERGENCE_GLYPH = '⚠';
 
 /** Static Traditional-Chinese rules panel copy — placeholder-quality by design (Phase 1 is text-only, see roadmap ch.3). */
 const RULES_PANEL_STATIC = [
@@ -84,7 +85,9 @@ const RULES_PANEL_STATIC = [
   '',
   '鍵盤：方向鍵規劃路線、空白鍵確認移動、Esc 取消、1・2・3 選技能（再按方向鍵瞄準）、R 調息、Q 換人、Z 重置本回合、Enter 結束回合。',
   '',
-  '每一波是倒數計時：歸零時下一波直接加進場，沒殺完的妖物會留著疊上去；最後一波倒數完、陣還活著就贏——不用殺光。',
+  '地上發光 ⚠ 的格子下一回合會鑽出新妖物；站上去可以堵住，自己吃 1 點傷但妖物不會出現。',
+  '',
+  '這關要撐過固定回合數，陣還活著就贏——不用殺光所有妖物。',
 ].join('\n');
 
 const DIR_VECTORS: Record<CardinalDir, { x: number; y: number }> = {
@@ -120,7 +123,7 @@ export class BattleScene extends Phaser.Scene {
   private intentMarkers: Phaser.GameObjects.GameObject[] = [];
   private pendingPathMarkers: Phaser.GameObjects.GameObject[] = [];
   private damagePreviewMarkers: Phaser.GameObjects.GameObject[] = [];
-  private spawnPreviewMarkers: Phaser.GameObjects.GameObject[] = [];
+  private emergenceMarkers: Phaser.GameObjects.GameObject[] = [];
   private selectionRing!: Phaser.GameObjects.Rectangle;
   private baseHpText?: Phaser.GameObjects.Text;
   private rulesPanelText!: Phaser.GameObjects.Text;
@@ -188,7 +191,7 @@ export class BattleScene extends Phaser.Scene {
     this.intentMarkers = [];
     this.pendingPathMarkers = [];
     this.damagePreviewMarkers = [];
-    this.spawnPreviewMarkers = [];
+    this.emergenceMarkers = [];
     this.selectedUnit = 0;
     this.armedSkillId = null;
     this.pendingSteps = [];
@@ -1109,9 +1112,25 @@ export class BattleScene extends Phaser.Scene {
 
     this.intentMarkers.forEach((o) => o.destroy());
     this.intentMarkers = [];
-    for (const intent of this.engine.getIntents()) {
+    // A2: currentIntents is already resolution order (endTurn() applies them
+    // in this same array order) — a small order badge on each monster makes
+    // that order visible instead of implicit, so "who goes first" is read off
+    // the board, not guessed.
+    this.engine.getIntents().forEach((intent, order) => {
       const m = livingMonsters.find((x) => x.instanceId === intent.instanceId);
-      if (!m) continue;
+      if (!m) return;
+      const orderPos = this.tileCenter(m.position.x, m.position.y);
+      const orderBadge = this.add
+        .text(orderPos.px - TILE / 2 + 10, orderPos.py - TILE / 2 + 10, `${order + 1}`, {
+          fontFamily: 'monospace',
+          fontSize: '13px',
+          color: '#ffd166',
+          stroke: '#000000',
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5)
+        .setDepth(3);
+      this.intentMarkers.push(orderBadge);
       const { px, py } = this.tileCenter(m.position.x, m.position.y);
       let dir: CardinalDir | null = null;
       let color = '#8a8a9a';
@@ -1138,7 +1157,7 @@ export class BattleScene extends Phaser.Scene {
           .setDepth(1);
         this.intentMarkers.push(destMarker);
       }
-      if (!dir) continue;
+      if (!dir) return;
       const v = DIR_VECTORS[dir];
       const marker = this.add
         .text(px + v.x * (TILE / 2 - 4), py + v.y * (TILE / 2 - 4) - TILE / 2, label, {
@@ -1151,7 +1170,7 @@ export class BattleScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(2);
       this.intentMarkers.push(marker);
-    }
+    });
 
     // Combined damage a target is about to take THIS turn, from however many
     // monsters are currently locked onto it (e.g. two ghosts each telegraphing
@@ -1181,19 +1200,19 @@ export class BattleScene extends Phaser.Scene {
       this.damagePreviewMarkers.push(marker);
     }
 
-    this.spawnPreviewMarkers.forEach((o) => o.destroy());
-    this.spawnPreviewMarkers = [];
-    if (livingMonsters.length === 0 && !snap.outcome) {
-      const nextWave = this.map.waves[snap.waveIndex + 1];
-      for (const spawn of nextWave?.monsters ?? []) {
-        const { px, py } = this.tileCenter(spawn.spawn.x, spawn.spawn.y);
-        const ghost = this.add
-          .text(px, py, MONSTER_GLYPH, { fontSize: '36px' })
-          .setOrigin(0.5)
-          .setAlpha(0.4)
-          .setDepth(2);
-        this.spawnPreviewMarkers.push(ghost);
-      }
+    this.emergenceMarkers.forEach((o) => o.destroy());
+    this.emergenceMarkers = [];
+    // A3: glowing warning on every tile telegraphed to spawn a monster at the
+    // end of THIS turn — a player standing on one blocks the spawn (see
+    // resolveScheduledSpawns()), so this is a real "hold the line" choice,
+    // not decoration.
+    for (const tile of snap.pendingSpawnTiles) {
+      const { px, py } = this.tileCenter(tile.x, tile.y);
+      const warning = this.add
+        .text(px, py, EMERGENCE_GLYPH, { fontSize: '36px', color: '#ffd166' })
+        .setOrigin(0.5)
+        .setDepth(2);
+      this.emergenceMarkers.push(warning);
     }
 
     const unitAlive = (selected?.hp ?? 0) > 0;
@@ -1287,38 +1306,34 @@ export class BattleScene extends Phaser.Scene {
         .join('    '),
     );
 
-    if (livingMonsters.length === 0 && !snap.outcome) {
-      this.instructionText.setText(i18n.t('ui.wave_cleared_hint'));
-    } else {
-      this.instructionText.setText(
-        i18n.t(this.armedSkillId ? 'ui.instruction_armed' : 'ui.instruction_idle'),
-      );
-    }
+    this.instructionText.setText(
+      i18n.t(this.armedSkillId ? 'ui.instruction_armed' : 'ui.instruction_idle'),
+    );
 
-    const isLastWave = snap.waveIndex === this.map.waves.length - 1;
-    if (isLastWave && !this.announcedLastWave) {
+    // A4: fixed mission length — the final turn IS the win condition
+    // (outlast it with the base alive, no kill requirement), so the reminder
+    // fires once the turn counter reaches the last turn, not off any
+    // wave/monster state.
+    const isFinalTurn = snap.turnNumber === snap.totalTurns;
+    if (isFinalTurn && !this.announcedLastWave) {
       this.announcedLastWave = true;
       this.lastWaveBanner.setText(i18n.t('ui.last_wave_reminder')).setVisible(true);
       this.time.delayedCall(3000, () => this.lastWaveBanner.setVisible(false));
     }
-    // The last wave's countdown IS the win condition (outlast it with the
-    // base alive, no kill requirement) — hiding the number here was the bug:
-    // a player watching "撐住" with no digits has no way to see victory
-    // coming, so it reads as sudden/arbitrary instead of an outlastable clock.
-    const waveCountdown = isLastWave
-      ? `${i18n.t('ui.last_wave_hold')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`
-      : `${i18n.t('ui.next_wave_in')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`;
+    const turnCountdown = isFinalTurn
+      ? i18n.t('ui.last_wave_hold')
+      : `${i18n.t('ui.next_wave_in')} ${snap.totalTurns - snap.turnNumber} ${i18n.t('ui.turns_suffix')}`;
 
     this.hudText.setText(
-      `${i18n.t(this.map.nameKey)}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}`,
+      `${i18n.t(this.map.nameKey)}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.turn')} ${snap.turnNumber}/${snap.totalTurns}   ${turnCountdown}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
 
     const liveStatus = [
       `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
-      `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}`,
-      waveCountdown,
+      `${i18n.t('ui.turn')} ${snap.turnNumber}/${snap.totalTurns}`,
+      turnCountdown,
     ].join('\n');
     // A lesson-level's one-off tip (see MapDef.hintKey) sits right under the
     // general rules panel, in the same static-text style — not a separate
