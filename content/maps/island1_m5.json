@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "id": "island1_m5",
+  "nameKey": "map.island1_m5.name",
+  "grid": [
+    "########",
+    "#~    ~#",
+    "#~ BB ~#",
+    "#~ BB ~#",
+    "#~    ~#",
+    "#      #",
+    "#      #",
+    "########"
+  ],
+  "playerStarts": [
+    { "x": 2, "y": 6 },
+    { "x": 4, "y": 6 },
+    { "x": 6, "y": 6 }
+  ],
+  "squadCharacterIds": ["li_yan", "su_qing", "bai_zhi"],
+  "initialMonsters": [
+    { "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 1 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 3, "y": 4 } },
+    { "monsterId": "yao_lang", "spawn": { "x": 6, "y": 5 } }
+  ],
+  "spawnSchedule": [
+    { "telegraphTurn": 2, "monsterId": "yao_lang", "tile": { "x": 5, "y": 6 } }
+  ],
+  "totalTurns": 5,
+  "baseHp": 8
+}
