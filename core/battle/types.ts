@@ -92,19 +92,18 @@ export type RunOutcome = 'defeat' | 'victory';
 export interface BattleSnapshot {
   players: PlayerUnitState[];
   monsters: MonsterUnitState[];
-  waveIndex: number;
   turnNumber: number;
+  /** Fixed mission length (A4) — survive this many turns with the base alive to win. */
+  totalTurns: number;
   /** Set the instant a turn resolves into a loss/win; null while play continues. See RunOutcome. */
   outcome: RunOutcome | null;
-  /** Shared HP pool for the base ("陣") — reaching 0 is defeat and restarts the level from wave 1. */
+  /** Shared HP pool for the base ("陣") — reaching 0 is defeat and restarts the level from turn 1. */
   baseHp: number;
   baseMaxHp: number;
   /** All grid tiles occupied by the base, for rendering. */
   baseTiles: Vec2[];
-  /** Turns remaining before this wave is survived regardless of remaining monsters. */
-  turnsLeftInWave: number;
-  /** This wave's total turn budget (e.g. for a "2/4" display). */
-  waveTurns: number;
+  /** Tiles telegraphed to spawn a monster at the end of THIS turn (A3 emergence markers) — render as a glowing warning. */
+  pendingSpawnTiles: Vec2[];
   /** Whether this level run's single turn-reset (ITB-style: one per battle) has been spent — cleared only by resetLevel()/resetRun(). */
   resetTurnUsed: boolean;
 }
