@@ -40,7 +40,7 @@ function printBoard(engine: BattleEngine, mapId: string): void {
 
   console.log(`\n${'='.repeat(60)}`);
   console.log(
-    `Turn ${snap.turnNumber} | Wave ${snap.waveIndex + 1} | Turns left in wave: ${snap.turnsLeftInWave} | Base HP: ${snap.baseHp}/${snap.baseMaxHp}`,
+    `Turn ${snap.turnNumber}/${snap.totalTurns} | Base HP: ${snap.baseHp}/${snap.baseMaxHp}`,
   );
   console.log(`${'='.repeat(60)}`);
 
