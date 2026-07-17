@@ -491,6 +491,50 @@ describe('island2_m1: winnable — clear the ghost column, block the yuan_ling b
   });
 });
 
+describe('island2_m2: winnable via the dual-base split (solvability upper check)', () => {
+  // Template C: two separate bases, west and east. The squad CAN'T stack both
+  // damage-dealers on one threat — li_yan must hold the west lane while su_qing
+  // holds the east. Each kills its ghost before it reaches the base (redesigned
+  // from a broken layout where both ghosts started adjacent to the base and
+  // clawed on turn 1 with no possible counter).
+  it('split the squad, each lane kills its ghost pre-claw, then mop up — base untouched, full squad', () => {
+    const map = maps.island2_m2;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan chips the west ghost in melee; su_qing chips the east ghost
+    // from range; bai_zhi tucks into the center.
+    expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — both lanes finish their ghost before it can claw (base stays full).
+    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.getSnapshot().baseHp).toBe(8); // both base-threats dead, not a scratch on either base
+    engine.endTurn();
+
+    // T3 — su_qing kills the yuan_ling, li_yan a wolf; bai_zhi pulls clear.
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 2, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 3 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T4 — su_qing swings east for another wolf; T5 — ride it out.
+    expect(engine.moveUnit(1, { x: 6, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
