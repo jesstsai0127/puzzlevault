@@ -79,12 +79,17 @@ export class LevelSelectScene extends Phaser.Scene {
 
     // Two columns × two islands per column: islands 1-2 left, 3-4 right.
     // 5 missions per island at ROW_H each stacks well within the canvas.
+    // The 5th entry (the final battle) sits centered below both columns —
+    // apart from the island grid, same way ITB's Volcanic Hive sits apart
+    // from the 4 corporate islands.
     const columnX = [this.scale.width / 2 - 210, this.scale.width / 2 + 210];
     const topY = 130;
+    const ISLAND_BLOCK_H = HEADER_H + 5 * ROW_H + WORLD_GAP;
 
     WORLD_STRUCTURE.forEach((world, wi) => {
-      const colX = columnX[Math.floor(wi / 2)];
-      let y = topY + (wi % 2) * (HEADER_H + world.levels.length * ROW_H + WORLD_GAP);
+      const isFinal = wi >= 4;
+      const colX = isFinal ? this.scale.width / 2 : columnX[Math.floor(wi / 2)];
+      let y = isFinal ? topY + 2 * ISLAND_BLOCK_H : topY + (wi % 2) * ISLAND_BLOCK_H;
 
       this.add
         .text(colX, y, i18n.t(world.worldNameKey), {
