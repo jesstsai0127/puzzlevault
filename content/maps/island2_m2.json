@@ -13,19 +13,19 @@
     "########"
   ],
   "playerStarts": [
-    { "x": 3, "y": 5 },
-    { "x": 4, "y": 5 },
-    { "x": 4, "y": 6 }
+    { "x": 3, "y": 4 },
+    { "x": 5, "y": 5 },
+    { "x": 3, "y": 5 }
   ],
   "squadCharacterIds": ["li_yan", "su_qing", "bai_zhi"],
   "initialMonsters": [
-    { "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 1 } },
-    { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
-    { "monsterId": "yuan_ling", "spawn": { "x": 4, "y": 4 } }
+    { "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 4 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 4 } },
+    { "monsterId": "yuan_ling", "spawn": { "x": 4, "y": 6 } }
   ],
   "spawnSchedule": [
-    { "telegraphTurn": 2, "monsterId": "yao_lang", "tile": { "x": 5, "y": 5 } },
-    { "telegraphTurn": 2, "monsterId": "yao_lang", "tile": { "x": 3, "y": 4 } }
+    { "telegraphTurn": 2, "monsterId": "yao_lang", "tile": { "x": 2, "y": 6 } },
+    { "telegraphTurn": 2, "monsterId": "yao_lang", "tile": { "x": 6, "y": 6 } }
   ],
   "totalTurns": 5,
   "baseHp": 8
