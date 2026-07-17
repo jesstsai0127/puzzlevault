@@ -80,7 +80,6 @@
   "world.4.name": "World 4 - Miasma Hollow",
 
   "ui.hp": "HP",
-  "ui.wave": "Wave",
   "ui.end_turn": "End Turn",
   "ui.reset_turn": "Reset Turn",
   "ui.reset_turn_used": "Used this level",
@@ -97,17 +96,15 @@
   "ui.turn": "Turn",
   "ui.instruction_idle": "Click a character, then click a highlighted tile to move, or a skill button below.",
   "ui.instruction_armed": "Click a highlighted tile to aim, or click the skill again to cancel.",
-  "ui.wave_cleared_hint": "Wave cleared! Reinforcements haven't arrived yet — ending the turn just advances the clock, not the wave.",
 
   "ui.base_hp": "Base HP",
-  "ui.turns_left": "Turns left",
 
   "ui.ultimate_used": "Used this level",
   "ui.ultimate_hint": "Ultimate: once per level run",
-  "ui.next_wave_in": "Next wave in",
+  "ui.next_wave_in": "Mission turns left",
   "ui.turns_suffix": "turns",
-  "ui.last_wave_hold": "Final wave! Hold for",
-  "ui.last_wave_reminder": "Final wave! You don't need to kill everything — survive the countdown with the base alive and you win.",
+  "ui.last_wave_hold": "Final turn! Hold on",
+  "ui.last_wave_reminder": "Final turn! You don't need to kill everything — survive this turn with the base alive and you win.",
 
   "ui.confirm": "Confirm",
   "ui.blocked": "Blocked!",
