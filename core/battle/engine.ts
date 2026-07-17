@@ -7,7 +7,7 @@ import {
   stepDirectionToward,
 } from '../geometry';
 import type { CardinalDir, Vec2 } from '../geometry';
-import type { AiCondition, AiRule, AiTarget, EffectPrimitive, MapDef, MonsterDef, TargetMode } from '../content/types';
+import type { AiCondition, AiRule, AiTarget, EffectPrimitive, EffectType, MapDef, MonsterDef, TargetMode } from '../content/types';
 import type {
   ActionResult,
   AttackPreview,
@@ -48,6 +48,9 @@ type ResolvedTarget =
   | { kind: 'player'; unit: PlayerUnitState }
   | { kind: 'monster'; unit: MonsterUnitState }
   | { kind: 'base' };
+
+/** Which side(s) a mixed-crowd effect can land on. 'any' = ITB friendly fire (whatever unit occupies the tile); 'allies'/'enemies' = the caster's own / opposing side. */
+type SideFilter = 'allies' | 'enemies' | 'any';
 
 function sameCombatTarget(a: CombatTarget, b: CombatTarget): boolean {
   if (a.kind !== b.kind) return false;
@@ -243,7 +246,7 @@ export class BattleEngine {
       // (rather than making dir optional) is the smallest change that
       // supports the new modes; a caller casting a directionless skill can
       // pass any CardinalDir as a meaningless-but-format-valid placeholder.
-      const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, effect.type === 'heal');
+      const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type));
       for (const target of targets) this.applyEffect(effect, target, unit);
     }
     unit.acted = true;
@@ -320,7 +323,7 @@ export class BattleEngine {
         if (!skill) continue;
         const dirVec = MOVE_VECTORS[intent.direction];
         for (const effect of skill.effects) {
-          const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, effect.type === 'heal');
+          const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type));
           for (const target of targets) this.applyEffect(effect, target, monster);
         }
       }
@@ -669,7 +672,7 @@ export class BattleEngine {
       const dirVec = MOVE_VECTORS[intent.direction];
       for (const effect of skill.effects) {
         if (effect.type !== 'damage') continue;
-        const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target);
+        const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type));
         for (const target of targets) {
           if (target.kind === 'self') continue; // a monster hitting itself isn't a player-facing threat preview
           if (target.kind === 'base') {
@@ -831,6 +834,35 @@ export class BattleEngine {
       : this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
   }
 
+  /** Any live unit standing on tile `p`, either side — for ITB friendly fire, where an attack hits whatever occupies the tile. Players are checked first, but a tile can only hold one unit at a time so order is immaterial. */
+  private liveAnyUnitAt(p: Vec2): PlayerUnitState | MonsterUnitState | undefined {
+    return (
+      this.players.find((x) => x.hp > 0 && equalsVec2(x.position, p)) ??
+      this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p))
+    );
+  }
+
+  /**
+   * Which side(s) a mixed-crowd effect can land on, derived from its type:
+   * ITB damage and pushes hit ANYTHING on the tile (full friendly fire — your
+   * own mech, another enemy you shoved into the line, etc.); heals and shields
+   * only land on the caster's own side; taunt (our custom debuff, no ITB
+   * analog) targets a foe. Whole-field modes (allEnemies/allUnits/allAllies)
+   * hardcode their own side rules and never consult this.
+   */
+  private sideFilterForEffect(type: EffectType): SideFilter {
+    switch (type) {
+      case 'damage':
+      case 'push':
+        return 'any';
+      case 'heal':
+      case 'shield':
+        return 'allies';
+      case 'taunt':
+        return 'enemies';
+    }
+  }
+
   /** Wraps a found unit as a ResolvedTarget of the matching kind. */
   private wrapTarget(unit: PlayerUnitState | MonsterUnitState): ResolvedTarget {
     return this.isMonster(unit) ? { kind: 'monster', unit } : { kind: 'player', unit };
@@ -843,24 +875,24 @@ export class BattleEngine {
    * instead of a value / null — callers loop over the result either way, so
    * behavior for those two modes is unchanged).
    *
-   * `targetsAllies` flips WHICH side's units a directional/mixed-side ray or
-   * area can land on — false (damage/push/shield's usual case) means a
-   * player's cast only ever finds monsters and a monster's cast only ever
-   * finds players, same as before; true (heal) means a player's cast only
-   * ever finds fellow players and a monster's cast only ever finds fellow
-   * monsters. applyEffect()'s heal case has no ally/enemy check of its own —
-   * this is the one place that decides who a heal can legally land on (see
-   * computeTargetable() in BattleScene for the matching UI restriction).
-   * This flag only affects the "mixed crowd" modes (firstInLine, pierceLine,
-   * aoeCross, aoeRing, aoeArc3) — the two whole-map modes below hardcode
-   * their own side rules and ignore it entirely.
+   * `sideFilter` decides WHICH side's units a directional/mixed-side ray or
+   * area can land on. 'any' (ITB friendly fire — the damage/push case) finds
+   * whatever unit occupies the tile, either side: a player's shot can strike a
+   * fellow mech, a monster's shot can strike another monster you shoved into
+   * its line. 'enemies' finds only the opposing side (our custom taunt debuff);
+   * 'allies' finds only the caster's own side (heal/shield) — applyEffect()'s
+   * heal case has no ally/enemy check of its own, so this is the one place that
+   * decides who a heal can legally land on (see computeTargetable() in
+   * BattleScene for the matching UI restriction). This only affects the "mixed
+   * crowd" modes (firstInLine, pierceLine, aoeCross, aoeRing, aoeArc3) — the
+   * whole-map modes below hardcode their own side rules and ignore it.
    */
   private resolveTargets(
     caster: PlayerUnitState | MonsterUnitState,
     dir: Vec2,
     range: number,
     mode: TargetMode,
-    targetsAllies = false,
+    sideFilter: SideFilter = 'enemies',
   ): ResolvedTarget[] {
     if (mode === 'self') return [{ kind: 'self' }];
 
@@ -908,7 +940,12 @@ export class BattleEngine {
       return targets;
     }
 
-    const searchPlayers = targetsAllies ? casterIsPlayer : !casterIsPlayer;
+    // For 'any' (friendly fire) the tile lookup ignores side entirely; for
+    // 'allies'/'enemies' it resolves to the one side that filter selects.
+    const findUnit = (p: Vec2): PlayerUnitState | MonsterUnitState | undefined =>
+      sideFilter === 'any'
+        ? this.liveAnyUnitAt(p)
+        : this.liveUnitAt(p, sideFilter === 'allies' ? casterIsPlayer : !casterIsPlayer);
 
     // Point-blank area shapes around the caster — no line of sight check
     // (they're adjacent tiles, not a projectile), no direction needed.
@@ -916,7 +953,7 @@ export class BattleEngine {
       const offsets = mode === 'aoeCross' ? BattleEngine.CROSS_OFFSETS : BattleEngine.RING_OFFSETS;
       const targets: ResolvedTarget[] = [];
       for (const offset of offsets) {
-        const unit = this.liveUnitAt(add(casterPos, offset), searchPlayers);
+        const unit = findUnit(add(casterPos, offset));
         if (unit) targets.push(this.wrapTarget(unit));
       }
       return targets;
@@ -935,7 +972,7 @@ export class BattleEngine {
       const cells = [forward, add(forward, perp), add(forward, { x: -perp.x, y: -perp.y })];
       const targets: ResolvedTarget[] = [];
       for (const cell of cells) {
-        const unit = this.liveUnitAt(cell, searchPlayers);
+        const unit = findUnit(cell);
         if (unit) targets.push(this.wrapTarget(unit));
       }
       return targets;
@@ -952,14 +989,15 @@ export class BattleEngine {
     for (let step = 1; step <= range; step++) {
       const p = add(casterPos, { x: dir.x * step, y: dir.y * step });
       if (this.isBaseTile(p)) {
-        // A monster's shot reaching its own base tile hits the base; a
-        // player's shot (or any heal) never targets the base — it just
-        // stops there instead. Either way the base blocks further travel.
-        if (!casterIsPlayer && !targetsAllies) targets.push({ kind: 'base' });
+        // A monster's attack reaching a base tile hits the base; a player's
+        // shot (or any heal, which only lands on allies) never targets the
+        // base — it just stops there. Either way the base blocks further
+        // travel. 'allies' is the only filter that spares the base here.
+        if (!casterIsPlayer && sideFilter !== 'allies') targets.push({ kind: 'base' });
         break;
       }
       if (this.isWall(p)) break;
-      const unit = this.liveUnitAt(p, searchPlayers);
+      const unit = findUnit(p);
       if (unit) {
         targets.push(this.wrapTarget(unit));
         if (mode === 'firstInLine') break;
@@ -1034,10 +1072,10 @@ export class BattleEngine {
         break;
       }
       case 'taunt': {
-        // Taunt only makes sense against a monster — a player skill's target
-        // is always resolved from the enemy side (see resolveTarget's
-        // searchPlayers logic), so `unit` here is a MonsterUnitState in
-        // every real case. The 'instanceId' narrowing below is what makes
+        // Taunt only makes sense against a monster — its 'enemies' sideFilter
+        // (see sideFilterForEffect) resolves a player caster's target from the
+        // monster side only, so `unit` here is a MonsterUnitState in every
+        // real case. The 'instanceId' narrowing below is what makes
         // that concrete for TS; a caster is always a player for this effect
         // (only a hero skill uses it in this batch).
         if ('instanceId' in unit && !('instanceId' in caster)) {
