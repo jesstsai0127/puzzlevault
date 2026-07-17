@@ -420,6 +420,33 @@ describe('BattleEngine: emergence tiles and turn-limit victory', () => {
     expect(snap.players[0].hp).toBe(hpBefore - 1); // flat 1 damage, not ghost_claw's own amount
   });
 
+  it('a MONSTER sitting on the telegraphed tile also blocks the spawn and takes EMERGENCE_BLOCK_DAMAGE — the ITB "shove an enemy onto the emergence tile to plug it" play', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 3, y: 1 },
+        { x: 3, y: 2 },
+      ],
+      // A ghost parked on (2,1), adjacent to the player at (3,1): its intent
+      // is to ATTACK the player (in range), so it stays put and is still on
+      // (2,1) when a reinforcement telegraphed for that same tile resolves.
+      // (This test file's yin_ghost hunts players, not the base.)
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }],
+      spawnSchedule: [{ telegraphTurn: 1, monsterId: 'yin_ghost', tile: { x: 2, y: 1 } }],
+      totalTurns: AMPLE_TURNS,
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    const blockerId = engine.getSnapshot().monsters[0].instanceId;
+    const hpBefore = engine.getSnapshot().monsters[0].hp;
+
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.monsters).toHaveLength(1); // the spawn was blocked — still just the one on the tile
+    const blocker = snap.monsters.find((m) => m.instanceId === blockerId)!;
+    expect(blocker.hp).toBe(hpBefore - 1); // it ate the flat block damage itself
+  });
+
   it('survivors from initialMonsters are not wiped when a later spawnSchedule entry fires on top of them', () => {
     const map: MapDef = {
       ...twoWaveMap(),
