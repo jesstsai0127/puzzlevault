@@ -535,6 +535,49 @@ describe('island2_m2: winnable via the dual-base split (solvability upper check)
   });
 });
 
+describe('island2_m3: winnable — focus the base-clawer, then hunt the yuan_ling pair (solvability upper check)', () => {
+  // Hazard-flank map, west base. A yin_ghost starts adjacent to the base (claws
+  // every turn) but is sandwiched between two heroes, so it dies turn 1 before
+  // it can hit. The real work is the two yuan_ling ranged base-hunters plus two
+  // wolves; su_qing kills the wolf menacing bai_zhi, then both damage-dealers
+  // run the yuan_lings down before either lines up a bolt.
+  it('kill the adjacent ghost pre-claw, then run down the ranged hunters — base untouched, whole squad alive', () => {
+    const map = maps.island2_m3;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan and su_qing sandwich the base-adjacent ghost and kill it
+    // before it claws.
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.getSnapshot().monsters.filter((m) => m.hp > 0)).toHaveLength(3); // ghost gone, no claw
+    engine.endTurn();
+
+    // T2 — su_qing cuts down the wolf closing on bai_zhi; li_yan opens on the
+    // nearest yuan_ling.
+    expect(engine.moveUnit(1, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — both hunt down the remaining ranged threats up the middle.
+    expect(engine.moveUnit(1, { x: 3, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    engine.endTurn();
+
+    // T4 — su_qing snipes the last threat; T5 — ride it out.
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8); // the adjacent ghost never landed a claw, no yuan_ling ever bolted
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
