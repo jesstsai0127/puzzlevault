@@ -568,19 +568,19 @@ describe('WORLD_STRUCTURE (world-structure batch: World 1-4 grouping for LevelSe
 
   it('has exactly 4 worlds, each ending in its finale map, matching the confirmed World 1-4 layout', () => {
     expect(WORLD_STRUCTURE).toHaveLength(4);
-    expect(WORLD_STRUCTURE[0].levels.map((l) => l.mapId)).toEqual([
-      'lesson_ap_cost',
-      'lesson_opportunity_attack',
-      'lesson_push_abyss',
-      'demo1',
-    ]);
+    // ITB alignment (2026-07-17): World 1's and World 4's old basic-controls
+    // lesson_* levels moved out to the standalone tutorial sequence (see
+    // LESSON_MAP_IDS) — each world is now just its finale. World 2/3's own
+    // new-monster-mechanic lessons are unaffected (out of scope for that
+    // consolidation — see design/roadmap.md).
+    expect(WORLD_STRUCTURE[0].levels.map((l) => l.mapId)).toEqual(['demo1']);
     expect(WORLD_STRUCTURE[1].levels.map((l) => l.mapId)).toEqual([
       'world2_yuan_ling',
       'world2_pincer_practice',
       'demo2',
     ]);
     expect(WORLD_STRUCTURE[2].levels.map((l) => l.mapId)).toEqual(['world3_wolf_vine', 'world3_jiangshi', 'demo3']);
-    expect(WORLD_STRUCTURE[3].levels.map((l) => l.mapId)).toEqual(['lesson_poison_mist', 'lesson_healer', 'demo4']);
+    expect(WORLD_STRUCTURE[3].levels.map((l) => l.mapId)).toEqual(['demo4']);
   });
 
   it('every level in WORLD_STRUCTURE points at a real, registered map, and only each world\'s last level is a non-lesson finale', () => {
