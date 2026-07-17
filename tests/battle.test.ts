@@ -145,7 +145,9 @@ describe('BattleEngine: setup', () => {
     const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry);
     const intents = engine.getIntents();
     expect(intents).toEqual([
-      { kind: 'skill', instanceId: expect.any(String), skillId: 'ghost_claw', direction: 'left' },
+      // order/tiles: the exact-telegraph fields — this lone attacker resolves
+      // first (order 1) and strikes exactly the adjacent player's tile.
+      { kind: 'skill', instanceId: expect.any(String), skillId: 'ghost_claw', direction: 'left', order: 1, tiles: [{ pos: { x: 1, y: 1 }, damage: 1 }] },
     ]);
   });
 });
@@ -619,7 +621,7 @@ describe('BattleEngine: new AI behaviors', () => {
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     // The ghost isn't adjacent to the base (a hero is in the way), so it claws the blocker.
     expect(engine.getIntents()).toEqual([
-      { kind: 'skill', instanceId: expect.any(String), skillId: 'ghost_claw', direction: 'left' },
+      { kind: 'skill', instanceId: expect.any(String), skillId: 'ghost_claw', direction: 'left', order: 1, tiles: [{ pos: { x: 3, y: 2 }, damage: 1 }] },
     ]);
     engine.endTurn();
     const snap = engine.getSnapshot();
@@ -789,7 +791,7 @@ describe('BattleEngine: poison mist terrain', () => {
     const hpBefore = engine.getSnapshot().monsters[0].hp;
     expect(engine.getSnapshot().monsters[0].position).toEqual({ x: 5, y: 2 }); // still on the mist tile
     expect(engine.getIntents()).toEqual([
-      { kind: 'skill', instanceId: targetId, skillId: 'ghost_claw', direction: 'left' },
+      { kind: 'skill', instanceId: targetId, skillId: 'ghost_claw', direction: 'left', order: 1, tiles: [{ pos: { x: 4, y: 2 }, damage: 1 }] },
     ]); // stationary (attacks li_yan), confirming it won't step off the mist this turn
 
     engine.endTurn();
@@ -2301,5 +2303,148 @@ describe('BattleEngine: shield stacking cap', () => {
     expect(engine2.getLastEvents()).toEqual([
       { kind: 'shield', target: { kind: 'player', unitIndex: 0 }, amount: 1 },
     ]);
+  });
+});
+
+describe('BattleEngine: exact intent telegraphs (A2 — locked strike tiles + attack resolution order)', () => {
+  // 9x4 corridor: players and monsters share row y=1; the required base tile
+  // sits at (1,2), out of every line of fire used here.
+  const corridorGrid = ['#########', '#       #', '#B      #', '#########'];
+
+  const pierceBoltM: SkillDef = {
+    formatVersion: 1,
+    id: 'pierce_bolt_m',
+    nameKey: 'skill.pierce_bolt_m.name',
+    descKey: 'skill.pierce_bolt_m.desc',
+    range: 5,
+    effects: [{ type: 'damage', amount: 2, target: 'pierceLine' }],
+  };
+  /** A ghost that fires a piercing beam the moment any player is within 5 tiles. */
+  const pierceGhost: MonsterDef = {
+    formatVersion: 1,
+    id: 'pierce_ghost',
+    nameKey: 'monster.pierce_ghost.name',
+    spriteRef: 'mon_pierce_ghost',
+    maxHp: 4,
+    moveRange: 1,
+    skillIds: ['pierce_bolt_m'],
+    aiRules: [
+      { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 5 }, action: { kind: 'useSkill', skillId: 'pierce_bolt_m' } },
+      { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+    ],
+  };
+  /** A ghost that claws the base the moment it stands next to it. */
+  const baseGhost: MonsterDef = {
+    formatVersion: 1,
+    id: 'base_ghost',
+    nameKey: 'monster.base_ghost.name',
+    spriteRef: 'mon_base_ghost',
+    maxHp: 2,
+    moveRange: 1,
+    skillIds: ['ghost_claw'],
+    aiRules: [
+      { when: { kind: 'targetInRange', target: 'nearestBaseTile', range: 1 }, action: { kind: 'useSkill', skillId: 'ghost_claw' } },
+      { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } },
+    ],
+  };
+  const telegraphRegistry: ContentRegistry = {
+    characters: registry.characters,
+    skills: { ...registry.skills, pierce_bolt_m: pierceBoltM },
+    monsters: { ...registry.monsters, pierce_ghost: pierceGhost, base_ghost: baseGhost },
+  };
+
+  function corridorMap(monsters: { monsterId: string; spawn: { x: number; y: number } }[], playerStarts: { x: number; y: number }[]): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'telegraph-corridor',
+      nameKey: 'map.telegraph.name',
+      grid: corridorGrid,
+      baseHp: 8,
+      playerStarts,
+      waves: [{ turns: AMPLE_TURNS, monsters }],
+    };
+  }
+
+  it('a single-target (firstInLine) attack telegraphs exactly the victim tile with that skill damage', () => {
+    // Ghost at (2,1), player 0 adjacent at (1,1): intent = claw left, tile (1,1) for ghost_claw's 1 damage.
+    const map = corridorMap([{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }], [{ x: 1, y: 1 }]);
+    const engine = new BattleEngine(map, ['li_yan'], telegraphRegistry);
+    const intents = engine.getIntents();
+    expect(intents).toHaveLength(1);
+    const intent = intents[0];
+    if (intent.kind !== 'skill') throw new Error(`expected a skill intent, got ${intent.kind}`);
+    expect(intent.direction).toBe('left');
+    expect(intent.tiles).toEqual([{ pos: { x: 1, y: 1 }, damage: 1 }]);
+    expect(intent.order).toBe(1);
+  });
+
+  it('a pierceLine attack telegraphs EVERY tile the beam strikes, each with the per-hit damage', () => {
+    // Beam from (6,1) leftward over players at (4,1) and (2,1): both tiles telegraphed at 2 damage each.
+    const map = corridorMap(
+      [{ monsterId: 'pierce_ghost', spawn: { x: 6, y: 1 } }],
+      [
+        { x: 4, y: 1 },
+        { x: 2, y: 1 },
+      ],
+    );
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], telegraphRegistry);
+    const intent = engine.getIntents()[0];
+    if (intent.kind !== 'skill') throw new Error(`expected a skill intent, got ${intent.kind}`);
+    expect(intent.tiles).toEqual([
+      { pos: { x: 4, y: 1 }, damage: 2 },
+      { pos: { x: 2, y: 1 }, damage: 2 },
+    ]);
+  });
+
+  it('an attack aimed at the base telegraphs the exact base tile it strikes', () => {
+    const map = corridorMap([{ monsterId: 'base_ghost', spawn: { x: 2, y: 2 } }], [{ x: 6, y: 1 }]);
+    const engine = new BattleEngine(map, ['li_yan'], telegraphRegistry);
+    const intent = engine.getIntents()[0];
+    if (intent.kind !== 'skill') throw new Error(`expected a skill intent, got ${intent.kind}`);
+    expect(intent.direction).toBe('left');
+    expect(intent.tiles).toEqual([{ pos: { x: 1, y: 2 }, damage: 1 }]);
+  });
+
+  it('telegraph tiles are LOCKED at turn start (do not follow the player), while getAttackPreviews stays live', () => {
+    // Player at (2,1) with an open escape at (2,2); ghost adjacent at (3,1).
+    const map = corridorMap([{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }], [{ x: 2, y: 1 }]);
+    const engine = new BattleEngine(map, ['li_yan'], telegraphRegistry);
+    expect(engine.getAttackPreviews()).toEqual([{ target: { kind: 'player', unitIndex: 0 }, damage: 1 }]);
+
+    // Step out of the telegraphed tile: the red tile must NOT move with the
+    // player (it's the turn-start promise), but the live "-N" preview must
+    // drop to nothing — and the resolved turn must deal no damage.
+    expect(engine.moveUnit(0, { x: 2, y: 2 })).toEqual({ ok: true });
+    const intent = engine.getIntents()[0];
+    if (intent.kind !== 'skill') throw new Error(`expected a skill intent, got ${intent.kind}`);
+    expect(intent.tiles).toEqual([{ pos: { x: 2, y: 1 }, damage: 1 }]);
+    expect(engine.getAttackPreviews()).toEqual([]);
+    engine.endTurn();
+    expect(engine.getSnapshot().players[0].hp).toBe(6);
+  });
+
+  it('attack order is 1-based in spawn order, skips movers, and is stable across repeated getIntents() calls', () => {
+    // Three monsters: two attackers sandwiching a mover — attack ranks must
+    // be 1 and 2 (mover unnumbered), in spawn (array) order.
+    const map = corridorMap(
+      [
+        { monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }, // adjacent to player 0 -> attacks, order 1
+        { monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }, // far from everyone -> moves, no order
+        { monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }, // adjacent to player 1 -> attacks, order 2
+      ],
+      [
+        { x: 1, y: 1 },
+        { x: 5, y: 1 },
+      ],
+    );
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], telegraphRegistry);
+    const first = engine.getIntents();
+    expect(first.map((i) => i.kind)).toEqual(['skill', 'move', 'skill']);
+    // 1-based attack ranks in spawn order; the mover in between carries no
+    // number (attack-vs-attack ordering is the only player-relevant part).
+    expect(first.filter((i) => i.kind === 'skill').map((i) => i.order)).toEqual([1, 2]);
+    // Same turn, repeated call: identical list — the telegraph is stable.
+    const second = engine.getIntents();
+    expect(second).toEqual(first);
   });
 });
