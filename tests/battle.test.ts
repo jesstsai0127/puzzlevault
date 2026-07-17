@@ -122,10 +122,9 @@ function twoWaveMap(): MapDef {
       { x: 1, y: 1 },
       { x: 1, y: 2 },
     ],
-    waves: [
-      { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }] }, // adjacent to player 0
-      { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] },
-    ],
+    initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }], // adjacent to player 0
+    spawnSchedule: [{ telegraphTurn: AMPLE_TURNS, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+    totalTurns: AMPLE_TURNS * 2,
   };
 }
 
@@ -138,7 +137,7 @@ describe('BattleEngine: setup', () => {
       expect.objectContaining({ characterId: 'su_qing', position: { x: 1, y: 2 }, hp: 5 }),
     ]);
     expect(snap.monsters).toHaveLength(1);
-    expect(snap.waveIndex).toBe(0);
+    expect(snap.turnNumber).toBe(1);
   });
 
   it('an adjacent monster telegraphs a skill intent, not a move', () => {
@@ -160,7 +159,9 @@ describe('BattleEngine: player actions', () => {
         { x: 1, y: 1 },
         { x: 6, y: 2 },
       ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
   }
 
@@ -206,7 +207,7 @@ describe('BattleEngine: player actions', () => {
 
   it('a unit that moved can still act (move precedes the action), and acting then locks BOTH', () => {
     const map = twoWaveMap();
-    map.waves[0].monsters[0].spawn = { x: 4, y: 2 };
+    map.initialMonsters[0].spawn = { x: 4, y: 2 };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     expect(engine.moveUnit(0, { x: 3, y: 2 })).toEqual({ ok: true }); // walk adjacent to the ghost at (4,2)
     expect(engine.useSkill(0, 'strike', 'right')).toEqual({ ok: true }); // move-then-act is the intended flow
@@ -224,8 +225,8 @@ describe('BattleEngine: player actions', () => {
     expect(engine.moveUnit(0, { x: 1, y: 2 })).toEqual({ ok: false, reason: 'already-acted' }); // ...but may not move anymore
   });
 
-  it("resets every unit's moved/acted at the start of every turn, not only when a wave clears", () => {
-    // Monster starts 5 tiles from li_yan, so one move won't clear the wave.
+  it("resets every unit's moved/acted at the start of every turn, not only when the board clears", () => {
+    // Monster starts 5 tiles from li_yan, so one move won't kill it.
     const engine = new BattleEngine(roomyMap(), ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, { x: 2, y: 2 });
     engine.rest(0);
@@ -234,7 +235,7 @@ describe('BattleEngine: player actions', () => {
 
     engine.endTurn();
 
-    expect(engine.getSnapshot().monsters.length).toBeGreaterThan(0); // sanity: wave still active
+    expect(engine.getSnapshot().monsters.length).toBeGreaterThan(0); // sanity: monster still alive
     const fresh = engine.getSnapshot().players[0];
     expect(fresh.moved).toBe(false); // fresh economy for the new turn
     expect(fresh.acted).toBe(false);
@@ -268,7 +269,7 @@ describe('BattleEngine: player actions', () => {
 
   it('push moves the target away from the caster, stopping at a wall', () => {
     const map = twoWaveMap();
-    map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the right wall (x=6 is the last floor col)
+    map.initialMonsters[0].spawn = { x: 5, y: 1 }; // one tile from the right wall (x=6 is the last floor col)
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     // one committed move: li_yan 3 tiles right (his full moveRange), landing adjacent to the monster at (4,1)
     engine.moveUnit(0, { x: 4, y: 1 });
@@ -375,61 +376,93 @@ describe('BattleEngine: turn resolution', () => {
   });
 });
 
-describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
-  it('clearing a non-final wave early does NOT advance — it waits for the clock, but still resets per-turn budgets', () => {
-    const engine = new BattleEngine(twoWaveMap(), ['li_yan', 'su_qing'], registry); // wave 0 has AMPLE_TURNS left
-    engine.useSkill(0, 'strike', 'right'); // kills wave-0's only monster, well before the clock
-    engine.endTurn();
-    const snap = engine.getSnapshot();
-    expect(snap.waveIndex).toBe(0); // did NOT advance — the clock hasn't elapsed
-    expect(snap.monsters).toHaveLength(0); // board is clear, but that's just a breather
-    expect(snap.players[0].acted).toBe(false); // still a fresh round every turn
-    expect(snap.outcome).toBeNull();
-  });
-
-  it('reinforcing adds the next wave on top of survivors — count grows, survivors are not cleared', () => {
+describe('BattleEngine: emergence tiles and turn-limit victory', () => {
+  it('a spawnSchedule entry fires exactly on its telegraphTurn (fresh-HP monster appears) and does nothing on other turns', () => {
     const map: MapDef = {
       ...twoWaveMap(),
-      waves: [
-        { turns: 1, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }, // far away, won't be killed or reach anything in 1 turn
-        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] },
+      initialMonsters: [],
+      spawnSchedule: [{ telegraphTurn: 1, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      totalTurns: AMPLE_TURNS,
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    expect(engine.getSnapshot().monsters).toHaveLength(0); // not yet turn 1's end
+    expect(engine.getSnapshot().pendingSpawnTiles).toEqual([{ x: 6, y: 1 }]); // telegraphed for this turn
+
+    engine.endTurn(); // ending turn 1 == telegraphTurn -> the monster spawns
+    const snap = engine.getSnapshot();
+    expect(snap.monsters).toHaveLength(1);
+    expect(snap.monsters[0].position).toEqual({ x: 6, y: 1 });
+    expect(snap.monsters[0].hp).toBe(snap.monsters[0].maxHp); // fresh HP
+    expect(snap.pendingSpawnTiles).toEqual([]); // no more entries scheduled
+
+    engine.endTurn(); // a later turn ending — the (already-fired) entry does nothing again
+    expect(engine.getSnapshot().monsters).toHaveLength(1); // no duplicate spawn
+  });
+
+  it('a player standing on the telegraphed tile blocks the spawn entirely and takes exactly EMERGENCE_BLOCK_DAMAGE (1), not the monster appearing', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      playerStarts: [
+        { x: 6, y: 1 }, // standing right on the tile that's about to telegraph
+        { x: 1, y: 2 },
       ],
+      initialMonsters: [],
+      spawnSchedule: [{ telegraphTurn: 1, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      totalTurns: AMPLE_TURNS,
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    const hpBefore = engine.getSnapshot().players[0].hp;
+
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.monsters).toHaveLength(0); // blocked — no monster appears, full stop
+    expect(snap.players[0].hp).toBe(hpBefore - 1); // flat 1 damage, not ghost_claw's own amount
+  });
+
+  it('survivors from initialMonsters are not wiped when a later spawnSchedule entry fires on top of them', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }], // adjacent to li_yan, stays put (attacks instead of moving)
+      spawnSchedule: [{ telegraphTurn: 1, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     const survivorId = engine.getSnapshot().monsters[0].instanceId;
-    engine.endTurn(); // wave-0's 1-turn clock elapses -> reinforce into wave 1
+
+    engine.endTurn(); // ending turn 1: the scheduled spawn fires alongside the survivor's own turn
+
     const snap = engine.getSnapshot();
-    expect(snap.waveIndex).toBe(1);
-    expect(snap.monsters).toHaveLength(2); // wave-0 survivor + wave-1 reinforcement, not just 1
-    expect(snap.monsters.some((m) => m.instanceId === survivorId)).toBe(true); // the original survivor is still there
+    expect(snap.monsters).toHaveLength(2); // survivor + new spawn, not just 1
+    expect(snap.monsters.some((m) => m.instanceId === survivorId)).toBe(true);
   });
 
-  it('reinforcing relocates a spawn away from an occupied tile and ambushes the player standing on it', () => {
+  it('turnNumber exceeding totalTurns with the base alive sets victory regardless of remaining monster count', () => {
     const map: MapDef = {
       ...twoWaveMap(),
-      waves: [
-        { ...twoWaveMap().waves[0], turns: 1 }, // clock elapses after a single endTurn
-        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 1, y: 1 } }] }, // li_yan's own tile
-      ],
+      // 5 tiles from the players, moveRange 1 — cannot possibly arrive within 2 turns.
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: 2,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.useSkill(0, 'strike', 'right'); // kills wave-0's monster (no survivors going into the reinforcement)
-    engine.endTurn(); // clock elapses -> reinforce into wave 1
+    engine.endTurn(); // turn 1 of 2
+    expect(engine.getSnapshot().outcome).toBeNull();
+    engine.endTurn(); // turn 2 of 2: turnNumber becomes 3 > totalTurns(2), monster still alive, base intact -> victory
     const snap = engine.getSnapshot();
-    expect(snap.waveIndex).toBe(1);
-    expect(snap.monsters).toHaveLength(1);
-    expect(snap.monsters[0].position).not.toEqual({ x: 1, y: 1 }); // not on top of li_yan
-    const p = snap.monsters[0].position;
-    expect(grid[p.y][p.x]).toBe(' '); // still a valid floor tile
-    expect(snap.players[0].hp).toBe(5); // ghost_claw's 1 damage as an ambush hit before relocating
+    expect(snap.outcome).toBe('victory');
+    expect(snap.monsters.length).toBeGreaterThan(0); // you did NOT have to kill it — and the frozen board still shows it
   });
 
-  it('clearing the only (last) wave immediately sets a pending victory outcome, frozen until confirmed', () => {
-    const map = twoWaveMap();
-    map.waves = [map.waves[0]]; // only one wave, so it's also the last wave
+  it('a 1-turn mission sets victory immediately after its single endTurn(), frozen until confirmed', () => {
+    const map: MapDef = {
+      ...twoWaveMap(),
+      initialMonsters: [],
+      spawnSchedule: [],
+      totalTurns: 1,
+    };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.useSkill(0, 'strike', 'right');
-    engine.endTurn();
+    engine.endTurn(); // turnNumber 1 -> 2, exceeds totalTurns(1) -> victory
     expect(engine.getSnapshot().outcome).toBe('victory');
     expect(engine.getIntents()).toEqual([]);
     // Frozen: further play is locked out until confirmOutcome().
@@ -439,23 +472,8 @@ describe('BattleEngine: wave clear and victory (reinforcement clock)', () => {
 
     engine.confirmOutcome();
     const snap = engine.getSnapshot();
-    expect(snap.outcome).toBeNull(); // confirming resets for another run (Phase 1 has only one map)
-    expect(snap.waveIndex).toBe(0);
-  });
-
-  it("outlasting the last wave's clock with the base alive sets a pending victory, even with monsters still on the board", () => {
-    const map: MapDef = {
-      ...twoWaveMap(),
-      // 5 tiles from the players, moveRange 1 — cannot possibly arrive within 2 turns.
-      waves: [{ turns: 2, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
-    };
-    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    engine.endTurn(); // turn 1 of 2
-    expect(engine.getSnapshot().outcome).toBeNull();
-    engine.endTurn(); // turn 2 of 2: clock elapses, monster still alive, base intact -> victory
-    const snap = engine.getSnapshot();
-    expect(snap.outcome).toBe('victory');
-    expect(snap.monsters.length).toBeGreaterThan(0); // you did NOT have to kill it — and the frozen board still shows it
+    expect(snap.outcome).toBeNull(); // confirming resets for another run
+    expect(snap.turnNumber).toBe(1);
   });
 });
 
@@ -487,15 +505,12 @@ describe('BattleEngine: base destruction and defeat', () => {
         { x: 4, y: 1 }, // out of the way — irrelevant to this scenario
         { x: 4, y: 2 },
       ],
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: [
-            { monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }, // adjacent to base tile (1,1)
-            { monsterId: 'base_ghost', spawn: { x: 2, y: 2 } }, // adjacent to base tile (1,2)
-          ],
-        },
+      initialMonsters: [
+        { monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }, // adjacent to base tile (1,1)
+        { monsterId: 'base_ghost', spawn: { x: 2, y: 2 } }, // adjacent to base tile (1,2)
       ],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
   }
 
@@ -510,9 +525,9 @@ describe('BattleEngine: base destruction and defeat', () => {
     engine.confirmOutcome();
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBeNull();
-    expect(snap.waveIndex).toBe(0);
+    expect(snap.turnNumber).toBe(1);
     expect(snap.baseHp).toBe(2); // reset to full (baseMaxHp)
-    expect(snap.monsters).toHaveLength(2); // wave respawned
+    expect(snap.monsters).toHaveLength(2); // initial monsters respawned
   });
 
   it('a frozen defeat keeps the intents that just resolved, so the UI can still show what killed the base', () => {
@@ -531,7 +546,7 @@ describe('BattleEngine: base destruction and defeat', () => {
     engine.resetLevel(); // bail out without confirming the loss first
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBeNull();
-    expect(snap.waveIndex).toBe(0);
+    expect(snap.turnNumber).toBe(1);
     expect(snap.baseHp).toBe(2);
   });
 
@@ -563,7 +578,9 @@ describe('BattleEngine: new AI behaviors', () => {
     const localRegistry: ContentRegistry = { ...registry, monsters: { ...registry.monsters, wisp: skittish } };
     const map: MapDef = {
       ...twoWaveMap(),
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'wisp', spawn: { x: 2, y: 1 } }] }], // adjacent to li_yan at (1,1)
+      initialMonsters: [{ monsterId: 'wisp', spawn: { x: 2, y: 1 } }], // adjacent to li_yan at (1,1)
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     expect(engine.getIntents()).toEqual([
@@ -589,7 +606,9 @@ describe('BattleEngine: new AI behaviors', () => {
     const map: MapDef = {
       ...twoWaveMap(),
       playerStarts: [{ x: 1, y: 1 }, { x: 1, y: 2 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'hound', spawn: { x: 6, y: 1 } }] }], // 5 tiles from li_yan
+      initialMonsters: [{ monsterId: 'hound', spawn: { x: 6, y: 1 } }], // 5 tiles from li_yan
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     engine.endTurn(); // hound moves toward li_yan
@@ -614,7 +633,9 @@ describe('BattleEngine: new AI behaviors', () => {
       grid: ['########', '#      #', '#B     #', '#      #', '########'],
       baseHp: 8,
       playerStarts: [{ x: 3, y: 2 }, { x: 6, y: 3 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_seeker', spawn: { x: 4, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'base_seeker', spawn: { x: 4, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     // The ghost isn't adjacent to the base (a hero is in the way), so it claws the blocker.
@@ -641,7 +662,9 @@ describe('BattleEngine: hazard terrain', () => {
       grid: hazardGrid,
       baseHp: 8,
       playerStarts: [{ x: 1, y: 2 }, { x: 1, y: 1 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, { x: 2, y: 2 }); // li_yan (1,2) -> (2,2), adjacent to the ghost at (3,2)
@@ -684,7 +707,9 @@ describe('BattleEngine: hazard terrain', () => {
       grid: hazardGrid,
       baseHp: 8,
       playerStarts: [{ x: 3, y: 2 }, { x: 1, y: 1 }], // li_yan adjacent to the brute, hazard just past li_yan
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'brute', spawn: { x: 2, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'brute', spawn: { x: 2, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     engine.endTurn(); // brute shoves li_yan from (3,2) into the hazard at (4,2)
@@ -701,7 +726,9 @@ describe('BattleEngine: hazard terrain', () => {
       grid: hazardGrid,
       baseHp: 8,
       playerStarts: [{ x: 1, y: 1 }, { x: 2, y: 2 }], // su_qing at (2,2), hazard at (4,2) between it and the monster
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     const res = engine.useSkill(1, 'ranged_skill', 'right'); // range 3: (3,2) floor, (4,2) hazard, (5,2) monster
@@ -725,7 +752,9 @@ describe('BattleEngine: hazard terrain', () => {
       grid: hazardGrid,
       baseHp: 8,
       playerStarts: [{ x: 4, y: 1 }, { x: 6, y: 3 }], // li_yan at (4,1) is nearest; su_qing far away, out of contention
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     // From (3,2) to (4,1): dx=1, dy=-1 — a tie. The tie-break picks
@@ -750,7 +779,9 @@ describe('BattleEngine: poison mist terrain', () => {
       baseHp: 8,
       // li_yan starts right next to the mist tile and steps onto it.
       playerStarts: [{ x: 3, y: 2 }, { x: 1, y: 1 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, { x: 4, y: 2 }); // (3,2) -> (4,2), onto the mist
@@ -782,7 +813,9 @@ describe('BattleEngine: poison mist terrain', () => {
       grid: ['#######', '#     #', '#    *#', '#B    #', '#######'],
       baseHp: 8,
       playerStarts: [{ x: 4, y: 2 }, { x: 1, y: 3 }], // li_yan adjacent to the mist tile; su_qing out of the way
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }] }], // spawns directly on the mist tile
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }], // spawns directly on the mist tile
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     const targetId = engine.getSnapshot().monsters[0].instanceId;
@@ -812,7 +845,9 @@ describe('BattleEngine: poison mist terrain', () => {
       grid: mistGrid,
       baseHp: 8,
       playerStarts: [{ x: 1, y: 1 }, { x: 3, y: 2 }], // su_qing (unit 1) starts adjacent to the mist tile
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }], // far away, won't attack this turn
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }], // far away, won't attack this turn
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     // Move BEFORE casting — the ITB economy's fixed order (acting would lock movement).
@@ -836,7 +871,9 @@ describe('BattleEngine: poison mist terrain', () => {
       grid: mistGrid,
       baseHp: 8,
       playerStarts: [{ x: 1, y: 1 }, { x: 2, y: 2 }], // su_qing at (2,2), mist at (4,2) between it and the monster
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 5, y: 2 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     const res = engine.useSkill(1, 'ranged_skill', 'right'); // range 3: (3,2) floor, (4,2) mist, (5,2) monster
@@ -882,7 +919,9 @@ describe('BattleEngine: heal targeting (bai_zhi-style skills — allies only, ne
       grid: ['#########', '#       #', '#########'],
       baseHp: 8,
       playerStarts: [{ x: 1, y: 1 }, { x: 6, y: 1 }], // bai_zhi at (1,1); li_yan far at (6,1), out of range 3
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }] }], // monster IS within range 3, ally is not
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }], // monster IS within range 3, ally is not
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['bai_zhi', 'li_yan'], healRegistry);
     const monsterHpBefore = engine.getSnapshot().monsters[0].hp;
@@ -908,7 +947,9 @@ describe('BattleEngine: heal targeting (bai_zhi-style skills — allies only, ne
       // ghost_claw hit on li_yan before bai_zhi ever acts — giving a real,
       // non-full HP target to heal, not a synthetic mutation.
       playerStarts: [{ x: 1, y: 1 }, { x: 4, y: 1 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['bai_zhi', 'li_yan'], healRegistry);
     // Two turns of ghost_claw (1 dmg each) so li_yan is down exactly 2 HP —
@@ -959,14 +1000,16 @@ describe('BattleEngine: Phase 1 base defense', () => {
         { x: 4, y: 1 },
         { x: 4, y: 2 },
       ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }] }], // already adjacent to base tile (1,1)
+      initialMonsters: [{ monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }], // already adjacent to base tile (1,1)
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // ghost_claw deals 1 to the base
     expect(engine.getSnapshot().baseHp).toBe(7);
   });
 
-  it('the clock running out reinforces (adds wave 1 on top of the still-alive wave-0 survivor)', () => {
+  it('a scheduled spawn fires on its own telegraphTurn, adding to the still-alive initial monster (not replacing it)', () => {
     const map: MapDef = {
       formatVersion: 1,
       id: 'test-clock',
@@ -977,23 +1020,21 @@ describe('BattleEngine: Phase 1 base defense', () => {
         { x: 2, y: 2 }, // row 2, out of the ghost's straight-line path along row 1
         { x: 3, y: 2 },
       ],
-      waves: [
-        // 5 tiles from the base, moveRange 1 — cannot possibly arrive within 2 turns.
-        { turns: 2, monsters: [{ monsterId: 'base_ghost', spawn: { x: 6, y: 1 } }] },
-        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 5, y: 2 } }] },
-      ],
+      // 5 tiles from the base, moveRange 1 — cannot possibly arrive within 2 turns.
+      initialMonsters: [{ monsterId: 'base_ghost', spawn: { x: 6, y: 1 } }],
+      spawnSchedule: [{ telegraphTurn: 2, monsterId: 'base_ghost', tile: { x: 5, y: 2 } }],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], baseRegistry);
-    engine.endTurn(); // turn 1 of 2: just closing the distance
-    expect(engine.getSnapshot().waveIndex).toBe(0);
-    engine.endTurn(); // turn 2 of 2: clock runs out — reinforce, not a clean advance
+    engine.endTurn(); // ending turn 1: no schedule entry fires yet
+    expect(engine.getSnapshot().monsters).toHaveLength(1);
+    engine.endTurn(); // ending turn 2: the schedule entry fires alongside the survivor
     const snap = engine.getSnapshot();
-    expect(snap.waveIndex).toBe(1);
-    expect(snap.monsters).toHaveLength(2); // wave-0's still-alive ghost PLUS wave-1's reinforcement
+    expect(snap.monsters).toHaveLength(2); // the original ghost PLUS the new spawn
     expect(snap.baseHp).toBe(8); // it never got close enough to land a hit
   });
 
-  it('clearing all monsters before the turn budget does NOT advance a non-final wave — it waits for the clock', () => {
+  it('killing the initial monster early does not cancel or advance a later spawnSchedule entry — it still fires exactly on its telegraphTurn', () => {
     const map: MapDef = {
       formatVersion: 1,
       id: 'test-early-clear',
@@ -1001,24 +1042,22 @@ describe('BattleEngine: Phase 1 base defense', () => {
       grid: ['########', '#B     #', '#      #', '########'],
       baseHp: 8,
       playerStarts: [
-        { x: 2, y: 1 }, // adjacent to the wave-0 spawn
+        { x: 2, y: 1 }, // adjacent to the initial spawn
         { x: 4, y: 2 },
       ],
-      waves: [
-        { turns: 3, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] },
-        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] },
-      ],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }],
+      spawnSchedule: [{ telegraphTurn: 3, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
-    expect(engine.getSnapshot().turnsLeftInWave).toBe(3);
-    engine.useSkill(0, 'strike', 'right'); // kills the only monster well before the budget runs out
-    engine.endTurn(); // turnsLeftInWave: 3 -> 2, board is clear, but this is not the last wave
-    expect(engine.getSnapshot().waveIndex).toBe(0); // did NOT advance just because it's clear
+    engine.useSkill(0, 'strike', 'right'); // kills the only monster well before telegraphTurn 3
+    engine.endTurn(); // ending turn 1 — board is clear, telegraphTurn 3 hasn't arrived
     expect(engine.getSnapshot().monsters).toHaveLength(0);
 
-    engine.endTurn(); // 2 -> 1
-    engine.endTurn(); // 1 -> 0: clock finally elapses -> reinforce
-    expect(engine.getSnapshot().waveIndex).toBe(1); // advanced by the clock, not by the earlier clear
+    engine.endTurn(); // ending turn 2 — still nothing scheduled for this turn
+    expect(engine.getSnapshot().monsters).toHaveLength(0);
+    engine.endTurn(); // ending turn 3 — telegraphTurn 3 fires
+    expect(engine.getSnapshot().monsters).toHaveLength(1); // the scheduled spawn appeared, unaffected by the earlier kill
   });
 
   it("a monster's path to the base is blocked by a hero standing in the only lane", () => {
@@ -1032,7 +1071,9 @@ describe('BattleEngine: Phase 1 base defense', () => {
         { x: 2, y: 1 }, // blocks the only lane between the ghost and the base
         { x: 2, y: 2 }, // out of the way
       ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 4, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'base_ghost', spawn: { x: 4, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // ghost steps (4,1) -> (3,1), still short of the hero
@@ -1055,15 +1096,12 @@ describe('BattleEngine: getAttackPreviews', () => {
         { x: 1, y: 2 }, // li_yan, far from both ghosts — su_qing is the nearest player
         { x: 4, y: 1 }, // su_qing, flanked by a ghost on each side
       ],
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: [
+      initialMonsters: [
             { monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } },
             { monsterId: 'yin_ghost', spawn: { x: 5, y: 1 } },
-          ],
-        },
       ],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
   }
 
@@ -1087,7 +1125,9 @@ describe('BattleEngine: getAttackPreviews', () => {
     // su_qing (unit 1) faces only one ghost this time, so one shield charge blocks it completely.
     const map: MapDef = {
       ...twoGhostsOnSuQingMap(),
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.useSkill(1, 'shield_skill', 'down');
@@ -1129,7 +1169,7 @@ describe('BattleEngine: getLastEvents', () => {
 
   it("pushing a target into a wall records only the distance actually covered, not the skill's nominal amount, and lands a collision hit", () => {
     const map = twoWaveMap();
-    map.waves[0].monsters[0].spawn = { x: 5, y: 1 }; // one tile from the x=6 floor edge (x=7 is wall)
+    map.initialMonsters[0].spawn = { x: 5, y: 1 }; // one tile from the x=6 floor edge (x=7 is wall)
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, { x: 4, y: 1 }); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
     const targetId = engine.getSnapshot().monsters[0].instanceId;
@@ -1145,8 +1185,8 @@ describe('BattleEngine: getLastEvents', () => {
 
   it('pushing a target into another unit deals collision damage to both, with zero push distance', () => {
     const map = twoWaveMap();
-    map.waves[0].monsters[0].spawn = { x: 5, y: 1 };
-    map.waves[0].monsters.push({ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }); // blocks the push target's only escape tile
+    map.initialMonsters[0].spawn = { x: 5, y: 1 };
+    map.initialMonsters.push({ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }); // blocks the push target's only escape tile
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
     engine.moveUnit(0, { x: 4, y: 1 }); // li_yan (1,1) -> (4,1), adjacent to the ghost at (5,1)
     const [pushedId, blockerId] = engine.getSnapshot().monsters.map((m) => m.instanceId);
@@ -1184,7 +1224,9 @@ describe('BattleEngine: getLastEvents', () => {
       grid: ['########', '#B     #', '#B     #', '########'],
       baseHp: 8,
       playerStarts: [{ x: 4, y: 1 }, { x: 4, y: 2 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'base_ghost', spawn: { x: 2, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], baseRegistry);
     engine.endTurn(); // the ghost is adjacent to the base tile (1,1) and attacks it
@@ -1206,7 +1248,9 @@ describe('BattleEngine: getLastEvents', () => {
         { x: 1, y: 1 },
         { x: 6, y: 2 },
       ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
   }
 });
@@ -1231,7 +1275,9 @@ describe('BattleEngine: no opportunity attacks (A7 — removed with the ITB acti
         { x: 3, y: 1 }, // adjacent to the ghost at (2,1) from the very first turn
         { x: 3, y: 3 },
       ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'tanky_ghost', spawn: { x: 2, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'tanky_ghost', spawn: { x: 2, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], localRegistry);
     const res = engine.moveUnit(0, { x: 6, y: 1 }); // (3,1) -> (6,1): breaks adjacency with the living ghost
@@ -1322,7 +1368,9 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
       grid: ['##########', '#        #', '#        #', '#        #', '#B       #', '##########'],
       baseHp: 8,
       playerStarts: [{ x: 8, y: 1 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'base_ghost', spawn: { x: 8, y: 4 } }] }],
+      initialMonsters: [{ monsterId: 'base_ghost', spawn: { x: 8, y: 4 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
   }
 
@@ -1399,15 +1447,12 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
         { x: 8, y: 1 },
         { x: 1, y: 1 },
       ],
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: [
+      initialMonsters: [
             { monsterId: 'base_ghost', spawn: { x: 8, y: 4 } },
             { monsterId: 'assassin', spawn: { x: 7, y: 1 } }, // adjacent to ling_er at (8,1) from the very first turn
-          ],
-        },
       ],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['ling_er', 'li_yan'], deathRegistry);
     engine.useSkill(0, 'taunt', 'down'); // taunts base_ghost before ending the turn
@@ -1438,7 +1483,9 @@ describe('BattleEngine: taunt (ling_er-style aggro tank)', () => {
       grid: ['##########', '#        #', '#        #', '##########'],
       baseHp: 8,
       playerStarts: [{ x: 3, y: 1 }],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'assassin', spawn: { x: 2, y: 1 } }] }], // adjacent, always attacks
+      initialMonsters: [{ monsterId: 'assassin', spawn: { x: 2, y: 1 } }], // adjacent, always attacks
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['ling_er'], tauntRegistry);
     engine.useSkill(0, 'heavy_shield', 'left'); // self-target — direction is irrelevant but required by the call shape
@@ -1627,16 +1674,13 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         grid: wallRoomGrid,
         baseHp: 8,
         playerStarts: [{ x: 2, y: 4 }],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 3, y: 4 } }, // step 1, before the wall at x=6
               { monsterId: 'yin_ghost', spawn: { x: 4, y: 4 } }, // step 2, before the wall
               { monsterId: 'yin_ghost', spawn: { x: 7, y: 4 } }, // step 5, past the wall — beam never reaches it
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
       const res = engine.useSkill(0, 'pierce_bolt', 'right');
@@ -1654,15 +1698,12 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         grid: openRoomGrid,
         baseHp: 8,
         playerStarts: [{ x: 2, y: 4 }],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 4, y: 4 } }, // step 2, within range 5
               { monsterId: 'yin_ghost', spawn: { x: 9, y: 4 } }, // step 7, past range 5
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
       engine.useSkill(0, 'pierce_bolt', 'right');
@@ -1683,17 +1724,14 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
           { x: 6, y: 4 }, // caster
           { x: 5, y: 4 }, // ally, standing on the LEFT cross tile — a naive "hit everything adjacent" bug would land here
         ],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } }, // up
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 5 } }, // down
               { monsterId: 'yin_ghost', spawn: { x: 7, y: 4 } }, // right
               { monsterId: 'yin_ghost', spawn: { x: 5, y: 3 } }, // diagonal — must NOT be hit
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster', 'su_qing'], shapeRegistry);
       const res = engine.useSkill(0, 'cross_burst', 'down'); // direction is irrelevant for aoeCross, just a placeholder
@@ -1716,10 +1754,7 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         grid: openRoomGrid,
         baseHp: 8,
         playerStarts: [{ x: 6, y: 4 }],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 5, y: 3 } },
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } },
               { monsterId: 'yin_ghost', spawn: { x: 7, y: 3 } },
@@ -1729,9 +1764,9 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 5 } },
               { monsterId: 'yin_ghost', spawn: { x: 7, y: 5 } },
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }, // 2 tiles away — must NOT be hit
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
       engine.useSkill(0, 'ring_burst', 'down');
@@ -1760,18 +1795,15 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         grid: openRoomGrid,
         baseHp: 8,
         playerStarts: [{ x: 6, y: 4 }],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } }, // forward
               { monsterId: 'yin_ghost', spawn: { x: 7, y: 3 } }, // forward + 1 lateral
               { monsterId: 'yin_ghost', spawn: { x: 5, y: 3 } }, // forward - 1 lateral
               { monsterId: 'yin_ghost', spawn: { x: 5, y: 4 } }, // beside the caster, not in the fan — must NOT be hit
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }, // 2 tiles straight ahead — must NOT be hit
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
       engine.useSkill(0, 'arc3_strike', 'up');
@@ -1795,16 +1827,13 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
           { x: 6, y: 4 },
           { x: 2, y: 2 },
         ],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 2, y: 6 } },
               { monsterId: 'yin_ghost', spawn: { x: 10, y: 2 } },
               { monsterId: 'yin_ghost', spawn: { x: 9, y: 6 } },
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster', 'su_qing'], shapeRegistry);
       const res = engine.useSkill(0, 'call_all_enemies', 'down');
@@ -1829,15 +1858,12 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
           { x: 6, y: 4 }, // caster
           { x: 2, y: 2 }, // ally teammate — must be hit
         ],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 9, y: 3 } },
               { monsterId: 'yin_ghost', spawn: { x: 3, y: 6 } },
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster', 'su_qing'], shapeRegistry);
       const res = engine.useSkill(0, 'call_all_units', 'down');
@@ -1859,15 +1885,12 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         grid: openRoomGrid,
         baseHp: 8,
         playerStarts: [{ x: 2, y: 4 }],
-        waves: [
-          {
-            turns: AMPLE_TURNS,
-            monsters: [
+        initialMonsters: [
               { monsterId: 'hp10_ghost', spawn: { x: 3, y: 4 } }, // step 1, 10 hp
               { monsterId: 'hp4_ghost', spawn: { x: 5, y: 4 } }, // step 3, 4 hp
-            ],
-          },
         ],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
       engine.useSkill(0, 'percent_bolt', 'right'); // 50% of current hp, pierces both
@@ -1883,7 +1906,9 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         grid: openRoomGrid,
         baseHp: 8,
         playerStarts: [{ x: 2, y: 4 }],
-        waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'hp1_ghost', spawn: { x: 3, y: 4 } }] }],
+        initialMonsters: [{ monsterId: 'hp1_ghost', spawn: { x: 3, y: 4 } }],
+        spawnSchedule: [],
+        totalTurns: AMPLE_TURNS,
       };
       const engine = new BattleEngine(map, ['shape_caster'], shapeRegistry);
       // 10% of 1 hp = floor(0.1) = 0 — the old minimum-1 rule turned every
@@ -1966,7 +1991,9 @@ describe('BattleEngine: allAllies targeting mode', () => {
         { x: 2, y: 2 }, // ally — should be hit
         { x: 10, y: 5 }, // second ally — should be hit
       ],
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 9, y: 3 } }] }],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 9, y: 3 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['rally_caster', 'rally_caster', 'rally_caster'], allyRegistry);
     const res = engine.useSkill(0, 'rally_cry', 'down'); // direction irrelevant for allAllies
@@ -2011,15 +2038,12 @@ describe('BattleEngine: allAllies targeting mode', () => {
       grid: openRoomGrid,
       baseHp: 8,
       playerStarts: [{ x: 1, y: 1 }],
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: [
+      initialMonsters: [
             { monsterId: 'rally_ghost', spawn: { x: 6, y: 4 } }, // caster
             { monsterId: 'rally_ghost', spawn: { x: 7, y: 4 } }, // ally monster — should be hit
-          ],
-        },
       ],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const monsterAllyRegistry: ContentRegistry = {
       characters: { rally_caster: rallyCaster },
@@ -2092,10 +2116,9 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
       grid: openRoomGrid,
       baseHp: 8,
       playerStarts: [{ x: 2, y: 2 }],
-      waves: [
-        { turns: 1, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 2 } }] },
-        { turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 2 } }] },
-      ],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 2 } }],
+      spawnSchedule: [{ telegraphTurn: 1, monsterId: 'yin_ghost', tile: { x: 4, y: 2 } }],
+      totalTurns: AMPLE_TURNS + 1,
     };
   }
 
@@ -2115,7 +2138,7 @@ describe('BattleEngine: Ultimate skills (CharacterDef.ultimateSkillId / PlayerUn
     engine.useSkill(0, 'ultimate_nuke', 'right');
     expect(engine.getSnapshot().players[0].ultimateUsed).toBe(true);
 
-    engine.endTurn(); // wave 1's 1-turn budget elapses -> reinforce, fresh turn
+    engine.endTurn(); // turn 1 ends: the telegraphTurn-1 spawn fires, fresh turn begins
     expect(engine.getSnapshot().players[0].acted).toBe(false); // action economy refreshed by the new turn
     const res = engine.useSkill(0, 'ultimate_nuke', 'right');
     expect(res).toEqual({ ok: false, reason: 'ultimate-already-used' });
@@ -2191,15 +2214,12 @@ describe('BattleEngine: total party wipe is a defeat', () => {
       ],
       // One brute adjacent to each hero — both telegraphed claws land on the
       // same endTurn, killing the entire squad in a single resolution.
-      waves: [
-        {
-          turns: AMPLE_TURNS,
-          monsters: [
+      initialMonsters: [
             { monsterId: 'brute', spawn: { x: 3, y: 1 } },
             { monsterId: 'brute', spawn: { x: 3, y: 2 } },
-          ],
-        },
       ],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], wipeRegistry);
     engine.endTurn();
@@ -2224,7 +2244,9 @@ describe('BattleEngine: total party wipe is a defeat', () => {
         { x: 2, y: 2 },
       ],
       // Only the first hero has a brute in claw range; the second is safe.
-      waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'brute', spawn: { x: 3, y: 1 } }] }],
+      initialMonsters: [{ monsterId: 'brute', spawn: { x: 3, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
     };
     const engine = new BattleEngine(map, ['li_yan', 'su_qing'], wipeRegistry);
     engine.endTurn();
@@ -2262,7 +2284,9 @@ describe('BattleEngine: shield stacking cap', () => {
   const farMap = (): MapDef => ({
     ...twoWaveMap(),
     playerStarts: [{ x: 1, y: 1 }],
-    waves: [{ turns: AMPLE_TURNS, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }] }],
+    initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 6, y: 2 } }],
+    spawnSchedule: [],
+    totalTurns: AMPLE_TURNS,
   });
 
   it('+1 shield stacks to 2 but a third cast does not push it past the cap (and reports zero gain)', () => {
