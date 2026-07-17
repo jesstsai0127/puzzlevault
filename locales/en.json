@@ -118,5 +118,7 @@
   "ui.difficulty_easy": "Easy",
   "ui.difficulty_normal": "Normal",
   "ui.difficulty_hard": "Hard",
-  "ui.lesson_label": "[Lesson]"
+  "ui.lesson_label": "[Lesson]",
+  "ui.tutorial_entry": "Tutorial",
+  "ui.tutorial_progress": "Tutorial {n}/{total}"
 }
