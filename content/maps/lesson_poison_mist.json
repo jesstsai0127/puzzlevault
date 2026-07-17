@@ -7,10 +7,7 @@
   "baseHp": 6,
   "playerStarts": [{ "x": 1, "y": 4 }],
   "squadCharacterIds": ["li_yan"],
-  "waves": [
-    {
-      "turns": 12,
-      "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 3, "y": 4 } }]
-    }
-  ]
+  "initialMonsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 3, "y": 4 } }],
+  "spawnSchedule": [],
+  "totalTurns": 12
 }
