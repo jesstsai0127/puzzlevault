@@ -19,7 +19,7 @@
   ],
   "squadCharacterIds": ["li_yan", "su_qing", "bai_zhi"],
   "initialMonsters": [
-    { "monsterId": "yin_ghost", "spawn": { "x": 4, "y": 3 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 3 } },
     { "monsterId": "yuan_ling", "spawn": { "x": 5, "y": 2 } },
     { "monsterId": "yao_lang", "spawn": { "x": 6, "y": 2 } },
     { "monsterId": "yao_lang", "spawn": { "x": 3, "y": 5 } }
