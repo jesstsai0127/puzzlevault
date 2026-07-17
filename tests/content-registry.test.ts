@@ -226,6 +226,50 @@ describe('campaign missions: ITB-verified hard specs (8×8 grid, 5 turns, 3-pers
   });
 });
 
+describe('island1_m1: winnable via the intended ITB line, not only survivable (solvability upper check)', () => {
+  // The passive-loss test above proves doing nothing loses. This proves the
+  // mission is actually WINNABLE the ITB way — the two ghosts can't both be
+  // out-damaged in the action budget, but li_yan can shove one into a hazard
+  // pit (a free kill push, not damage), and su_qing finishes the other before
+  // it reaches the base. If a future engine/map edit breaks the push-into-pit
+  // interaction, this scripted solution stops winning and the test catches it.
+  it('shove-into-pit + ranged cleanup wins with the base never touched and the whole squad alive', () => {
+    const map = maps.island1_m1;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan steps directly below the top ghost at (2,2) and palm_waves it
+    // UP into the y=1 pit (instant kill, no damage spent); su_qing chips the
+    // bottom ghost from range.
+    expect(engine.moveUnit(0, { x: 2, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'palm_wave', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 4, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    // the shoved ghost is already gone — the pit, not HP, removed it
+    expect(engine.getSnapshot().monsters.filter((m) => m.hp > 0)).toHaveLength(2);
+    engine.endTurn();
+
+    // T2 — su_qing finishes the surviving ghost before it can claw the base.
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — both threats to the base are gone; mop up the two wolves.
+    expect(engine.moveUnit(0, { x: 3, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 6, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    engine.endTurn();
+
+    // T4, T5 — survive out the fixed mission clock.
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8); // neutralized every base-threat before it landed a hit
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true); // a clean line loses no one
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
