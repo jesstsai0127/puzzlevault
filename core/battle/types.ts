@@ -52,9 +52,45 @@ export interface MonsterUnitState {
   tauntTurnsLeft?: number;
 }
 
+/**
+ * One board tile a telegraphed monster attack will strike, with the damage
+ * that single skill deals there. Resolved ONCE against the TURN-START board
+ * (computeIntents) and then locked — the ITB telegraph contract: these are
+ * the tiles the monster has committed to attacking, and they deliberately do
+ * NOT re-resolve as the player repositions mid-turn (stepping OUT of a
+ * telegraphed tile is exactly how you dodge). The complementary LIVE layer is
+ * getAttackPreviews(): per-target "-N" totals re-resolved against the board
+ * as it stands right now, so the player sees both "where the attack is aimed"
+ * (fixed) and "who it would actually hit if I ended the turn here" (live).
+ * `damage` sums the skill's damage effects on that tile (percent damage is
+ * evaluated against the occupant's turn-start HP); 0 means a non-damage
+ * threat (e.g. push-only) landing there.
+ */
+export interface IntentTile {
+  pos: Vec2;
+  damage: number;
+}
+
 export type MonsterIntent =
   | { kind: 'move'; instanceId: string; to: Vec2; aim: Vec2 | null; away?: boolean }
-  | { kind: 'skill'; instanceId: string; skillId: string; direction: CardinalDir };
+  | {
+      kind: 'skill';
+      instanceId: string;
+      skillId: string;
+      direction: CardinalDir;
+      /**
+       * 1-based resolution rank AMONG SKILL INTENTS this turn: the intent
+       * with order 1 lands its attack before order 2, and so on. Backed by
+       * endTurn() resolving currentIntents in stable array order (= monster
+       * spawn order), so it is deterministic and safe to telegraph. Move
+       * intents interleave in the same array order but carry no number —
+       * monsters never block each other's attacks, so only attack-vs-attack
+       * ordering (shield charges, kill order) is player-relevant.
+       */
+      order: number;
+      /** Exact turn-start-locked attack tiles — see IntentTile for the two-layer telegraph semantics. */
+      tiles: IntentTile[];
+    };
 
 /** Identifies who/what an effect landed on — shared by AttackPreview (pre-resolution) and TurnEvent (post-resolution). */
 export type CombatTarget = { kind: 'base' } | { kind: 'player'; unitIndex: number } | { kind: 'monster'; instanceId: string };
