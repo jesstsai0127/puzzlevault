@@ -1,19 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
 import { MOVE_VECTORS, add, stepDirectionToward } from '../core/geometry';
-import type { MapDef } from '../core/content/types';
 import {
   STARTING_SQUAD,
   DEFAULT_MAP_ID,
   maps,
-  yanwuGroundMap,
   registry,
   LESSON_MAP_IDS,
-  LEVEL_GROUPS,
   WORLD_STRUCTURE,
 } from '../content/registry';
+import type { MapDef } from '../core/content/types';
 
-describe('Phase 0 content registry', () => {
+/** The 20 campaign missions, in island/mission order — the ITB-verified 4-islands × 5-missions structure. */
+const CAMPAIGN_MAP_IDS = [1, 2, 3, 4].flatMap((island) => [1, 2, 3, 4, 5].map((m) => `island${island}_m${m}`));
+
+/** A5 threat classification: yuan_ling never attacks players (it flees them), so it counts ONLY as a base threat. */
+const BASE_THREATS = new Set(['yin_ghost', 'yuan_ling']);
+const PLAYER_THREATS = new Set(['yao_lang', 'teng_yao', 'jiangshi']);
+
+function allMonsterIds(map: MapDef): string[] {
+  return [...map.initialMonsters.map((m) => m.monsterId), ...map.spawnSchedule.map((s) => s.monsterId)];
+}
+
+describe('content registry: builtin definitions', () => {
   it('parses all builtin content without throwing', () => {
     expect(Object.keys(registry.characters)).toEqual(['li_yan', 'su_qing', 'bai_zhi', 'ling_er']);
     expect(Object.keys(registry.monsters)).toEqual([
@@ -23,186 +32,112 @@ describe('Phase 0 content registry', () => {
       'teng_yao',
       'yao_lang',
     ]);
-    // demo1's real content: 2 initialMonsters + 18 spawnSchedule emergences over a 16-turn mission.
-    expect(yanwuGroundMap.initialMonsters).toHaveLength(2);
-    expect(yanwuGroundMap.spawnSchedule).toHaveLength(18);
-    expect(yanwuGroundMap.totalTurns).toBe(16);
   });
 
-  it('builds a playable BattleEngine from real content with a valid initial intent', () => {
-    const engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
-    const snap = engine.getSnapshot();
-    expect(snap.players).toHaveLength(2);
-    expect(snap.monsters).toHaveLength(2);
-
-    // Wave 1's ghosts spawn 4+ tiles from either hero — out of ghost_claw's
-    // range(1), so their only matching aiRule is the unconditional 'moveToward' fallback.
-    expect(engine.getIntents()).toEqual([
-      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object), aim: expect.any(Object) },
-      { kind: 'move', instanceId: expect.any(String), to: expect.any(Object), aim: expect.any(Object) },
-    ]);
+  it('exposes exactly the 20 campaign missions plus the 5 tutorial lessons, and island1_m1 is the default', () => {
+    expect(Object.keys(maps)).toEqual([...CAMPAIGN_MAP_IDS, ...LESSON_MAP_IDS]);
+    expect(DEFAULT_MAP_ID).toBe('island1_m1');
+    expect(maps[DEFAULT_MAP_ID]).toBeDefined();
   });
 
-  it('runs several turns of real content end-to-end without throwing', () => {
-    const engine = new BattleEngine(yanwuGroundMap, STARTING_SQUAD, registry);
+  it('runs several turns of real campaign content end-to-end without throwing', () => {
+    const map = maps.island1_m1;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    let sawOutcome = false;
     for (let turn = 0; turn < 8; turn++) {
       if (engine.getSnapshot().outcome) {
-        engine.confirmOutcome(); // a life lost / run over / win — confirm and keep exercising content
+        sawOutcome = true;
+        engine.confirmOutcome();
         continue;
       }
-      // Advance the squad toward the enemy side each turn, attacking when in range.
-      for (let unitIndex = 0; unitIndex < 2; unitIndex++) {
+      // Advance the squad rightward each turn, attacking when in range —
+      // not choreographed to win, just to exercise real content deeply
+      // enough that mismatched skill/monster data would throw.
+      for (let unitIndex = 0; unitIndex < 3; unitIndex++) {
         const before = engine.getSnapshot();
         const unit = before.players[unitIndex];
-        if (unit.hp <= 0) continue;
-        const nearestGhost = before.monsters
-          .filter((m) => m.hp > 0)
-          .sort((a, b) => Math.abs(a.position.x - unit.position.x) - Math.abs(b.position.x - unit.position.x))[0];
-        if (nearestGhost && Math.abs(nearestGhost.position.x - unit.position.x) <= 1 && nearestGhost.position.y === unit.position.y) {
-          engine.useSkill(unitIndex, unit.skillIds[0], 'right');
+        if (!unit || unit.hp <= 0) continue;
+        const adjacentMonster = before.monsters.find(
+          (m) => m.hp > 0 && Math.abs(m.position.x - unit.position.x) <= 1 && m.position.y === unit.position.y,
+        );
+        if (adjacentMonster) {
+          engine.useSkill(unitIndex, unit.skillIds[0], adjacentMonster.position.x > unit.position.x ? 'right' : 'left');
         } else {
-          // One committed one-tile move under the ITB economy — a rejected
-          // move (occupied tile ahead) is harmless here, same as before.
           engine.moveUnit(unitIndex, { x: unit.position.x + 1, y: unit.position.y });
         }
       }
       engine.endTurn();
     }
-    // Not asserting victory (positioning isn't perfectly choreographed) — the
-    // point is that real content resolves through many turns without an
-    // engine exception (mismatched skill/monster data would throw).
-    expect(engine.getSnapshot().turnNumber).toBeGreaterThan(1);
+    // 8 loop iterations against a mission this aggressive can end (and
+    // confirm-reset back to turn 1) mid-loop — either evidence proves the
+    // content actually resolved many turns without an engine exception.
+    expect(sawOutcome || engine.getSnapshot().turnNumber > 1).toBe(true);
   });
 });
 
-describe('maps registry (multi-level select, roadmap ch.5)', () => {
-  it('exposes every playable level by a stable id, and demo1 is the default', () => {
-    expect(Object.keys(maps)).toEqual([
-      'demo1',
-      'yanwu_ground_easy',
-      'yanwu_ground_hard',
-      'demo2',
-      'demo3',
-      'demo4',
-      'lesson_ap_cost',
-      'lesson_opportunity_attack',
-      'lesson_push_abyss',
-      'lesson_healer',
-      'lesson_poison_mist',
-      'world2_yuan_ling',
-      'world2_pincer_practice',
-      'world3_wolf_vine',
-      'world3_jiangshi',
-    ]);
-    expect(maps.demo1).toBe(yanwuGroundMap);
-    expect(DEFAULT_MAP_ID).toBe('demo1');
-    expect(maps[DEFAULT_MAP_ID]).toBe(maps.demo1);
+describe('campaign missions: ITB-verified hard specs (8×8 grid, 5 turns, 3-person squad, 4-6 monsters)', () => {
+  it('WORLD_STRUCTURE is 4 islands × 5 missions each, labels matching island-mission numbering, none lesson-styled', () => {
+    expect(WORLD_STRUCTURE).toHaveLength(4);
+    WORLD_STRUCTURE.forEach((world, wi) => {
+      expect(world.levels).toHaveLength(5);
+      world.levels.forEach((level, mi) => {
+        expect(level.mapId).toBe(`island${wi + 1}_m${mi + 1}`);
+        expect(level.label).toBe(`${wi + 1}-${mi + 1}`);
+        expect(level.isLesson).toBe(false);
+        expect(maps[level.mapId], `${level.mapId} must be a real entry in maps`).toBeDefined();
+      });
+    });
   });
 
-  it('demo2 (pincer) spawns its initial monsters from both flanks of a centered base', () => {
-    const demo2 = maps.demo2;
-    expect(demo2.initialMonsters).toHaveLength(2);
-    expect(demo2.spawnSchedule).toHaveLength(13);
-    expect(demo2.totalTurns).toBe(13);
-    const initialXs = demo2.initialMonsters.map((m) => m.spawn.x).sort((a, b) => a - b);
-    expect(initialXs).toEqual([1, 7]); // one spawn near the west wall, one near the east wall
+  it.each(CAMPAIGN_MAP_IDS)('%s: fixed 8×8 grid, totalTurns 5, baseHp 8, explicit 3-person squad', (id) => {
+    const map = maps[id];
+    expect(map.grid).toHaveLength(8);
+    for (const row of map.grid) expect(row).toHaveLength(8);
+    expect(map.totalTurns).toBe(5);
+    expect(map.baseHp).toBe(8);
+    expect(map.squadCharacterIds).toHaveLength(3);
+    expect(map.playerStarts).toHaveLength(3);
   });
 
-  it('builds a playable BattleEngine on demo2 without throwing', () => {
-    const engine = new BattleEngine(maps.demo2, STARTING_SQUAD, registry);
+  it.each(CAMPAIGN_MAP_IDS)('%s: 4-6 monsters total, mixing at least one base-threat with one player-threat (A5)', (id) => {
+    const ids = allMonsterIds(maps[id]);
+    expect(ids.length).toBeGreaterThanOrEqual(4);
+    expect(ids.length).toBeLessThanOrEqual(6);
+    expect(ids.some((m) => BASE_THREATS.has(m)), `${id} needs a base-threatening monster`).toBe(true);
+    expect(ids.some((m) => PLAYER_THREATS.has(m)), `${id} needs a player-threatening monster`).toBe(true);
+  });
+
+  it.each(CAMPAIGN_MAP_IDS)('%s: builds a playable BattleEngine without throwing', (id) => {
+    const map = maps[id];
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
     const snap = engine.getSnapshot();
-    expect(snap.players).toHaveLength(2);
-    expect(snap.monsters).toHaveLength(2);
+    expect(snap.players).toHaveLength(3);
     expect(snap.baseTiles.length).toBeGreaterThan(0);
   });
 
-  it("demo2's spawnSchedule includes yuan_ling, giving it a second monster archetype (not just yin_ghost)", () => {
-    const demo2 = maps.demo2;
-    const allMonsterIds = new Set([
-      ...demo2.initialMonsters.map((m) => m.monsterId),
-      ...demo2.spawnSchedule.map((s) => s.monsterId),
-    ]);
-    expect(allMonsterIds.has('yin_ghost')).toBe(true);
-    expect(allMonsterIds.has('yuan_ling')).toBe(true);
-  });
-
-  it('no monster on demo2 ever gets stuck with a move intent that goes nowhere (regression: hazard tiles sat directly in the greedy spawn path)', () => {
-    // Playing purely passively (no player actions) still cycles through
-    // defeat -> confirm -> retry, which is enough to walk every spawn
-    // pattern across every scheduled spawn multiple times.
-    const engine = new BattleEngine(maps.demo2, STARTING_SQUAD, registry);
-    for (let i = 0; i < 60; i++) {
-      const snap = engine.getSnapshot();
-      if (snap.outcome) {
-        engine.confirmOutcome();
-        continue;
-      }
-      for (const intent of engine.getIntents()) {
-        if (intent.kind !== 'move') continue;
-        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
-        // A move intent whose destination equals its current position means
-        // resolveMoveDestination() couldn't take a single step — the classic
-        // symptom of a hazard tile sitting directly on the greedy path.
-        expect(m && (m.position.x !== intent.to.x || m.position.y !== intent.to.y)).toBe(true);
-      }
-      engine.endTurn();
-    }
-  });
-});
-
-describe('yanwu_ground_easy / yanwu_ground_hard — demo1 difficulty tiers (LEVEL_GROUPS, roadmap difficulty-tiers batch)', () => {
-  it('LEVEL_GROUPS points demo1 (演武場) at exactly the easy/normal/hard mapIds registered in `maps`', () => {
-    expect(LEVEL_GROUPS).toHaveLength(1);
-    const group = LEVEL_GROUPS[0];
-    expect(group.normal).toBe('demo1');
-    expect(group.easy).toBe('yanwu_ground_easy');
-    expect(group.hard).toBe('yanwu_ground_hard');
-    expect(maps[group.easy!]).toBeDefined();
-    expect(maps[group.normal]).toBeDefined();
-    expect(maps[group.hard!]).toBeDefined();
-  });
-
-  it('yanwu_ground_easy: builds a playable BattleEngine and reuses demo1\'s exact grid layout (only waves/baseHp/turns differ)', () => {
-    const engine = new BattleEngine(maps.yanwu_ground_easy, STARTING_SQUAD, registry);
-    const snap = engine.getSnapshot();
-    expect(snap.players).toHaveLength(2);
-    expect(snap.baseTiles.length).toBeGreaterThan(0);
-    expect(maps.yanwu_ground_easy.grid).toEqual(yanwuGroundMap.grid);
-    expect(maps.yanwu_ground_easy.baseHp).toBeGreaterThan(yanwuGroundMap.baseHp); // easier: more base HP than normal
-  });
-
-  it('yanwu_ground_hard: builds a playable BattleEngine and reuses demo1\'s exact grid layout (only waves/baseHp/turns differ)', () => {
-    const engine = new BattleEngine(maps.yanwu_ground_hard, STARTING_SQUAD, registry);
-    const snap = engine.getSnapshot();
-    expect(snap.players).toHaveLength(2);
-    expect(snap.baseTiles.length).toBeGreaterThan(0);
-    expect(maps.yanwu_ground_hard.grid).toEqual(yanwuGroundMap.grid);
-    expect(maps.yanwu_ground_hard.baseHp).toBeLessThan(yanwuGroundMap.baseHp); // harder: less base HP than normal
-  });
-
-  it('a fully passive run (never acting) loses on both tiers, and hard loses no later than normal (tighter turn budget + lower baseHp)', () => {
-    function passiveDefeatTurn(map: typeof maps.demo1): number {
-      const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+  it.each(CAMPAIGN_MAP_IDS)(
+    '%s: a fully passive run (never acting, only ending turns) loses — doing nothing is not a viable strategy',
+    (id) => {
+      const map = maps[id];
+      const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
       let turns = 0;
-      while (!engine.getSnapshot().outcome && turns < 200) {
+      while (!engine.getSnapshot().outcome && turns < 10) {
         engine.endTurn();
         turns += 1;
       }
-      expect(engine.getSnapshot().outcome).toBe('defeat');
-      return engine.getSnapshot().turnNumber;
-    }
-    const normalDefeatTurn = passiveDefeatTurn(yanwuGroundMap);
-    const hardDefeatTurn = passiveDefeatTurn(maps.yanwu_ground_hard);
-    const easyDefeatTurn = passiveDefeatTurn(maps.yanwu_ground_easy);
-    expect(hardDefeatTurn).toBeLessThanOrEqual(normalDefeatTurn);
-    expect(easyDefeatTurn).toBeGreaterThan(normalDefeatTurn);
-  });
+      expect(engine.getSnapshot().outcome, `${id} must not be passively survivable`).toBe('defeat');
+    },
+  );
 
-  it.each(['yanwu_ground_easy', 'yanwu_ground_hard'] as const)(
-    'no monster on %s ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/3/4 guard against)',
-    (mapId) => {
-      const map = maps[mapId];
-      const engine = new BattleEngine(map, STARTING_SQUAD, registry);
+  it.each(CAMPAIGN_MAP_IDS)(
+    '%s: no monster ever gets terrain-stuck with a move intent that goes nowhere',
+    (id) => {
+      // Zero-progress move intents are only legal when a living body blocks
+      // the greedy next step, or when the monster has no aim left (squad
+      // wiped). Terrain silently wedging a monster is the regression this
+      // guards against.
+      const map = maps[id];
+      const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
       for (let i = 0; i < 60; i++) {
         const snap = engine.getSnapshot();
         if (snap.outcome) {
@@ -214,180 +149,80 @@ describe('yanwu_ground_easy / yanwu_ground_hard — demo1 difficulty tiers (LEVE
             (u) => `${u.position.x},${u.position.y}`,
           ),
         );
+        const playersAlive = snap.players.some((p) => p.hp > 0);
         for (const intent of engine.getIntents()) {
           if (intent.kind !== 'move') continue;
           const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
           expect(m).toBeDefined();
-          if (!intent.aim) continue; // no living base-seeking target case doesn't apply here, but keep parity with the demo2/3/4 pattern
+          if (!intent.aim) {
+            expect(playersAlive).toBe(false);
+            continue;
+          }
           if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
             const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
-            expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
+            expect(
+              occupied.has(`${next.x},${next.y}`),
+              `${id}: terrain-stuck at (${m!.position.x},${m!.position.y}) toward (${intent.aim.x},${intent.aim.y})`,
+            ).toBe(true);
           }
         }
         engine.endTurn();
       }
     },
   );
-});
 
-describe('demo3 (wolf woods) — finale mixing all three unused monster archetypes', () => {
-  it('builds a playable BattleEngine on demo3 without throwing', () => {
-    const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
-    const snap = engine.getSnapshot();
-    expect(snap.players).toHaveLength(2);
-    expect(snap.monsters).toHaveLength(1); // initialMonsters: a single yao_lang, introducing the speed mechanic solo
-    expect(snap.baseTiles.length).toBeGreaterThan(0);
-    expect(maps.demo3.initialMonsters).toHaveLength(1);
-    expect(maps.demo3.spawnSchedule).toHaveLength(15);
-    expect(maps.demo3.totalTurns).toBe(17);
-  });
-
-  it('covers all three new monster archetypes plus yin_ghost as base pressure', () => {
-    // yao_lang / teng_yao / jiangshi all target nearestPlayer, never the base —
-    // without yin_ghost in the mix the base could never fall, making the level
-    // unlosable. The finale spec (混合該世界所有怪) wants the mix anyway.
-    const allMonsterIds = new Set([
-      ...maps.demo3.initialMonsters.map((m) => m.monsterId),
-      ...maps.demo3.spawnSchedule.map((s) => s.monsterId),
-    ]);
-    expect(allMonsterIds.has('yao_lang')).toBe(true);
-    expect(allMonsterIds.has('teng_yao')).toBe(true);
-    expect(allMonsterIds.has('jiangshi')).toBe(true);
-    expect(allMonsterIds.has('yin_ghost')).toBe(true);
-  });
-
-  it('no monster on demo3 ever gets terrain-stuck with a move intent that goes nowhere (regression: hazard tiles sat directly in the greedy spawn path)', () => {
-    // Same regression demo2 guards against, adapted for player-hunting
-    // monsters. demo2's monsters all aim at the (static) base, so a
-    // zero-progress move intent could only mean terrain blocking the greedy
-    // path. demo3's wolves/jiangshi hunt players, which adds two LEGITIMATE
-    // zero-progress cases the strict check would false-positive on:
-    //   1. aim === null — every player is dead, the hunter has no target and
-    //      idles in place by design (only the base can end a run).
-    //   2. The greedy next tile is occupied by another living unit — a
-    //      traffic queue (e.g. two ghosts single-file at the base), which
-    //      resolves or persists harmlessly; the monster is boxed in by
-    //      bodies, not silently wedged against a hazard.
-    // What must NEVER happen is the original bug: aim set, nobody in the
-    // way, and the monster still can't take a single step — that means a
-    // hazard/wall sits directly on the greedy path.
-    const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
-    const walkable = (p: { x: number; y: number }) => maps.demo3.grid[p.y]?.[p.x] === ' ';
-    for (let i = 0; i < 60; i++) {
-      const snap = engine.getSnapshot();
-      if (snap.outcome) {
-        engine.confirmOutcome();
-        continue;
-      }
-      const playersAlive = snap.players.some((p) => p.hp > 0);
-      const occupied = new Set(
-        [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
-          (u) => `${u.position.x},${u.position.y}`,
-        ),
-      );
-      for (const intent of engine.getIntents()) {
-        if (intent.kind !== 'move') continue;
-        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
-        expect(m).toBeDefined();
-        if (!intent.aim) {
-          expect(playersAlive).toBe(false); // idle with no aim is only legal once the squad is wiped
+  it("teng_yao's intent is never a move on any mission that fields it — its aiRules are useSkill-only", () => {
+    const withTengYao = CAMPAIGN_MAP_IDS.filter((id) => allMonsterIds(maps[id]).includes('teng_yao'));
+    expect(withTengYao.length).toBeGreaterThan(0); // sanity: the archetype is actually fielded somewhere
+    for (const id of withTengYao) {
+      const map = maps[id];
+      const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+      for (let i = 0; i < 20; i++) {
+        const snap = engine.getSnapshot();
+        if (snap.outcome) {
+          engine.confirmOutcome();
           continue;
         }
-        if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
-          const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
-          // Zero progress must be explained by a body in the way — never by terrain.
-          expect(occupied.has(`${next.x},${next.y}`), `terrain-stuck at (${m!.position.x},${m!.position.y}) toward (${intent.aim.x},${intent.aim.y}): next tile (${next.x},${next.y}) walkable=${walkable(next)}`).toBe(true);
+        for (const intent of engine.getIntents()) {
+          const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+          if (m?.monsterId === 'teng_yao') expect(intent.kind).toBe('skill');
         }
+        engine.endTurn();
       }
-      engine.endTurn();
     }
   });
 
-  it("teng_yao's intent is never a move — its aiRules are useSkill-only, so a move intent would mean the rules or engine regressed", () => {
-    const engine = new BattleEngine(maps.demo3, STARTING_SQUAD, registry);
-    for (let i = 0; i < 60; i++) {
-      const snap = engine.getSnapshot();
-      if (snap.outcome) {
-        engine.confirmOutcome();
-        continue;
+  it('difficulty escalates island over island (average monster HP pool strictly rises), and each island boss (m5) is its island\'s hardest', () => {
+    const monsterHp = (id: string) =>
+      allMonsterIds(maps[id]).reduce((sum, mid) => sum + registry.monsters[mid].maxHp, 0);
+    const islandAverages: number[] = [];
+    for (const island of [1, 2, 3, 4]) {
+      const pools = [1, 2, 3, 4, 5].map((m) => monsterHp(`island${island}_m${m}`));
+      const boss = pools[4];
+      for (let m = 0; m < 4; m++) {
+        expect(boss, `island${island}_m5 (boss) must have a bigger HP pool than island${island}_m${m + 1}`).toBeGreaterThan(pools[m]);
       }
-      for (const intent of engine.getIntents()) {
-        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
-        if (m?.monsterId === 'teng_yao') {
-          expect(intent.kind).toBe('skill');
-        }
-      }
-      engine.endTurn();
+      islandAverages.push(pools.reduce((a, b) => a + b, 0) / pools.length);
     }
+    for (let i = 1; i < islandAverages.length; i++) {
+      expect(islandAverages[i], `island ${i + 1} must average harder than island ${i}`).toBeGreaterThan(islandAverages[i - 1]);
+    }
+  });
+
+  it('monster archetypes are introduced progressively: island1 ghost+wolf only, yuan_ling from island2, teng_yao from island3, jiangshi from island4', () => {
+    const islandRoster = (island: number) =>
+      new Set([1, 2, 3, 4, 5].flatMap((m) => allMonsterIds(maps[`island${island}_m${m}`])));
+    expect([...islandRoster(1)].sort()).toEqual(['yao_lang', 'yin_ghost']);
+    expect(islandRoster(2).has('yuan_ling')).toBe(true);
+    expect(islandRoster(2).has('teng_yao')).toBe(false);
+    expect(islandRoster(2).has('jiangshi')).toBe(false);
+    expect(islandRoster(3).has('teng_yao')).toBe(true);
+    expect(islandRoster(3).has('jiangshi')).toBe(false);
+    expect(islandRoster(4).has('jiangshi')).toBe(true);
   });
 });
 
-describe('demo4 (mist hollow) — 3-hero squad + healer + poison mist, world-2 small-level spec (4 waves)', () => {
-  it('builds a playable BattleEngine on demo4 with its own 3-hero squad, not the global 2-hero default', () => {
-    const squad = maps.demo4.squadCharacterIds;
-    expect(squad).toEqual(['li_yan', 'su_qing', 'bai_zhi']);
-    const engine = new BattleEngine(maps.demo4, squad!, registry);
-    const snap = engine.getSnapshot();
-    expect(snap.players).toHaveLength(3);
-    expect(snap.players[2].characterId).toBe('bai_zhi');
-    expect(snap.baseTiles.length).toBeGreaterThan(0);
-    expect(maps.demo4.initialMonsters).toHaveLength(1);
-    expect(maps.demo4.spawnSchedule).toHaveLength(9);
-    expect(maps.demo4.totalTurns).toBe(14);
-  });
-
-  it('covers both new-mechanic monster archetypes: yin_ghost (base-seeking, crosses the mist lanes) and jiangshi (player-seeking tank)', () => {
-    const allMonsterIds = new Set([
-      ...maps.demo4.initialMonsters.map((m) => m.monsterId),
-      ...maps.demo4.spawnSchedule.map((s) => s.monsterId),
-    ]);
-    expect(allMonsterIds.has('yin_ghost')).toBe(true);
-    expect(allMonsterIds.has('jiangshi')).toBe(true);
-  });
-
-  it('no monster on demo4 ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/demo3 guard against)', () => {
-    const engine = new BattleEngine(maps.demo4, maps.demo4.squadCharacterIds!, registry);
-    for (let i = 0; i < 60; i++) {
-      const snap = engine.getSnapshot();
-      if (snap.outcome) {
-        engine.confirmOutcome();
-        continue;
-      }
-      const occupied = new Set(
-        [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
-          (u) => `${u.position.x},${u.position.y}`,
-        ),
-      );
-      const playersAlive = snap.players.some((p) => p.hp > 0);
-      for (const intent of engine.getIntents()) {
-        if (intent.kind !== 'move') continue;
-        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
-        expect(m).toBeDefined();
-        if (!intent.aim) {
-          expect(playersAlive).toBe(false);
-          continue;
-        }
-        if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
-          const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
-          expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
-        }
-      }
-      engine.endTurn();
-    }
-  });
-
-  it('a fully passive run (never acting, only ending turns) loses — the map is not winnable by doing nothing', () => {
-    const engine = new BattleEngine(maps.demo4, maps.demo4.squadCharacterIds!, registry);
-    let turns = 0;
-    while (!engine.getSnapshot().outcome && turns < 200) {
-      engine.endTurn();
-      turns += 1;
-    }
-    expect(engine.getSnapshot().outcome).toBe('defeat');
-  });
-});
-
-describe('lesson levels (real, playable single-mechanic practice maps — replaces the old scripted TutorialDef system)', () => {
+describe('lesson levels (standalone tutorial sequence — replaces the old scripted TutorialDef system)', () => {
   it('LESSON_MAP_IDS names exactly five real entries in `maps`, each a genuine MapDef (not a special content kind)', () => {
     expect(LESSON_MAP_IDS).toEqual([
       'lesson_ap_cost',
@@ -400,8 +235,8 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
       const map = maps[id];
       expect(map).toBeDefined();
       expect(map.initialMonsters.length + map.spawnSchedule.length).toBeGreaterThan(0); // has some monster
-      expect(map.spawnSchedule).toHaveLength(0); // small practice levels: no emergence tiles, not a finale
-      expect(map.totalTurns).toBeLessThanOrEqual(12); // short mission, not a finale-length run
+      expect(map.spawnSchedule).toHaveLength(0); // small practice levels: no emergence tiles
+      expect(map.totalTurns).toBeLessThanOrEqual(12); // short mission, not a campaign-length run
     }
   });
 
@@ -429,7 +264,7 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
   );
 
   it.each(LESSON_MAP_IDS)(
-    '%s: no monster ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/3/4 guard against)',
+    '%s: no monster ever gets terrain-stuck with a move intent that goes nowhere (same regression the campaign missions guard against)',
     (id) => {
       const map = maps[id];
       const squad = map.squadCharacterIds ?? STARTING_SQUAD;
@@ -556,86 +391,6 @@ describe('lesson levels (real, playable single-mechanic practice maps — replac
     // totalTurns hasn't elapsed after just 2 turns, so the run is still open.
     expect(engine.getSnapshot().outcome).toBeNull();
   });
-});
-
-describe('WORLD_STRUCTURE (world-structure batch: World 1-4 grouping for LevelSelectScene)', () => {
-  const NEW_WORLD2_WORLD3_LESSON_IDS = [
-    'world2_yuan_ling',
-    'world2_pincer_practice',
-    'world3_wolf_vine',
-    'world3_jiangshi',
-  ];
-
-  it('has exactly 4 worlds, each ending in its finale map, matching the confirmed World 1-4 layout', () => {
-    expect(WORLD_STRUCTURE).toHaveLength(4);
-    // ITB alignment (2026-07-17): World 1's and World 4's old basic-controls
-    // lesson_* levels moved out to the standalone tutorial sequence (see
-    // LESSON_MAP_IDS) — each world is now just its finale. World 2/3's own
-    // new-monster-mechanic lessons are unaffected (out of scope for that
-    // consolidation — see design/roadmap.md).
-    expect(WORLD_STRUCTURE[0].levels.map((l) => l.mapId)).toEqual(['demo1']);
-    expect(WORLD_STRUCTURE[1].levels.map((l) => l.mapId)).toEqual([
-      'world2_yuan_ling',
-      'world2_pincer_practice',
-      'demo2',
-    ]);
-    expect(WORLD_STRUCTURE[2].levels.map((l) => l.mapId)).toEqual(['world3_wolf_vine', 'world3_jiangshi', 'demo3']);
-    expect(WORLD_STRUCTURE[3].levels.map((l) => l.mapId)).toEqual(['demo4']);
-  });
-
-  it('every level in WORLD_STRUCTURE points at a real, registered map, and only each world\'s last level is a non-lesson finale', () => {
-    for (const world of WORLD_STRUCTURE) {
-      world.levels.forEach((level, i) => {
-        expect(maps[level.mapId], `${level.mapId} must be a real entry in maps`).toBeDefined();
-        const isLast = i === world.levels.length - 1;
-        expect(level.isLesson).toBe(!isLast);
-      });
-    }
-  });
-
-  it.each(NEW_WORLD2_WORLD3_LESSON_IDS)('%s: builds a playable BattleEngine without throwing', (id) => {
-    const map = maps[id];
-    const squad = map.squadCharacterIds ?? STARTING_SQUAD;
-    const engine = new BattleEngine(map, squad, registry);
-    expect(engine.getSnapshot().players.length).toBe(squad.length);
-    expect(engine.getSnapshot().baseTiles.length).toBeGreaterThan(0);
-  });
-
-  it.each(NEW_WORLD2_WORLD3_LESSON_IDS)(
-    '%s: no monster ever gets terrain-stuck with a move intent that goes nowhere (same regression demo2/3/4 guard against)',
-    (id) => {
-      const map = maps[id];
-      const squad = map.squadCharacterIds ?? STARTING_SQUAD;
-      const engine = new BattleEngine(map, squad, registry);
-      for (let i = 0; i < 60; i++) {
-        const snap = engine.getSnapshot();
-        if (snap.outcome) {
-          engine.confirmOutcome();
-          continue;
-        }
-        const occupied = new Set(
-          [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
-            (u) => `${u.position.x},${u.position.y}`,
-          ),
-        );
-        const playersAlive = snap.players.some((p) => p.hp > 0);
-        for (const intent of engine.getIntents()) {
-          if (intent.kind !== 'move') continue;
-          const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
-          expect(m).toBeDefined();
-          if (!intent.aim) {
-            expect(playersAlive).toBe(false);
-            continue;
-          }
-          if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
-            const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
-            expect(occupied.has(`${next.x},${next.y}`)).toBe(true);
-          }
-        }
-        engine.endTurn();
-      }
-    },
-  );
 });
 
 describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage / roaring_shockwave / spring_rain)', () => {
