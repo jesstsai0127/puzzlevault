@@ -26,7 +26,7 @@
 - `moveUnit()`:整段路徑一次提交(UI 點目的格),檢查 `!moved && !acted`,BFS 距離 ≤ moveRange;成功後 `moved = true`。機會攻擊邏輯**整段移除**(A7 已定案)。
 - `useSkill()`:檢查 `!acted`(移動過沒關係);成功後 `acted = true`。
 - 新增 `rest()`(調息):同 `useSkill` 的門檻,自癒 1(上限 maxHp),`acted = true`。
-- `resetTurn()`:加每關 1 次限制(`resetTurnUsed`,存關卡層,`resetLevel()` 才清)。**單步 undo 一併移除**(ITB 沒有單步 undo;「先做到一樣」原則,2026-07-16 定案)——pushHistory 快照機制保留(回合重置仍需要它),只拿掉 UI 的 undo 入口與對應快捷鍵。
+- `resetTurn()`:加每關 1 次限制(`resetTurnUsed`,存關卡層,`resetLevel()` 才清)。**單步 undo 一併移除**(ITB 沒有單步 undo;「先做到一樣」原則,2026-07-16 定案)——實作時查證:回合重置的還原來源一直是 `turnStartSnapshot`,`pushHistory`/`history`/`undo()` 是封閉的單步 undo 機制、無其他使用者,故整組移除(原「pushHistory 保留供回合重置」的描述是對舊程式碼的誤讀,已修正)。
 - `startFreshTurn()`:重置全員 `moved/acted`。
 
 ## UI 層改動(BattleScene.ts)
