@@ -270,6 +270,49 @@ describe('island1_m1: winnable via the intended ITB line, not only survivable (s
   });
 });
 
+describe('island1_m2: winnable via the choke line (solvability upper check)', () => {
+  // A wall column splits the field; the two open rows (y=3, y=6) are single-file
+  // pipes, so two heroes can't stack in the same corridor. The ITB read: su_qing
+  // solos the row-3 ghost from range while li_yan takes the long way round row 6
+  // to intercept the second ghost — neither base-threat ever reaches the wall.
+  it('su_qing holds the row-3 corridor while li_yan flanks via row 6, base untouched, whole squad alive', () => {
+    const map = maps.island1_m2;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — su_qing takes the corridor mouth and chips the row-3 ghost; li_yan
+    // starts the long route down the row-6 passage.
+    expect(engine.moveUnit(1, { x: 5, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 4, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — su_qing finishes the row-3 ghost down the pipe; li_yan reaches the
+    // second ghost's column and chips it.
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 3, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — li_yan kills the second ghost before it reaches the base; su_qing
+    // repositions and clears a wolf.
+    expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    engine.endTurn();
+
+    // T4 — clear the last wolf; T5 — ride out the clock.
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8); // neither ghost ever crossed the wall to the base
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
