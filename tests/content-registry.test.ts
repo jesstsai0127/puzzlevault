@@ -34,8 +34,8 @@ describe('content registry: builtin definitions', () => {
     ]);
   });
 
-  it('exposes exactly the 20 campaign missions plus the 5 tutorial lessons, and island1_m1 is the default', () => {
-    expect(Object.keys(maps)).toEqual([...CAMPAIGN_MAP_IDS, ...LESSON_MAP_IDS]);
+  it('exposes exactly the 20 campaign missions + the final battle + the 5 tutorial lessons, and island1_m1 is the default', () => {
+    expect(Object.keys(maps)).toEqual([...CAMPAIGN_MAP_IDS, 'final_hive', ...LESSON_MAP_IDS]);
     expect(DEFAULT_MAP_ID).toBe('island1_m1');
     expect(maps[DEFAULT_MAP_ID]).toBeDefined();
   });
@@ -76,9 +76,9 @@ describe('content registry: builtin definitions', () => {
 });
 
 describe('campaign missions: ITB-verified hard specs (8×8 grid, 5 turns, 3-person squad, 4-6 monsters)', () => {
-  it('WORLD_STRUCTURE is 4 islands × 5 missions each, labels matching island-mission numbering, none lesson-styled', () => {
-    expect(WORLD_STRUCTURE).toHaveLength(4);
-    WORLD_STRUCTURE.forEach((world, wi) => {
+  it('WORLD_STRUCTURE is 4 islands × 5 missions each plus the standalone final battle, none lesson-styled', () => {
+    expect(WORLD_STRUCTURE).toHaveLength(5);
+    WORLD_STRUCTURE.slice(0, 4).forEach((world, wi) => {
       expect(world.levels).toHaveLength(5);
       world.levels.forEach((level, mi) => {
         expect(level.mapId).toBe(`island${wi + 1}_m${mi + 1}`);
@@ -87,6 +87,10 @@ describe('campaign missions: ITB-verified hard specs (8×8 grid, 5 turns, 3-pers
         expect(maps[level.mapId], `${level.mapId} must be a real entry in maps`).toBeDefined();
       });
     });
+    const finalWorld = WORLD_STRUCTURE[4];
+    expect(finalWorld.levels).toHaveLength(1);
+    expect(finalWorld.levels[0].mapId).toBe('final_hive');
+    expect(finalWorld.levels[0].isLesson).toBe(false);
   });
 
   it.each(CAMPAIGN_MAP_IDS)('%s: fixed 8×8 grid, totalTurns 5, baseHp 8, explicit 3-person squad', (id) => {
@@ -219,6 +223,71 @@ describe('campaign missions: ITB-verified hard specs (8×8 grid, 5 turns, 3-pers
     expect(islandRoster(3).has('teng_yao')).toBe(true);
     expect(islandRoster(3).has('jiangshi')).toBe(false);
     expect(islandRoster(4).has('jiangshi')).toBe(true);
+  });
+});
+
+describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
+  it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
+    const map = maps.final_hive;
+    expect(map.grid).toHaveLength(8);
+    for (const row of map.grid) expect(row).toHaveLength(8);
+    expect(map.totalTurns).toBe(5);
+    expect(map.baseHp).toBe(4);
+    expect(map.squadCharacterIds).toEqual(['li_yan', 'ling_er', 'bai_zhi']);
+    expect(map.playerStarts).toHaveLength(3);
+  });
+
+  it('fields 6 monsters mixing base-threats with player-threats (A5), the heaviest composition allowed', () => {
+    const ids = allMonsterIds(maps.final_hive);
+    expect(ids).toHaveLength(6);
+    expect(ids.some((m) => BASE_THREATS.has(m))).toBe(true);
+    expect(ids.some((m) => PLAYER_THREATS.has(m))).toBe(true);
+  });
+
+  it('a fully passive run loses fast — a 4-HP objective under this assault cannot be idled through', () => {
+    const map = maps.final_hive;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    let turns = 0;
+    while (!engine.getSnapshot().outcome && turns < 10) {
+      engine.endTurn();
+      turns += 1;
+    }
+    expect(engine.getSnapshot().outcome).toBe('defeat');
+  });
+
+  it('no monster ever gets terrain-stuck with a move intent that goes nowhere', () => {
+    const map = maps.final_hive;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry);
+    for (let i = 0; i < 60; i++) {
+      const snap = engine.getSnapshot();
+      if (snap.outcome) {
+        engine.confirmOutcome();
+        continue;
+      }
+      const occupied = new Set(
+        [...snap.players.filter((p) => p.hp > 0), ...snap.monsters.filter((m) => m.hp > 0)].map(
+          (u) => `${u.position.x},${u.position.y}`,
+        ),
+      );
+      const playersAlive = snap.players.some((p) => p.hp > 0);
+      for (const intent of engine.getIntents()) {
+        if (intent.kind !== 'move') continue;
+        const m = snap.monsters.find((x) => x.instanceId === intent.instanceId);
+        expect(m).toBeDefined();
+        if (!intent.aim) {
+          expect(playersAlive).toBe(false);
+          continue;
+        }
+        if (m!.position.x === intent.to.x && m!.position.y === intent.to.y) {
+          const next = add(m!.position, MOVE_VECTORS[stepDirectionToward(m!.position, intent.aim)]);
+          expect(
+            occupied.has(`${next.x},${next.y}`),
+            `final_hive: terrain-stuck at (${m!.position.x},${m!.position.y}) toward (${intent.aim.x},${intent.aim.y})`,
+          ).toBe(true);
+        }
+      }
+      engine.endTurn();
+    }
   });
 });
 
