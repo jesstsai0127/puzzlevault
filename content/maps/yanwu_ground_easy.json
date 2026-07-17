@@ -15,27 +15,15 @@
     { "x": 1, "y": 1 },
     { "x": 1, "y": 4 }
   ],
-  "waves": [
-    {
-      "turns": 5,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } }
-      ]
-    },
-    {
-      "turns": 5,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } }
-      ]
-    },
-    {
-      "turns": 6,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 1 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 3 } }
-      ]
-    }
-  ]
+  "initialMonsters": [
+    { "monsterId": "yin_ghost", "spawn": { "x": 5, "y": 2 } }
+  ],
+  "spawnSchedule": [
+    { "telegraphTurn": 5, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 2 } },
+    { "telegraphTurn": 5, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 3 } },
+    { "telegraphTurn": 10, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 1 } },
+    { "telegraphTurn": 10, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 2 } },
+    { "telegraphTurn": 10, "monsterId": "yin_ghost", "tile": { "x": 5, "y": 3 } }
+  ],
+  "totalTurns": 16
 }
