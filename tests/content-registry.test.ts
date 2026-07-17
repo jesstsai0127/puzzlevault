@@ -578,6 +578,56 @@ describe('island2_m3: winnable — focus the base-clawer, then hunt the yuan_lin
   });
 });
 
+describe('island2_m4: winnable via LOS-through-hazard snipe + kiting (solvability upper check)', () => {
+  // A tight hold. A yuan_ling parks at (1,3) and bolts up column 1 into the base
+  // from turn 1; the key read is that hazard tiles DON'T block line of sight, so
+  // su_qing can drop to (1,6) and one-shot it straight up the column through the
+  // (1,4) pit. Meanwhile bai_zhi (a healer with no attack, starting next to a
+  // wolf) kites it forever — her move outranges the wolf, and stepping away
+  // dodges the telegraphed bite. The base bleeds to 2 but survives, whole squad
+  // intact — a genuine hard mission, not a flawless clear.
+  it('snipe the yuan_ling through the hazard, kite the wolf, hold the base — squad survives', () => {
+    const map = maps.island2_m4;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan vacates the corridor so su_qing can reach (1,6) and snipe the
+    // yuan_ling up column 1 (through the pit); bai_zhi begins kiting the wolf.
+    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 1, y: 6 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 6 }).ok).toBe(true);
+    expect(engine.getSnapshot().baseHp).toBe(8); // no bolt landed — the yuan_ling is already dead
+    engine.endTurn();
+
+    // T2 — both damage-dealers turn on the ghosts closing on the base; bai_zhi
+    // keeps fleeing.
+    expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 2, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — li_yan finishes the lead ghost; su_qing thins the reinforcement;
+    // bai_zhi ducks into the far corner.
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 2, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T4 — bai_zhi keeps her distance; T5 — ride it out.
+    expect(engine.moveUnit(2, { x: 1, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(2); // held on 2 — a deliberately tight island-2 mission
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
