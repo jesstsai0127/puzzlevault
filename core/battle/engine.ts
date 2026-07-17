@@ -14,6 +14,7 @@ import type {
   BattleSnapshot,
   CombatTarget,
   ContentRegistry,
+  IntentTile,
   MonsterIntent,
   MonsterUnitState,
   PlayerUnitState,
@@ -44,7 +45,8 @@ type ResolvedTarget =
   | { kind: 'self' }
   | { kind: 'player'; unit: PlayerUnitState }
   | { kind: 'monster'; unit: MonsterUnitState }
-  | { kind: 'base' };
+  /** `at` is the base tile the effect landed on — applyEffect ignores it (base HP is one shared pool), but intent telegraphs need the exact tile to mark on the board. */
+  | { kind: 'base'; at: Vec2 };
 
 function sameCombatTarget(a: CombatTarget, b: CombatTarget): boolean {
   if (a.kind !== b.kind) return false;
@@ -137,7 +139,13 @@ export class BattleEngine {
   }
 
   getIntents(): MonsterIntent[] {
-    return this.currentIntents.map((i) => ({ ...i }));
+    // Deep-copy the nested Vec2s/tiles so a caller poking at the returned
+    // intents can never corrupt the locked telegraph.
+    return this.currentIntents.map((i) =>
+      i.kind === 'skill'
+        ? { ...i, tiles: i.tiles.map((t) => ({ pos: { ...t.pos }, damage: t.damage })) }
+        : { ...i, to: { ...i.to }, aim: i.aim ? { ...i.aim } : i.aim },
+    );
   }
 
   /**
@@ -297,6 +305,11 @@ export class BattleEngine {
     if (this.pendingOutcome) return; // must confirmOutcome() before playing on
 
     this.pendingEvents = [];
+    // Intents resolve in ARRAY ORDER — the same stable spawn order
+    // computeIntents() built them in. This is a telegraphed promise: each
+    // skill intent's `order` field (shown on the board as ①②③) is its rank
+    // in this very loop, so reordering anything here would break the UI's
+    // word to the player.
     for (const intent of this.currentIntents) {
       const monster = this.monsters.find((m) => m.instanceId === intent.instanceId);
       if (!monster || monster.hp <= 0) continue; // died during the player's turn
@@ -309,6 +322,13 @@ export class BattleEngine {
         // from the telegraph; only how far it actually gets is live.
         monster.position = this.resolveMoveDestination(monster, intent);
       } else {
+        // The skill re-resolves its targets against the board AS IT IS NOW,
+        // not intent.tiles: the telegraphed tiles are the turn-start promise
+        // the player planned around, but the attack itself is a direction +
+        // shape — a hero who stepped out of a telegraphed tile is safe, and
+        // one who stepped INTO the line of fire gets hit. Both layers (locked
+        // tiles + live getAttackPreviews) are honest precisely because this
+        // resolution is live.
         const skill = this.registry.skills[intent.skillId];
         if (!skill) continue;
         const dirVec = MOVE_VECTORS[intent.direction];
@@ -549,6 +569,18 @@ export class BattleEngine {
       .filter((m) => m.hp > 0)
       .map((m) => this.computeIntentFor(m));
 
+    // Resolution-order telegraph: endTurn() walks currentIntents in this
+    // exact array order, and this array follows this.monsters, whose order
+    // is spawn order (spawnWave appends; the hp>0 filter here matches
+    // endTurn's own dead-monster skip) — deterministic by construction, so
+    // the number shown to the player is a promise, not a guess. Skill
+    // intents get their 1-based attack rank here; see the MonsterIntent
+    // doc for why only attacks are numbered.
+    let attackRank = 1;
+    for (const intent of intents) {
+      if (intent.kind === 'skill') intent.order = attackRank++;
+    }
+
     for (const m of this.monsters) {
       if (m.hp <= 0 || m.tauntTurnsLeft == null) continue;
       m.tauntTurnsLeft -= 1;
@@ -559,6 +591,58 @@ export class BattleEngine {
     }
 
     return intents;
+  }
+
+  /**
+   * Builds a skill intent with its attack tiles resolved and LOCKED against
+   * the board as it stands right now (turn start — computeIntents is the
+   * only caller path). `order` starts at 0 and is stamped with the real
+   * 1-based attack rank by computeIntents() once the whole turn's intent
+   * list exists.
+   */
+  private makeSkillIntent(m: MonsterUnitState, skillId: string, direction: CardinalDir): MonsterIntent {
+    return {
+      kind: 'skill',
+      instanceId: m.instanceId,
+      skillId,
+      direction,
+      order: 0,
+      tiles: this.skillIntentTiles(m, skillId, direction),
+    };
+  }
+
+  /**
+   * The exact tiles a monster's telegraphed skill will strike, resolved with
+   * the same resolveTargets() call endTurn() will use — but against the
+   * TURN-START board, then locked (see IntentTile in types.ts for the
+   * two-layer telegraph contract vs the live getAttackPreviews()). Heal
+   * effects are skipped: a monster topping up its allies is not a threat
+   * tile the player can stand on or dodge out of. Damage on a tile sums
+   * across the skill's damage effects; a tile hit only by non-damage
+   * hostile effects (push/taunt/…) still telegraphs, at damage 0.
+   */
+  private skillIntentTiles(m: MonsterUnitState, skillId: string, direction: CardinalDir): IntentTile[] {
+    const skill = this.registry.skills[skillId];
+    if (!skill) return [];
+    const dirVec = MOVE_VECTORS[direction];
+    const tiles: IntentTile[] = [];
+    const addTile = (pos: Vec2, damage: number) => {
+      const existing = tiles.find((t) => equalsVec2(t.pos, pos));
+      if (existing) existing.damage += damage;
+      else tiles.push({ pos: { ...pos }, damage });
+    };
+    for (const effect of skill.effects) {
+      if (effect.type === 'heal') continue;
+      for (const target of this.resolveTargets(m, dirVec, skill.range, effect.target)) {
+        if (target.kind === 'self') continue;
+        if (target.kind === 'base') {
+          addTile(target.at, effect.type === 'damage' ? this.effectAmount(effect, this.baseHp) : 0);
+        } else {
+          addTile(target.unit.position, effect.type === 'damage' ? this.effectAmount(effect, target.unit.hp) : 0);
+        }
+      }
+    }
+    return tiles;
   }
 
   private computeIntentFor(m: MonsterUnitState): MonsterIntent {
@@ -579,7 +663,7 @@ export class BattleEngine {
         const blocker = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, ahead));
         const attackSkillId = blocker ? this.monsterAttackSkillId(def) : undefined;
         if (attackSkillId) {
-          return { kind: 'skill', instanceId: m.instanceId, skillId: attackSkillId, direction: stepDir };
+          return this.makeSkillIntent(m, attackSkillId, stepDir);
         }
         return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange), aim };
       }
@@ -592,7 +676,7 @@ export class BattleEngine {
         if (rule.action.kind === 'useSkill') {
           const aim = this.aimPointForRule(rule, m.position);
           const dir = aim ? stepDirectionToward(m.position, aim) : 'down';
-          return { kind: 'skill', instanceId: m.instanceId, skillId: rule.action.skillId, direction: dir };
+          return this.makeSkillIntent(m, rule.action.skillId, dir);
         }
         const aim = this.resolveAimPoint(rule.action.target, m.position);
         if (!aim) return { kind: 'move', instanceId: m.instanceId, to: { ...m.position }, aim: null };
@@ -612,7 +696,7 @@ export class BattleEngine {
         const blocker = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, ahead));
         const attackSkillId = blocker ? this.monsterAttackSkillId(def) : undefined;
         if (attackSkillId) {
-          return { kind: 'skill', instanceId: m.instanceId, skillId: attackSkillId, direction: stepDir };
+          return this.makeSkillIntent(m, attackSkillId, stepDir);
         }
         return { kind: 'move', instanceId: m.instanceId, to: this.multiStepToward(m.position, aim, def.moveRange), aim };
       }
@@ -958,7 +1042,7 @@ export class BattleEngine {
         // A monster's shot reaching its own base tile hits the base; a
         // player's shot (or any heal) never targets the base — it just
         // stops there instead. Either way the base blocks further travel.
-        if (!casterIsPlayer && !targetsAllies) targets.push({ kind: 'base' });
+        if (!casterIsPlayer && !targetsAllies) targets.push({ kind: 'base', at: { ...p } });
         break;
       }
       if (this.isWall(p)) break;
