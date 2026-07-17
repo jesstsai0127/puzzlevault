@@ -67,6 +67,7 @@
   "map.island4_m3.name": "隘口死鬥",
   "map.island4_m4.name": "屍潮長廊",
   "map.island4_m5.name": "萬妖之巔",
+  "map.final_hive.name": "鎮魔大陣",
 
   "map.lesson_ap_cost.name": "小關：先移動，再動作",
   "map.lesson_ap_cost.hint": "這關示範：每位俠客每回合先移動（一次走完）、再做一個動作——技能或調息擇一。出手之後就不能再走位，所以先想好站哪裡，再決定出不出招。",
@@ -83,6 +84,7 @@
   "world.2.name": "第二島",
   "world.3.name": "第三島",
   "world.4.name": "第四島",
+  "world.final.name": "最終決戰・萬妖窟",
 
   "ui.hp": "生命值",
   "ui.end_turn": "結束回合",
