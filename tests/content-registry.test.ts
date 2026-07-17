@@ -696,7 +696,7 @@ describe('Ultimate skills (real shipped content: sword_tempest / sword_rampage /
     const after = engine.getSnapshot();
     expect(after.monsters[0].hp).toBe(jiangshiHp - expectedPercentDamage(jiangshiHp, 20));
     // su_qing is EXCLUDED from her own allUnits cast (see TargetMode 'allUnits' doc
-    // comment — a self-sacrifice cast already pays its own cost via mpCost).
+    // comment — the cast already spends her one action for the turn).
     expect(after.players[1].hp).toBe(suQingHp);
     // The other three squad members (li_yan, ling_er, bai_zhi) ARE hit.
     for (const i of [0, 2, 3]) {
