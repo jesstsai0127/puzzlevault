@@ -313,6 +313,46 @@ describe('island1_m2: winnable via the choke line (solvability upper check)', ()
   });
 });
 
+describe('island1_m3: winnable via pit-the-ghost + clear-the-swarm (solvability upper check)', () => {
+  // The "wipe" map — one base-ghost plus a wolf swarm that overruns a passive
+  // squad (passive loss is a party wipe, not a base kill). li_yan shoves the
+  // adjacent ghost straight east into the (4,2) hazard turn 1 (base secured for
+  // free), then the squad picks the wolves apart before they can gang up.
+  it('shove-the-ghost-into-a-pit then clear the wolves wins clean — base untouched, full squad', () => {
+    const map = maps.island1_m3;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — palm_wave the adjacent ghost into the (4,2) pit; su_qing drops the
+    // nearest wolf; bai_zhi moves up to support.
+    expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 6 }).ok).toBe(true);
+    expect(engine.getSnapshot().baseHp).toBe(8); // ghost gone to the pit — base was never in danger
+    engine.endTurn();
+
+    // T2 — li_yan cuts down the wolf that closed in; su_qing repositions for the
+    // reinforcement that emerges at end of this turn.
+    expect(engine.moveUnit(0, { x: 2, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — su_qing snipes the emerged wolf; the board is clear.
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    engine.endTurn();
+
+    // T4, T5 — nothing left; ride out the clock.
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
