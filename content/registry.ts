@@ -115,12 +115,23 @@ export const maps: Record<string, MapDef> = {
 export const DEFAULT_MAP_ID = 'demo1';
 
 /**
- * Small, single-mechanic practice levels — real, playable MapDefs (see
- * `maps` above), just called out separately so LevelSelectScene can still
- * visually distinguish them from a finale-style demo map (distinct fill
- * color), same spirit as the old scripted-tutorial list but now pointing at
- * genuinely winnable/losable levels instead of an auto-playing script.
- * Nothing here is gated/locked — every id in `maps` is always clickable.
+ * ITB alignment (2026-07-17): Into the Breach has no per-world tutorial
+ * levels mixed into its mission list — it has one standalone "Combat
+ * Simulation" outside the campaign, walked through once, teaching core
+ * controls before real missions start. These 5 ids are exactly that content
+ * (move/act economy, positioning, pushing, healer usage, poison terrain),
+ * now played as the ORDERED SEQUENCE for that standalone tutorial flow (see
+ * levelNav.ts's tutorialStepUrl / LevelSelectScene's tutorial entry point)
+ * instead of appearing as separately-numbered slots in WORLD_STRUCTURE.
+ * They remain real, individually-playable MapDefs in `maps` above — nothing
+ * here is gated/locked, and autoplay-harness/tests can still address any one
+ * of them directly by id.
+ *
+ * World 2/3's own isLesson levels (world2_yuan_ling, world3_jiangshi, etc.)
+ * are OUT of this sequence and stay in WORLD_STRUCTURE as real per-world
+ * levels — they teach that world's new monster mechanic, matching ITB's
+ * practice of introducing new Vek types within real per-island missions
+ * rather than in the Combat Simulation.
  */
 export const LESSON_MAP_IDS: string[] = [
   'lesson_ap_cost',
@@ -154,29 +165,29 @@ export const LEVEL_GROUPS: LevelGroup[] = [
 ];
 
 /**
- * World structure — groups every playable level into "World N: lesson(s) +
- * finale" for LevelSelectScene, replacing the old flat LESSON_MAP_IDS-vs-
- * everything-else split with an explicit per-world ordering. This is a pure
- * UI/organization concern layered on top of `maps` (same relationship
- * LEVEL_GROUPS has to `maps`) — not part of MapDef/format.ts, so it doesn't
- * touch battle-content validation.
+ * World structure — groups every REAL per-world level into "World N:
+ * lesson(s) + finale" for LevelSelectScene. This is a pure UI/organization
+ * concern layered on top of `maps` (same relationship LEVEL_GROUPS has to
+ * `maps`) — not part of MapDef/format.ts, so it doesn't touch battle-content
+ * validation.
  *
  * `mapId` is the real key into `maps` (what autoplay-harness, BattleScene,
  * etc. address a level by). `label` is the player-facing in-world sequence
  * number shown on the level-select screen (e.g. "2-1", "3-3") — purely
  * cosmetic, never used to look anything up, so it can be renumbered without
- * touching content ids. `isLesson` drives the same "小關" visual treatment
- * (green tint / lesson-label prefix) LESSON_MAP_IDS levels already get in
- * LevelSelectScene; a world's finale (`demo1`..`demo4`) is the only level in
- * each world with isLesson: false.
+ * touching content ids. `isLesson` drives the "小關" visual treatment (green
+ * tint / lesson-label prefix) in LevelSelectScene; a world's finale is the
+ * only level in each world with isLesson: false.
  *
- * World 2's and World 3's lesson levels (world2_yuan_ling, world3_jiangshi,
- * etc.) are intentionally NOT added to LESSON_MAP_IDS above — that array is
- * still relied on verbatim by tests/content-registry.test.ts (exact-length
- * assertions) and existing LevelSelectScene rendering, and this batch's
- * instructions are to keep it as-is rather than risk an unrelated regression
- * there. WORLD_STRUCTURE is the single source of truth for the new grouped
- * level-select UI; LESSON_MAP_IDS remains a legacy/compat export.
+ * ITB alignment (2026-07-17): World 1's and World 4's old lesson_* entries
+ * (basic-controls teaching) were removed from here — they're now the
+ * standalone tutorial sequence (see LESSON_MAP_IDS above), not per-world
+ * levels, matching ITB's separate Combat Simulation. World 2's and World 3's
+ * own lesson levels (world2_yuan_ling, world3_jiangshi, etc.) stay exactly
+ * as they were — they teach that world's new monster mechanic within a real
+ * per-world level, which IS how ITB introduces new Vek types (via real
+ * missions, not the Combat Simulation), so they're intentionally out of
+ * scope for this consolidation.
  */
 export interface WorldLevelEntry {
   /** Real key into `maps` — what every other system (BattleScene, autoplay-harness) addresses this level by. */
@@ -197,12 +208,7 @@ export interface WorldDef {
 export const WORLD_STRUCTURE: WorldDef[] = [
   {
     worldNameKey: 'world.1.name',
-    levels: [
-      { mapId: 'lesson_ap_cost', label: '1-1', isLesson: true },
-      { mapId: 'lesson_opportunity_attack', label: '1-2', isLesson: true },
-      { mapId: 'lesson_push_abyss', label: '1-3', isLesson: true },
-      { mapId: 'demo1', label: '1-4', isLesson: false },
-    ],
+    levels: [{ mapId: 'demo1', label: '1-1', isLesson: false }],
   },
   {
     worldNameKey: 'world.2.name',
@@ -222,11 +228,7 @@ export const WORLD_STRUCTURE: WorldDef[] = [
   },
   {
     worldNameKey: 'world.4.name',
-    levels: [
-      { mapId: 'lesson_poison_mist', label: '4-1', isLesson: true },
-      { mapId: 'lesson_healer', label: '4-2', isLesson: true },
-      { mapId: 'demo4', label: '4-3', isLesson: false },
-    ],
+    levels: [{ mapId: 'demo4', label: '4-1', isLesson: false }],
   },
 ];
 
