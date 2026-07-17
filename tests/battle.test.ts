@@ -1740,7 +1740,7 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
   });
 
   describe('aoeCross', () => {
-    it('hits exactly the 4 orthogonal neighbors, respects ally/enemy targeting, and never hits the caster itself', () => {
+    it('hits exactly the 4 orthogonal neighbors — including an ally (ITB friendly fire) — and never hits the caster itself', () => {
       const map: MapDef = {
         formatVersion: 1,
         id: 'cross-test',
@@ -1749,7 +1749,7 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
         baseHp: 8,
         playerStarts: [
           { x: 6, y: 4 }, // caster
-          { x: 5, y: 4 }, // ally, standing on the LEFT cross tile — a naive "hit everything adjacent" bug would land here
+          { x: 5, y: 4 }, // ally, standing on the LEFT cross tile — ITB friendly fire lands here too
         ],
         initialMonsters: [
               { monsterId: 'yin_ghost', spawn: { x: 6, y: 3 } }, // up
@@ -1767,8 +1767,8 @@ describe('BattleEngine: unified targeting modes (pierceLine / aoeCross / aoeRing
       expect(unitHpAt(engine, 6, 5)).toBe(1); // down, hit
       expect(unitHpAt(engine, 7, 4)).toBe(1); // right, hit
       expect(unitHpAt(engine, 5, 3)).toBe(2); // diagonal, untouched
-      expect(unitHpAt(engine, 5, 4)).toBe(5); // ally on the left tile, untouched (su_qing maxHp 5) — proves ally/enemy targeting, not just adjacency
-      expect(unitHpAt(engine, 6, 4)).toBe(20); // caster itself, untouched (shape_caster maxHp 20)
+      expect(unitHpAt(engine, 5, 4)).toBe(4); // ally on the left tile — HIT by friendly fire (su_qing 5→4); ITB area attacks strike your own units too
+      expect(unitHpAt(engine, 6, 4)).toBe(20); // caster itself, untouched (shape_caster maxHp 20) — the center is excluded by geometry, not by side
     });
   });
 
@@ -2088,6 +2088,97 @@ describe('BattleEngine: allAllies targeting mode', () => {
       expect(ev.kind).toBe('shield');
       expect(ev.target.kind).toBe('monster');
     }
+  });
+});
+
+describe('BattleEngine: ITB friendly fire (damage/push hit whatever occupies the tile, either side)', () => {
+  it("a player's line attack strikes an ally standing in the line, sparing the enemy behind it", () => {
+    // su_qing (ranged, dmg 2) at (1,1) fires right; li_yan sits one tile ahead
+    // at (2,1) with a monster further out at (3,1). ITB weapons don't skip
+    // friendly units — the shot lands on li_yan and stops there.
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'ff-player-line',
+      nameKey: 'map.test.name',
+      grid,
+      baseHp: 8,
+      playerStarts: [
+        { x: 1, y: 1 }, // su_qing, caster
+        { x: 2, y: 1 }, // li_yan, ally directly in the line of fire
+      ],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
+    };
+    const engine = new BattleEngine(map, ['su_qing', 'li_yan'], registry);
+    const res = engine.useSkill(0, 'ranged_skill', 'right');
+    expect(res).toEqual({ ok: true });
+    const snap = engine.getSnapshot();
+    expect(snap.players[1].hp).toBe(4); // li_yan (6) took the friendly hit → 4
+    expect(snap.monsters[0].hp).toBe(2); // the enemy behind is untouched — firstInLine stopped at the ally
+  });
+
+  it("a monster's shot at the base is absorbed by a friendly monster standing in its line", () => {
+    // The ITB core: shove an enemy into another enemy's line of fire. Here a
+    // ranged base-hunter at (4,3) fires left at the base tile (1,3), but a
+    // stationary monster parked at (2,3) eats the bolt instead — the base is
+    // spared exactly as if the player had repositioned the blocker there.
+    const bolt: SkillDef = {
+      formatVersion: 1,
+      id: 'ff_bolt',
+      nameKey: 'skill.ff_bolt.name',
+      descKey: 'skill.ff_bolt.desc',
+      range: 3,
+      effects: [{ type: 'damage', amount: 1, target: 'firstInLine' }],
+    };
+    const baseHunter: MonsterDef = {
+      formatVersion: 1,
+      id: 'ff_base_hunter',
+      nameKey: 'monster.ff_base_hunter.name',
+      spriteRef: 'mon_ff_base_hunter',
+      maxHp: 2,
+      moveRange: 1,
+      skillIds: ['ff_bolt'],
+      aiRules: [
+        { when: { kind: 'targetInRange', target: 'nearestBaseTile', range: 3 }, action: { kind: 'useSkill', skillId: 'ff_bolt' } },
+        { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } },
+      ],
+    };
+    const blocker: MonsterDef = {
+      formatVersion: 1,
+      id: 'ff_blocker',
+      nameKey: 'monster.ff_blocker.name',
+      spriteRef: 'mon_ff_blocker',
+      maxHp: 5,
+      moveRange: 0, // parked in the line — never moves out of the way
+      skillIds: ['ff_bolt'],
+      aiRules: [{ when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } }],
+    };
+    const ffRegistry: ContentRegistry = {
+      characters: { li_yan: registry.characters.li_yan },
+      skills: { ff_bolt: bolt },
+      monsters: { ff_base_hunter: baseHunter, ff_blocker: blocker },
+    };
+    const map: MapDef = {
+      formatVersion: 1,
+      id: 'ff-monster-line',
+      nameKey: 'map.test.name',
+      grid, // base tile at (1,3)
+      baseHp: 8,
+      playerStarts: [{ x: 6, y: 1 }], // out of the way; these monsters hunt the base, not players
+      initialMonsters: [
+        { monsterId: 'ff_base_hunter', spawn: { x: 4, y: 3 } },
+        { monsterId: 'ff_blocker', spawn: { x: 2, y: 3 } },
+      ],
+      spawnSchedule: [],
+      totalTurns: AMPLE_TURNS,
+    };
+    const engine = new BattleEngine(map, ['li_yan'], ffRegistry);
+    engine.endTurn(); // the base-hunter's telegraphed bolt resolves
+    const snap = engine.getSnapshot();
+    expect(snap.baseHp).toBe(8); // base untouched — the friendly monster took the hit
+    const blk = snap.monsters.find((m) => m.monsterId === 'ff_blocker')!;
+    expect(blk.hp).toBe(4); // 5 → 4, absorbed the bolt
   });
 });
 
