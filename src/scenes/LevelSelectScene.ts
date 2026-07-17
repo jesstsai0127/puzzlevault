@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { maps, WORLD_STRUCTURE, LEVEL_GROUPS } from '../../content/registry';
-import { MAP_QUERY_PARAM } from './levelNav';
+import { maps, WORLD_STRUCTURE, LEVEL_GROUPS, LESSON_MAP_IDS } from '../../content/registry';
+import { MAP_QUERY_PARAM, tutorialStepUrl } from './levelNav';
 
 const i18n = new I18n(en, zhTW);
 
@@ -64,6 +64,32 @@ export class LevelSelectScene extends Phaser.Scene {
     const HEADER_H = 22;
     const WORLD_GAP = 8;
     let y = 80;
+
+    // ITB alignment (2026-07-17): a standalone "Combat Simulation"-style
+    // tutorial entry, separate from the world/level tree — reuses the same
+    // isLesson green treatment. Clicking starts the 5-step LESSON_MAP_IDS
+    // sequence at step 0; BattleScene auto-advances through the rest (see
+    // handleConfirmOutcome()).
+    {
+      const tutorialBg = this.add
+        .rectangle(this.scale.width / 2, y, 340, ROW_H - 4, 0x1f3a2e)
+        .setStrokeStyle(1, 0x2e5a44)
+        .setInteractive({ useHandCursor: true });
+      const tutorialLabel = this.add
+        .text(this.scale.width / 2, y, i18n.t('ui.tutorial_entry'), {
+          fontFamily: 'monospace',
+          fontSize: '14px',
+          color: '#8fe3b0',
+        })
+        .setOrigin(0.5);
+      tutorialLabel.setDepth(1);
+      tutorialBg.on('pointerover', () => tutorialBg.setFillStyle(0x2e5a44));
+      tutorialBg.on('pointerout', () => tutorialBg.setFillStyle(0x1f3a2e));
+      tutorialBg.on('pointerdown', () => {
+        window.location.href = tutorialStepUrl(LESSON_MAP_IDS, 0);
+      });
+      y += ROW_H + WORLD_GAP;
+    }
 
     for (const world of WORLD_STRUCTURE) {
       this.add
