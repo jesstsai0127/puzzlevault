@@ -57,7 +57,7 @@
   "map.lesson_ap_cost.name": "Lesson: Move, Then Act",
   "map.lesson_ap_cost.hint": "This level: each hero's turn is move first (one committed move), then ONE action — a skill or a rest. Once you act, you can't reposition, so pick your tile before you swing.",
   "map.lesson_opportunity_attack.name": "Lesson: Position Before You Strike",
-  "map.lesson_opportunity_attack.hint": "This level: acting ends that hero's turn — there is no retreating after the hit lands, so the tile you strike from is the tile you get hit on. Read the telegraph arrows first, then move somewhere both safe and in range before you commit.",
+  "map.lesson_opportunity_attack.hint": "This level: acting ends that hero's turn — there is no retreating after the hit lands, so the tile you strike from is the tile you get hit on. Read the red telegraph tiles on the board first (and the ①②③ resolution order), then move somewhere both in range and off the red tiles before you commit.",
   "map.lesson_push_abyss.name": "Lesson: Push into the Abyss",
   "map.lesson_push_abyss.hint": "This level: Cloud-Parting Palm can shove a monster straight into a hazard tile for an instant kill — a monster doesn't survive the fall the way a hero would.",
   "map.lesson_healer.name": "Lesson: Using a Healer",
