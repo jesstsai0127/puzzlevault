@@ -15,41 +15,24 @@
     { "x": 4, "y": 1 },
     { "x": 4, "y": 4 }
   ],
-  "waves": [
-    {
-      "turns": 3,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } }
-      ]
-    },
-    {
-      "turns": 3,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 3 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 2 } }
-      ]
-    },
-    {
-      "turns": 3,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
-        { "monsterId": "yuan_ling", "spawn": { "x": 1, "y": 3 } },
-        { "monsterId": "yuan_ling", "spawn": { "x": 7, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } }
-      ]
-    },
-    {
-      "turns": 4,
-      "monsters": [
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 3 } },
-        { "monsterId": "yuan_ling", "spawn": { "x": 1, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 2 } },
-        { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } },
-        { "monsterId": "yuan_ling", "spawn": { "x": 7, "y": 3 } }
-      ]
-    }
-  ]
+  "initialMonsters": [
+    { "monsterId": "yin_ghost", "spawn": { "x": 1, "y": 2 } },
+    { "monsterId": "yin_ghost", "spawn": { "x": 7, "y": 3 } }
+  ],
+  "spawnSchedule": [
+    { "telegraphTurn": 3, "monsterId": "yin_ghost", "tile": { "x": 1, "y": 2 } },
+    { "telegraphTurn": 3, "monsterId": "yin_ghost", "tile": { "x": 1, "y": 3 } },
+    { "telegraphTurn": 3, "monsterId": "yin_ghost", "tile": { "x": 7, "y": 2 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 1, "y": 2 } },
+    { "telegraphTurn": 6, "monsterId": "yuan_ling", "tile": { "x": 1, "y": 3 } },
+    { "telegraphTurn": 6, "monsterId": "yuan_ling", "tile": { "x": 7, "y": 2 } },
+    { "telegraphTurn": 6, "monsterId": "yin_ghost", "tile": { "x": 7, "y": 3 } },
+    { "telegraphTurn": 9, "monsterId": "yin_ghost", "tile": { "x": 1, "y": 2 } },
+    { "telegraphTurn": 9, "monsterId": "yin_ghost", "tile": { "x": 1, "y": 3 } },
+    { "telegraphTurn": 9, "monsterId": "yuan_ling", "tile": { "x": 1, "y": 2 } },
+    { "telegraphTurn": 9, "monsterId": "yin_ghost", "tile": { "x": 7, "y": 2 } },
+    { "telegraphTurn": 9, "monsterId": "yin_ghost", "tile": { "x": 7, "y": 3 } },
+    { "telegraphTurn": 9, "monsterId": "yuan_ling", "tile": { "x": 7, "y": 3 } }
+  ],
+  "totalTurns": 13
 }
