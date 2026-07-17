@@ -468,30 +468,29 @@ export class BattleEngine {
   }
 
   /**
-   * A3: resolve every spawnSchedule entry telegraphed for `endingTurn`. A
-   * living player unit still standing on the tile blocks the spawn entirely
-   * and takes EMERGENCE_BLOCK_DAMAGE instead — no ambush hit, no "monster
-   * still gets in nearby": the block is a real wall, at a real cost.
+   * A3: resolve every spawnSchedule entry telegraphed for `endingTurn`. ANY
+   * living unit still standing on the tile — player or monster alike, exactly
+   * as in ITB — blocks the spawn entirely and takes EMERGENCE_BLOCK_DAMAGE
+   * instead: no ambush hit, no "monster still gets in nearby". Shoving an
+   * ENEMY onto an emergence tile to plug it (and hurt it) is a core ITB
+   * play, so the block deliberately isn't player-only.
    */
   private resolveScheduledSpawns(endingTurn: number): void {
     const due = this.map.spawnSchedule.filter((entry) => entry.telegraphTurn === endingTurn);
     for (const entry of due) {
-      const blocker = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, entry.tile));
+      const blocker =
+        this.players.find((p) => p.hp > 0 && equalsVec2(p.position, entry.tile)) ??
+        this.monsters.find((m) => m.hp > 0 && equalsVec2(m.position, entry.tile));
       if (blocker) {
         this.dealDamageWithEvent(blocker, EMERGENCE_BLOCK_DAMAGE);
         continue;
       }
       const def = this.registry.monsters[entry.monsterId];
-      // Only other monsters can contest the tile now (players already handled
-      // above) — nudge to the nearest free tile rather than stacking on one.
-      const pos = this.monsters.some((m) => m.hp > 0 && equalsVec2(m.position, entry.tile))
-        ? this.findFreeSpawnTile(entry.tile, new Set(), this.monsters)
-        : { ...entry.tile };
       this.monsterSpawnCounter += 1;
       this.monsters.push({
         instanceId: `${entry.monsterId}#${this.monsterSpawnCounter}`,
         monsterId: entry.monsterId,
-        position: pos,
+        position: { ...entry.tile },
         hp: def.maxHp,
         maxHp: def.maxHp,
         shield: 0,
