@@ -15,13 +15,10 @@
     { "x": 1, "y": 1 },
     { "x": 1, "y": 2 }
   ],
-  "waves": [
-    {
-      "turns": 10,
-      "monsters": [
-        { "monsterId": "yao_lang", "spawn": { "x": 5, "y": 1 } },
-        { "monsterId": "teng_yao", "spawn": { "x": 6, "y": 2 } }
-      ]
-    }
-  ]
+  "initialMonsters": [
+    { "monsterId": "yao_lang", "spawn": { "x": 5, "y": 1 } },
+    { "monsterId": "teng_yao", "spawn": { "x": 6, "y": 2 } }
+  ],
+  "spawnSchedule": [],
+  "totalTurns": 10
 }
