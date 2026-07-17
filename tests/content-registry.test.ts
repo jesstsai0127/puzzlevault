@@ -628,6 +628,53 @@ describe('island2_m4: winnable via LOS-through-hazard snipe + kiting (solvabilit
   });
 });
 
+describe('island2_m5 (island boss): winnable via double pit-push + yuan_ling snipes (solvability upper check)', () => {
+  // Island-2 boss, redesigned from the same broken template-E layout as the old
+  // island1_m5 (threats from the top, base blocking line-of-sight, unreachable).
+  // Now the two flank ghosts stage on the hazard-adjacent lanes and the two
+  // yuan_lings come up the middle: li_yan pits both ghosts into the x=1/x=6
+  // columns while su_qing picks off the yuan_lings and wolves. Base never scratched.
+  it('pit both ghosts into the hazard columns, snipe the ranged pair, mop up — base untouched, whole squad alive', () => {
+    const map = maps.island2_m5;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan shoves the left ghost into the x=1 pit; su_qing one-shots the
+    // central yuan_ling; bai_zhi steps toward the middle.
+    expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'palm_wave', 'left').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — li_yan pits the right ghost into the x=6 column; su_qing cuts down the
+    // wolf coming up the west flank.
+    expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 3, y: 5 }).ok).toBe(true);
+    expect(engine.getSnapshot().baseHp).toBe(8); // both ghosts gone to the pits, base pristine
+    engine.endTurn();
+
+    // T3 — li_yan kills the emerged yuan_ling below him; su_qing swings east for
+    // the second wolf; bai_zhi keeps clear.
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 2, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T4 — su_qing finishes the last straggler; T5 — ride it out.
+    expect(engine.moveUnit(1, { x: 5, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
