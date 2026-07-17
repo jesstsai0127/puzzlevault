@@ -401,6 +401,51 @@ describe('island1_m4: winnable against the 3-ghost rush via pit-push + tempo (so
   });
 });
 
+describe('island1_m5 (island boss): winnable via double hazard-pit-push (solvability upper check)', () => {
+  // The boss was redesigned: three ghosts converge on the central 2×2 base from
+  // below (where the squad has line of sight), with the two flank ghosts staged
+  // on the hazard-adjacent lanes. The intended line uses the x=1 and x=6 hazard
+  // COLUMNS as the answer — li_yan palm_waves the left ghost into the x=1 pit,
+  // then the right ghost into the x=6 pit, while su_qing snipes the middle one
+  // up the open lane and bai_zhi keeps her healthy. Base is never touched.
+  it('pit both flank ghosts into the hazard columns, snipe the middle, clear the wolves — base untouched, full squad', () => {
+    const map = maps.island1_m5;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan steps to (3,4) and shoves the left ghost west into the x=1
+    // hazard column; su_qing chips the central ghost up the open lane.
+    expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'palm_wave', 'left').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 5, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — the right ghost has closed to (4,4); li_yan shoves it east into the
+    // x=6 hazard column; su_qing finishes the central ghost.
+    expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
+    expect(engine.getSnapshot().baseHp).toBe(8); // all three ghosts dealt with, base pristine
+    engine.endTurn();
+
+    // T3 — clear both wolves; bai_zhi tops su_qing back up.
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 5, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    expect(engine.useSkill(2, 'minor_heal', 'down').ok).toBe(true);
+    engine.endTurn();
+
+    // T4, T5 — board clear; ride out the clock.
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
