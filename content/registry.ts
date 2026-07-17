@@ -57,6 +57,13 @@ import island4M2 from './maps/island4_m2.json';
 import island4M3 from './maps/island4_m3.json';
 import island4M4 from './maps/island4_m4.json';
 import island4M5 from './maps/island4_m5.json';
+// The final mission — ITB's "Last Stand" decisive phase: protect a 4-HP
+// objective (the sealing array standing in for ITB's Renfield Bomb) for 5
+// turns under the campaign's heaviest assault. ITB's real final battle is
+// TWO back-to-back phases with damage carried over; multi-phase missions
+// need engine support we don't have yet, so this ships the verified,
+// decisive phase-2 shape as a single mission (known gap, documented).
+import finalHive from './maps/final_hive.json';
 
 // "Lesson" levels: each is a small, real, winnable/losable MapDef (same
 // turns/baseHp rules as every other map — see MapDef) that spotlights
@@ -123,6 +130,7 @@ export const maps: Record<string, MapDef> = {
   island4_m3: parseMapDef(island4M3),
   island4_m4: parseMapDef(island4M4),
   island4_m5: parseMapDef(island4M5),
+  final_hive: parseMapDef(finalHive),
   lesson_ap_cost: parseMapDef(lessonApCost),
   lesson_opportunity_attack: parseMapDef(lessonOpportunityAttack),
   lesson_push_abyss: parseMapDef(lessonPushAbyss),
@@ -196,6 +204,12 @@ export const WORLD_STRUCTURE: WorldDef[] = [
   { worldNameKey: 'world.2.name', levels: islandLevels(2) },
   { worldNameKey: 'world.3.name', levels: islandLevels(3) },
   { worldNameKey: 'world.4.name', levels: islandLevels(4) },
+  // The final battle — outside the island numbering, matching ITB's Volcanic
+  // Hive sitting apart from the 4 corporate islands.
+  {
+    worldNameKey: 'world.final.name',
+    levels: [{ mapId: 'final_hive', label: 'F', isLesson: false }],
+  },
 ];
 
 /**
