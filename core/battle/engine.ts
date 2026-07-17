@@ -366,8 +366,8 @@ export class BattleEngine {
     } else {
       // Continue: neither reinforcement time nor a last-wave win — including
       // a non-final wave cleared early, which just gives a breather until the
-      // clock reinforces. Every turn is a fresh round regardless: the squad's
-      // shared movement and each living unit's own mp reset here.
+      // clock reinforces. Every turn is a fresh round regardless: each living
+      // unit's moved/acted flags reset here.
       this.startFreshTurn();
     }
   }
