@@ -118,5 +118,7 @@
   "ui.difficulty_easy": "簡單",
   "ui.difficulty_normal": "普通",
   "ui.difficulty_hard": "困難",
-  "ui.lesson_label": "【小關】"
+  "ui.lesson_label": "【小關】",
+  "ui.tutorial_entry": "教學",
+  "ui.tutorial_progress": "教學 {n}/{total}"
 }
