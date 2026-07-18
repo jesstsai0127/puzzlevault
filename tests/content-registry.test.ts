@@ -857,6 +857,54 @@ describe('island3_m4: winnable — read the walls, block the one live bolt line,
   });
 });
 
+describe('island3_m5 (island boss): winnable — pit, then block the reinforcement emergence (solvability upper check)', () => {
+  // Template-E boss, but the two teng_yao fire down columns 2 and 5 — MISSING the
+  // central base entirely. So the only base threats are the ghost (pit it into
+  // the x=1 column turn 1) and a turn-3 reinforcement telegraphed at (4,4).
+  // li_yan shoves the first ghost into the pit, su_qing kills the yuan_ling, then
+  // li_yan parks on (4,4) so the reinforcement can never emerge. The base is
+  // never clawed — the turrets are just noise against the wrong columns.
+  it('pit the ghost + occupy the emergence tile, ignoring the mis-aimed turrets — base untouched, whole squad alive', () => {
+    const map = maps.island3_m5;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan pits the near ghost into the x=1 hazard column; su_qing snipes
+    // the yuan_ling; bai_zhi holds the safe corner.
+    expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'palm_wave', 'left').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 6 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — li_yan moves onto the telegraphed emergence tile (4,4); su_qing pulls
+    // back off the turret column.
+    expect(engine.moveUnit(0, { x: 4, y: 4 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 4, y: 6 }).ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — li_yan holds (4,4): the reinforcement can't come up (it fizzles for 1
+    // chip to him). Base still pristine.
+    expect(engine.rest(0).ok).toBe(true);
+    expect(engine.rest(1).ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // no ghost ever clawed; the turrets missed the base all game
+
+    // T4, T5 — hold the line to the clock.
+    expect(engine.rest(0).ok).toBe(true);
+    expect(engine.rest(1).ok).toBe(true);
+    engine.endTurn();
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
