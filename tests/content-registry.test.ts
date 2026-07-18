@@ -812,6 +812,51 @@ describe('island3_m3: winnable — kill the ghost and block its reinforcement ti
   });
 });
 
+describe('island3_m4: winnable — read the walls, block the one live bolt line, kite (solvability upper check)', () => {
+  // The double-turret choke. The key read: BOTH teng_yao fire into the wall
+  // column and can't reach the base, and the row-4 yuan_ling is walled off too —
+  // the only live base threat is the ghost plus the row-3 yuan_ling firing
+  // through the gap. li_yan kills the ghost; su_qing plants on (3,3) to body-block
+  // that bolt line all game; bai_zhi kites the lone wolf (stepping off her tile
+  // each turn dodges the telegraphed bite). Base never touched.
+  it('block the through-gap bolt + kite the wolf, ignoring the walled turrets — base untouched, whole squad alive', () => {
+    const map = maps.island3_m4;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — su_qing chips the ghost and plants on (3,3) (blocking the row-3 bolt
+    // lane); li_yan finishes the ghost; bai_zhi starts kiting the wolf.
+    expect(engine.moveUnit(1, { x: 3, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 3, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T2-T4 — su_qing holds the line and fires down row 3; bai_zhi keeps moving so
+    // the wolf's telegraphed bite always lands on empty tiles.
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // nothing has reached the base — the turrets are walled off, the bolt blocked
+
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 5, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    expect(engine.moveUnit(2, { x: 6, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T5 — bai_zhi is cornered but the clock runs out first; rest for the record.
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
