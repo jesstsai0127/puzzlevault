@@ -1009,6 +1009,58 @@ describe('island4_m2: winnable — kill the ghosts, kite the heavies on the haza
   });
 });
 
+describe('island4_m3: winnable — hold the row-3 lane, kite the heavies across the choke (solvability upper check)', () => {
+  // Template-B choke with the island-4 heavies (redesigned from a layout where
+  // two ghosts west of the wall killed the base before the boxed-in squad could
+  // cross). Now defenders start west: li_yan kills the base-adjacent ghost while
+  // su_qing plants on the row-3 lane — she blocks the yuan_ling's bolt through
+  // the gap AND snipes the second ghost and the yuan_ling straight down the row.
+  // The two jiangshi have to file across the choke and are simply kited.
+  it('kill the ghosts + block-and-snipe down row 3, kite the jiangshi — base held, whole squad alive', () => {
+    const map = maps.island4_m3;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan chips the base-adjacent ghost; su_qing takes the row-3 lane and
+    // chips the second ghost down it; bai_zhi steps clear of the jiangshi.
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 2, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 3, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — li_yan finishes the adjacent ghost; su_qing finishes the second ghost
+    // down the lane (still blocking the yuan_ling behind it).
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — su_qing snipes the yuan_ling down the now-clear row; li_yan and bai_zhi
+    // start walking away from the jiangshi.
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(6); // one claw landed turn 1; nothing since
+
+    // T4-T5 — only the slow jiangshi remain; keep the distance.
+    expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 2, y: 4 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 1, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 3, y: 3 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(6);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
