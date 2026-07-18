@@ -905,6 +905,60 @@ describe('island3_m5 (island boss): winnable — pit, then block the reinforceme
   });
 });
 
+describe('island4_m1: winnable — split for the ghosts, kite the slow jiangshi (solvability upper check)', () => {
+  // Island 4 introduces the jiangshi: a heavy (hp6, dmg3 + knockback) that hunts
+  // players — but it moves only ONE tile a turn. The lesson: it's terrifying up
+  // close and trivial to kite. (Redesigned from a layout where the jiangshi
+  // walled off the base-ghosts and a reinforcement spawned in an unreachable
+  // corner.) li_yan and su_qing split to kill the two base-ghosts pre-claw, then
+  // the whole squad simply walks away from the jiangshi for the rest of the game.
+  it('kill both ghosts pre-claw, then kite the jiangshi to the clock — base untouched, whole squad alive', () => {
+    const map = maps.island4_m1;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — li_yan chips the west ghost up column 3; su_qing chips the east ghost
+    // up column 4; bai_zhi rests (the jiangshi are two tiles away and slow).
+    expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 4, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+
+    // T2 — each finishes its ghost as it slides toward its base (both pre-claw).
+    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 3, y: 4 }).ok).toBe(true);
+    expect(engine.getSnapshot().baseHp).toBe(8); // both ghosts dead before either clawed
+    engine.endTurn();
+
+    // T3 — su_qing kills the fast wolf (the only pursuer that could catch anyone);
+    // li_yan and bai_zhi start walking away from the jiangshi.
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 2, y: 5 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 4 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T4-T5 — nothing left but two slow jiangshi; the squad keeps its distance.
+    expect(engine.moveUnit(0, { x: 2, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    expect(engine.moveUnit(0, { x: 3, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 6, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 4 }).ok).toBe(true);
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8);
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
