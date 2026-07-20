@@ -4,10 +4,10 @@ import type { CardinalDir } from '../../core/geometry';
 import { I18n } from '../../core/i18n';
 import en from '../../locales/en.json';
 import zhTW from '../../locales/zh-TW.json';
-import { STARTING_SQUAD, DEFAULT_MAP_ID, maps, registry } from '../../content/registry';
+import { STARTING_SQUAD, DEFAULT_MAP_ID, LESSON_MAP_IDS, maps, registry } from '../../content/registry';
 import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
-import { levelSelectUrl } from './levelNav';
+import { levelSelectUrl, tutorialStepUrl } from './levelNav';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
@@ -68,6 +68,7 @@ const MONSTER_GLYPH = '👻'; // every Phase 1 monster is yin_ghost.
 const BASE_GLYPH = '🏯';
 const HAZARD_GLYPH = '▽';
 const POISON_MIST_GLYPH = '☠';
+const EMERGENCE_GLYPH = '⚠';
 
 /** Static Traditional-Chinese rules panel copy — placeholder-quality by design (Phase 1 is text-only, see roadmap ch.3). */
 const RULES_PANEL_STATIC = [
@@ -95,7 +96,9 @@ const RULES_PANEL_STATIC = [
   '',
   '鍵盤：方向鍵規劃路線、空白鍵確認移動、Esc 取消、1・2・3 選技能（再按方向鍵瞄準）、R 調息、Q 換人、Z 重置本回合、Enter 結束回合。',
   '',
-  '每一波是倒數計時：歸零時下一波直接加進場，沒殺完的妖物會留著疊上去；最後一波倒數完、陣還活著就贏——不用殺光。',
+  '地上發光 ⚠ 的格子下一回合會鑽出新妖物；站上去可以堵住，自己吃 1 點傷但妖物不會出現。',
+  '',
+  '這關要撐過固定回合數，陣還活著就贏——不用殺光所有妖物。',
 ].join('\n');
 
 const DIR_VECTORS: Record<CardinalDir, { x: number; y: number }> = {
@@ -137,7 +140,7 @@ export class BattleScene extends Phaser.Scene {
   private intentMarkers: Phaser.GameObjects.GameObject[] = [];
   private pendingPathMarkers: Phaser.GameObjects.GameObject[] = [];
   private damagePreviewMarkers: Phaser.GameObjects.GameObject[] = [];
-  private spawnPreviewMarkers: Phaser.GameObjects.GameObject[] = [];
+  private emergenceMarkers: Phaser.GameObjects.GameObject[] = [];
   private selectionRing!: Phaser.GameObjects.Rectangle;
   private baseHpText?: Phaser.GameObjects.Text;
   private rulesPanelText!: Phaser.GameObjects.Text;
@@ -179,25 +182,29 @@ export class BattleScene extends Phaser.Scene {
    * of crippling it. Cleared on select/skill/reset/endTurn/commit.
    */
   private pendingSteps: Array<{ x: number; y: number }> = [];
+  /** ITB alignment (2026-07-17): set when this map is being played as a step of the standalone tutorial sequence (LESSON_MAP_IDS) — see handleConfirmOutcome()'s auto-advance. Undefined for every normal level. */
+  private tutorialIndex?: number;
 
   constructor() {
     super('BattleScene');
   }
 
   /**
-   * Phaser scene-data hook — receives { mapId } from main.ts's boot-time
-   * game.scene.start('BattleScene', { mapId }) when the URL names a level
-   * (?map=...). Switching levels goes through a real page navigation (see
-   * levelNav.ts), not a same-page scene.start() round-trip, so this only
-   * ever runs once per page load in normal use — but the caches below are
-   * still reset defensively: Phaser CAN reuse a scene instance across
-   * restarts, and if that ever happens again, a fresh engine's monster
-   * instanceIds collide with the previous run's (the spawn counter restarts
-   * at 0 each time), so a stale map-keyed cache entry would get silently
-   * reused instead of a fresh game object being created.
+   * Phaser scene-data hook — receives { mapId, tutorialIndex? } from main.ts's
+   * boot-time game.scene.start('BattleScene', ...) when the URL names a level
+   * (?map=...) and, for a tutorial step, an index (?tutorial=...). Switching
+   * levels goes through a real page navigation (see levelNav.ts), not a
+   * same-page scene.start() round-trip, so this only ever runs once per page
+   * load in normal use — but the caches below are still reset defensively:
+   * Phaser CAN reuse a scene instance across restarts, and if that ever
+   * happens again, a fresh engine's monster instanceIds collide with the
+   * previous run's (the spawn counter restarts at 0 each time), so a stale
+   * map-keyed cache entry would get silently reused instead of a fresh game
+   * object being created.
    */
-  init(data: { mapId?: string }) {
+  init(data: { mapId?: string; tutorialIndex?: number }) {
     this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
+    this.tutorialIndex = data.tutorialIndex;
     this.tileHighlights = [];
     this.monsterSprites = new Map();
     this.monsterHpBars = new Map();
@@ -205,7 +212,7 @@ export class BattleScene extends Phaser.Scene {
     this.intentMarkers = [];
     this.pendingPathMarkers = [];
     this.damagePreviewMarkers = [];
-    this.spawnPreviewMarkers = [];
+    this.emergenceMarkers = [];
     this.selectedUnit = 0;
     this.armedSkillId = null;
     this.pendingSteps = [];
@@ -771,8 +778,21 @@ export class BattleScene extends Phaser.Scene {
     this.render();
   }
 
-  /** Advances past whatever endTurn() froze the board on — see buildOutcomeOverlay(). */
+  /**
+   * Advances past whatever endTurn() froze the board on — see
+   * buildOutcomeOverlay(). ITB alignment (2026-07-17): a tutorial-sequence
+   * win auto-advances to the next step (or back to level select after the
+   * last one) instead of just resetting this same map — read BEFORE calling
+   * engine.confirmOutcome(), since that call clears the outcome.
+   */
   private handleConfirmOutcome() {
+    const outcome = this.engine.getSnapshot().outcome;
+    if (this.tutorialIndex !== undefined && outcome === 'victory') {
+      const nextIndex = this.tutorialIndex + 1;
+      window.location.href =
+        nextIndex < LESSON_MAP_IDS.length ? tutorialStepUrl(LESSON_MAP_IDS, nextIndex) : levelSelectUrl();
+      return;
+    }
     this.engine.confirmOutcome();
     this.armedSkillId = null;
     this.render();
@@ -1186,6 +1206,9 @@ export class BattleScene extends Phaser.Scene {
         const skill = registry.skills[intent.skillId];
         // ① = this attack resolves first among the turn's attacks (see
         // MonsterIntent.order) — the arrow + effect summary stay as before.
+        // No separate corner badge: the red strike tiles above already mark
+        // WHERE, this label's ①②③ prefix (skipping non-attacking movers)
+        // marks WHEN, one signal per concept instead of two overlapping ones.
         label = `${orderBadge(intent.order)} ${DIR_ARROW[dir]} ${skill ? effectSummary(skill) : ''}`.trim();
       } else if (intent.to.x !== m.position.x || intent.to.y !== m.position.y) {
         if (intent.to.x > m.position.x) dir = 'right';
@@ -1247,19 +1270,19 @@ export class BattleScene extends Phaser.Scene {
       this.damagePreviewMarkers.push(marker);
     }
 
-    this.spawnPreviewMarkers.forEach((o) => o.destroy());
-    this.spawnPreviewMarkers = [];
-    if (livingMonsters.length === 0 && !snap.outcome) {
-      const nextWave = this.map.waves[snap.waveIndex + 1];
-      for (const spawn of nextWave?.monsters ?? []) {
-        const { px, py } = this.tileCenter(spawn.spawn.x, spawn.spawn.y);
-        const ghost = this.add
-          .text(px, py, MONSTER_GLYPH, { fontSize: '36px' })
-          .setOrigin(0.5)
-          .setAlpha(0.4)
-          .setDepth(2);
-        this.spawnPreviewMarkers.push(ghost);
-      }
+    this.emergenceMarkers.forEach((o) => o.destroy());
+    this.emergenceMarkers = [];
+    // A3: glowing warning on every tile telegraphed to spawn a monster at the
+    // end of THIS turn — a player standing on one blocks the spawn (see
+    // resolveScheduledSpawns()), so this is a real "hold the line" choice,
+    // not decoration.
+    for (const tile of snap.pendingSpawnTiles) {
+      const { px, py } = this.tileCenter(tile.x, tile.y);
+      const warning = this.add
+        .text(px, py, EMERGENCE_GLYPH, { fontSize: '36px', color: '#ffd166' })
+        .setOrigin(0.5)
+        .setDepth(2);
+      this.emergenceMarkers.push(warning);
     }
 
     const unitAlive = (selected?.hp ?? 0) > 0;
@@ -1353,38 +1376,42 @@ export class BattleScene extends Phaser.Scene {
         .join('    '),
     );
 
-    if (livingMonsters.length === 0 && !snap.outcome) {
-      this.instructionText.setText(i18n.t('ui.wave_cleared_hint'));
-    } else {
-      this.instructionText.setText(
-        i18n.t(this.armedSkillId ? 'ui.instruction_armed' : 'ui.instruction_idle'),
-      );
-    }
+    this.instructionText.setText(
+      i18n.t(this.armedSkillId ? 'ui.instruction_armed' : 'ui.instruction_idle'),
+    );
 
-    const isLastWave = snap.waveIndex === this.map.waves.length - 1;
-    if (isLastWave && !this.announcedLastWave) {
+    // A4: fixed mission length — the final turn IS the win condition
+    // (outlast it with the base alive, no kill requirement), so the reminder
+    // fires once the turn counter reaches the last turn, not off any
+    // wave/monster state.
+    const isFinalTurn = snap.turnNumber === snap.totalTurns;
+    if (isFinalTurn && !this.announcedLastWave) {
       this.announcedLastWave = true;
       this.lastWaveBanner.setText(i18n.t('ui.last_wave_reminder')).setVisible(true);
       this.time.delayedCall(3000, () => this.lastWaveBanner.setVisible(false));
     }
-    // The last wave's countdown IS the win condition (outlast it with the
-    // base alive, no kill requirement) — hiding the number here was the bug:
-    // a player watching "撐住" with no digits has no way to see victory
-    // coming, so it reads as sudden/arbitrary instead of an outlastable clock.
-    const waveCountdown = isLastWave
-      ? `${i18n.t('ui.last_wave_hold')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`
-      : `${i18n.t('ui.next_wave_in')} ${snap.turnsLeftInWave} ${i18n.t('ui.turns_suffix')}`;
+    const turnCountdown = isFinalTurn
+      ? i18n.t('ui.last_wave_hold')
+      : `${i18n.t('ui.next_wave_in')} ${snap.totalTurns - snap.turnNumber} ${i18n.t('ui.turns_suffix')}`;
 
+    // ITB alignment (2026-07-17): a tutorial-sequence step shows its
+    // progress through the 5-step flow instead of the map's own name — the
+    // map name is an internal id ("lesson_ap_cost"), not something a player
+    // mid-tutorial needs to see.
+    const titleSegment =
+      this.tutorialIndex !== undefined
+        ? i18n.t('ui.tutorial_progress').replace('{n}', String(this.tutorialIndex + 1)).replace('{total}', String(LESSON_MAP_IDS.length))
+        : i18n.t(this.map.nameKey);
     this.hudText.setText(
-      `${i18n.t(this.map.nameKey)}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}   ${waveCountdown}   ${i18n.t('ui.turn')} ${snap.turnNumber}`,
+      `${titleSegment}   ${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}   ${i18n.t('ui.turn')} ${snap.turnNumber}/${snap.totalTurns}   ${turnCountdown}`,
     );
 
     this.baseHpText?.setText(`${snap.baseHp}/${snap.baseMaxHp}`);
 
     const liveStatus = [
       `${i18n.t('ui.base_hp')} ${snap.baseHp}/${snap.baseMaxHp}`,
-      `${i18n.t('ui.wave')} ${snap.waveIndex + 1}/${this.map.waves.length}`,
-      waveCountdown,
+      `${i18n.t('ui.turn')} ${snap.turnNumber}/${snap.totalTurns}`,
+      turnCountdown,
     ].join('\n');
     // A lesson-level's one-off tip (see MapDef.hintKey) sits right under the
     // general rules panel, in the same static-text style — not a separate

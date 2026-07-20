@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { BattleScene } from './scenes/BattleScene';
 import { LevelSelectScene } from './scenes/LevelSelectScene';
-import { mapIdFromUrl } from './scenes/levelNav';
+import { mapIdFromUrl, tutorialIndexFromUrl } from './scenes/levelNav';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -27,5 +27,6 @@ const game = new Phaser.Game({
 // buttons or shared directly), skip straight to it instead.
 const mapId = mapIdFromUrl();
 if (mapId) {
-  game.scene.start('BattleScene', { mapId });
+  const tutorialIndex = tutorialIndexFromUrl();
+  game.scene.start('BattleScene', tutorialIndex !== null ? { mapId, tutorialIndex } : { mapId });
 }

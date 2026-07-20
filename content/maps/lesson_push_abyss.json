@@ -9,10 +9,7 @@
     { "x": 1, "y": 2 },
     { "x": 1, "y": 1 }
   ],
-  "waves": [
-    {
-      "turns": 12,
-      "monsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 2 } }]
-    }
-  ]
+  "initialMonsters": [{ "monsterId": "yin_ghost", "spawn": { "x": 2, "y": 2 } }],
+  "spawnSchedule": [],
+  "totalTurns": 12
 }

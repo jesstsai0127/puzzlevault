@@ -1,4 +1,4 @@
-import type { AiRule, CharacterDef, EffectPrimitive, MapDef, MonsterDef, SkillDef, WaveDef } from './types';
+import type { AiRule, CharacterDef, EffectPrimitive, MapDef, MonsterDef, SkillDef, SpawnScheduleEntry, WaveSpawnDef } from './types';
 import type { Vec2 } from '../geometry';
 
 export const CONTENT_FORMAT_VERSION = 1;
@@ -195,22 +195,41 @@ export function validateMapDef(def: MapDef): string[] {
     }
   }
 
-  if (!Array.isArray(def.waves) || def.waves.length === 0) {
-    problems.push('map has no waves');
+  if (!(def.totalTurns > 0)) problems.push('totalTurns must be > 0');
+
+  if (!Array.isArray(def.initialMonsters)) {
+    problems.push('initialMonsters must be an array (may be empty)');
   } else {
-    def.waves.forEach((wave: WaveDef, wi: number) => {
-      if (!(wave.turns > 0)) problems.push(`wave ${wi}: turns must be > 0`);
-      if (!Array.isArray(wave.monsters) || wave.monsters.length === 0) {
-        problems.push(`wave ${wi} has no monsters`);
-        return;
+    def.initialMonsters.forEach((spawn: WaveSpawnDef, si: number) => {
+      if (!spawn.monsterId) problems.push(`initialMonsters ${si}: missing monsterId`);
+      if (!isWalkable(spawn.spawn)) {
+        problems.push(`initialMonsters ${si}: spawn (${spawn.spawn.x},${spawn.spawn.y}) not walkable`);
       }
-      wave.monsters.forEach((spawn, si) => {
-        if (!spawn.monsterId) problems.push(`wave ${wi} spawn ${si}: missing monsterId`);
-        if (!isWalkable(spawn.spawn)) {
-          problems.push(`wave ${wi} spawn ${si}: spawn (${spawn.spawn.x},${spawn.spawn.y}) not walkable`);
-        }
-      });
     });
+  }
+
+  if (!Array.isArray(def.spawnSchedule)) {
+    problems.push('spawnSchedule must be an array (may be empty)');
+  } else {
+    def.spawnSchedule.forEach((entry: SpawnScheduleEntry, si: number) => {
+      if (!entry.monsterId) problems.push(`spawnSchedule ${si}: missing monsterId`);
+      if (!(entry.telegraphTurn > 0)) problems.push(`spawnSchedule ${si}: telegraphTurn must be > 0`);
+      if (def.totalTurns > 0 && entry.telegraphTurn > def.totalTurns) {
+        problems.push(`spawnSchedule ${si}: telegraphTurn (${entry.telegraphTurn}) exceeds totalTurns (${def.totalTurns})`);
+      }
+      if (!isWalkable(entry.tile)) {
+        problems.push(`spawnSchedule ${si}: tile (${entry.tile.x},${entry.tile.y}) not walkable`);
+      }
+    });
+  }
+
+  if (
+    Array.isArray(def.initialMonsters) &&
+    def.initialMonsters.length === 0 &&
+    Array.isArray(def.spawnSchedule) &&
+    def.spawnSchedule.length === 0
+  ) {
+    problems.push('map has no monsters (initialMonsters and spawnSchedule both empty)');
   }
 
   return problems;

@@ -129,10 +129,18 @@ export interface WaveSpawnDef {
   spawn: Vec2;
 }
 
-export interface WaveDef {
-  monsters: WaveSpawnDef[];
-  /** Turn budget: this wave is survived once this many turns elapse, even with monsters still alive. */
-  turns: number;
+/**
+ * ITB-style emergence tile (A3): `telegraphTurn` is the turnNumber during
+ * which the tile shows a glowing warning marker. The monster attempts to
+ * spawn there at the END of that same turn (endTurn() resolution) — if a
+ * living player unit occupies the tile at that moment, the spawn is
+ * blocked and that unit takes 1 flat damage instead (no monster appears);
+ * otherwise the monster spawns with fresh HP.
+ */
+export interface SpawnScheduleEntry {
+  telegraphTurn: number;
+  monsterId: string;
+  tile: Vec2;
 }
 
 export interface MapDef {
@@ -148,7 +156,12 @@ export interface MapDef {
    */
   grid: string[];
   playerStarts: Vec2[];
-  waves: WaveDef[];
+  /** Monsters already on the field at turn 1 — no telegraph, just present. */
+  initialMonsters: WaveSpawnDef[];
+  /** Future emergences, each telegraphed one turn ahead (A3). May be empty for a level with no reinforcements. */
+  spawnSchedule: SpawnScheduleEntry[];
+  /** Fixed mission length (A4): survive this many turns with the base alive to win — killing every monster is never required. */
+  totalTurns: number;
   /** Shared HP pool for all of this map's 'B' base tiles combined. */
   baseHp: number;
   /**

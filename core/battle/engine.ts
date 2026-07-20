@@ -7,7 +7,7 @@ import {
   stepDirectionToward,
 } from '../geometry';
 import type { CardinalDir, Vec2 } from '../geometry';
-import type { AiCondition, AiRule, AiTarget, EffectPrimitive, MapDef, MonsterDef, TargetMode } from '../content/types';
+import type { AiCondition, AiRule, AiTarget, EffectPrimitive, EffectType, MapDef, MonsterDef, TargetMode } from '../content/types';
 import type {
   ActionResult,
   AttackPreview,
@@ -31,6 +31,9 @@ const PUSH_COLLISION_DAMAGE = 1;
 /** Flat, unavoidable damage to any living unit still standing on a poison-mist ('*') tile at endTurn() — see applyPoisonMistDamage(). */
 const POISON_MIST_DAMAGE = 1;
 
+/** ITB emergence rule (A3): a player unit standing on a tile when its telegraphed spawn resolves blocks the monster entirely and takes this flat damage instead. */
+const EMERGENCE_BLOCK_DAMAGE = 1;
+
 /**
  * A unit can never hold more than this many shield charges at once — each
  * charge blocks one full hit (see dealDamage), so an uncapped stack would let
@@ -47,6 +50,9 @@ type ResolvedTarget =
   | { kind: 'monster'; unit: MonsterUnitState }
   /** `at` is the base tile the effect landed on — applyEffect ignores it (base HP is one shared pool), but intent telegraphs need the exact tile to mark on the board. */
   | { kind: 'base'; at: Vec2 };
+
+/** Which side(s) a mixed-crowd effect can land on. 'any' = ITB friendly fire (whatever unit occupies the tile); 'allies'/'enemies' = the caster's own / opposing side. */
+type SideFilter = 'allies' | 'enemies' | 'any';
 
 function sameCombatTarget(a: CombatTarget, b: CombatTarget): boolean {
   if (a.kind !== b.kind) return false;
@@ -83,7 +89,6 @@ export class BattleEngine {
 
   private players: PlayerUnitState[] = [];
   private monsters: MonsterUnitState[] = [];
-  private waveIndex = 0;
   private turnNumber = 1;
   /** Set by endTurn() the instant a loss/win happens; the board is frozen on that turn's result until confirmOutcome() is called. */
   private pendingOutcome: RunOutcome | null = null;
@@ -92,7 +97,6 @@ export class BattleEngine {
   private baseTiles: Vec2[] = [];
   private baseMaxHp = 0;
   private baseHp = 0;
-  private turnsLeftInWave = 0;
 
   private currentIntents: MonsterIntent[] = [];
   /** What the most recent moveUnit/useSkill/rest/endTurn call actually did — see getLastEvents(). */
@@ -126,16 +130,22 @@ export class BattleEngine {
     return {
       players: this.players.map((p) => ({ ...p, position: { ...p.position } })),
       monsters: this.monsters.map((m) => ({ ...m, position: { ...m.position } })),
-      waveIndex: this.waveIndex,
       turnNumber: this.turnNumber,
+      totalTurns: this.map.totalTurns,
       outcome: this.pendingOutcome,
       baseHp: this.baseHp,
       baseMaxHp: this.baseMaxHp,
       baseTiles: this.baseTiles.map((t) => ({ ...t })),
-      turnsLeftInWave: this.turnsLeftInWave,
-      waveTurns: this.map.waves[this.waveIndex].turns,
+      pendingSpawnTiles: this.pendingSpawnTiles(),
       resetTurnUsed: this.resetTurnUsed,
     };
+  }
+
+  /** Tiles telegraphed to spawn a monster at the end of THIS turn (A3 emergence markers) — for UI warning glyphs. */
+  private pendingSpawnTiles(): Vec2[] {
+    return this.map.spawnSchedule
+      .filter((entry) => entry.telegraphTurn === this.turnNumber)
+      .map((entry) => ({ ...entry.tile }));
   }
 
   getIntents(): MonsterIntent[] {
@@ -250,7 +260,7 @@ export class BattleEngine {
       // (rather than making dir optional) is the smallest change that
       // supports the new modes; a caller casting a directionless skill can
       // pass any CardinalDir as a meaningless-but-format-valid placeholder.
-      const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, effect.type === 'heal');
+      const targets = this.resolveTargets(unit, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type));
       for (const target of targets) this.applyEffect(effect, target, unit);
     }
     unit.acted = true;
@@ -338,7 +348,7 @@ export class BattleEngine {
         if (!skill) continue;
         const dirVec = MOVE_VECTORS[intent.direction];
         for (const effect of skill.effects) {
-          const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, effect.type === 'heal');
+          const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type));
           for (const target of targets) this.applyEffect(effect, target, monster);
         }
       }
@@ -352,8 +362,14 @@ export class BattleEngine {
     // turn, same as a player who ended their turn standing on it.
     this.applyPoisonMistDamage();
 
+    // Capture the turn that's ending BEFORE incrementing — spawnSchedule
+    // entries telegraphed for this turn (shown to the player all turn) now
+    // resolve: a living player standing on the tile blocks the spawn and
+    // eats EMERGENCE_BLOCK_DAMAGE; otherwise the monster appears.
+    const endingTurn = this.turnNumber;
     this.turnNumber += 1;
     this.monsters = this.monsters.filter((m) => m.hp > 0);
+    this.resolveScheduledSpawns(endingTurn);
 
     if (this.baseHp <= 0) {
       // Freeze right here on the position that killed the base — the board
@@ -368,7 +384,7 @@ export class BattleEngine {
 
     if (this.players.every((p) => p.hp <= 0)) {
       // Total party wipe is a loss in its own right, not a spectator mode:
-      // without this, a dead squad could idle out the wave clock and still
+      // without this, a dead squad could idle out the mission clock and still
       // "win" any level whose monsters only hunt players. Same freeze-then-
       // confirmOutcome() flow as the base-death branch above — the wiping
       // turn stays on screen, intents included, until the player confirms.
@@ -376,22 +392,14 @@ export class BattleEngine {
       return;
     }
 
-    this.turnsLeftInWave -= 1;
-
-    const isLastWave = this.waveIndex === this.map.waves.length - 1;
-    if (isLastWave && (this.monsters.length === 0 || this.turnsLeftInWave <= 0)) {
-      // Victory: outlasted the final assault's clock, or cleared the board
-      // after the last wave arrived. The base is alive (checked above).
+    if (this.turnNumber > this.map.totalTurns) {
+      // Victory (A4): survived the mission's fixed turn count with the base
+      // and squad alive — killing every monster was never required, matching
+      // ITB ("the grid doesn't zero out") rather than a kill-clear condition.
       this.pendingOutcome = 'victory';
       this.currentIntents = [];
-    } else if (!isLastWave && this.turnsLeftInWave <= 0) {
-      // Reinforce: the clock ran out before the last wave — survivors PERSIST
-      // and the next wave's monsters are ADDED on top of them, not a fresh start.
-      this.reinforce();
     } else {
-      // Continue: neither reinforcement time nor a last-wave win — including
-      // a non-final wave cleared early, which just gives a breather until the
-      // clock reinforces. Every turn is a fresh round regardless: each living
+      // Continue: every turn is a fresh round regardless — each living
       // unit's moved/acted flags reset here.
       this.startFreshTurn();
     }
@@ -419,20 +427,6 @@ export class BattleEngine {
     this.resetRun();
   }
 
-  /** Reinforcement clock hit zero before the last wave: add the next wave's monsters on top of any survivors. */
-  private reinforce(): void {
-    const nextWave = this.waveIndex + 1;
-    // Existing survivors (this.monsters) are passed as the avoid-list so
-    // reinforcements land beside them, never on top of them.
-    const reinforcements = this.spawnWave(nextWave, this.monsters);
-    this.monsters = [...this.monsters, ...reinforcements];
-    this.waveIndex = nextWave;
-    this.turnsLeftInWave = this.map.waves[nextWave].turns;
-    // Base HP is NOT reset here — it persists across waves within a run
-    // (only a defeat / manual reset restores it, in resetRun below).
-    this.startFreshTurn();
-  }
-
   /** Resets every living unit's moved/acted flags, recomputes intents, and captures the new turn-start snapshot for resetTurn(). */
   private startFreshTurn(): void {
     for (const p of this.players) {
@@ -445,9 +439,8 @@ export class BattleEngine {
     this.captureTurnStart();
   }
 
-  /** Reset players (full HP), base HP, and respawn wave 1's monsters (fresh HP) — the only reset state this game has. */
+  /** Reset players (full HP), base HP, and respawn the map's initial monsters (fresh HP) — the only reset state this game has. */
   private resetRun(): void {
-    this.waveIndex = 0;
     this.turnNumber = 1;
     this.pendingOutcome = null;
     this.pendingEvents = [];
@@ -455,7 +448,6 @@ export class BattleEngine {
     // and ONLY with a full level reset (see resetTurn()).
     this.resetTurnUsed = false;
     this.baseHp = this.baseMaxHp;
-    this.turnsLeftInWave = this.map.waves[0].turns;
 
     this.players = this.squadCharacterIds.map((charId, i) => {
       const def = this.registry.characters[charId];
@@ -479,29 +471,17 @@ export class BattleEngine {
       };
     });
 
-    this.monsters = this.spawnWave(0);
+    this.monsters = this.spawnInitialMonsters();
     this.currentIntents = this.computeIntents();
     this.captureTurnStart();
   }
 
-  /**
-   * `avoidMonsters` lets a reinforcement wave steer clear of survivors still
-   * on the board; a fresh wave spawn (resetRun) passes none, since those
-   * old monsters are being discarded, not stood beside.
-   */
-  private spawnWave(waveIndex: number, avoidMonsters: MonsterUnitState[] = []): MonsterUnitState[] {
-    const wave = this.map.waves[waveIndex];
+  /** Monsters present at turn 1 with no telegraph — the level's opening board state. */
+  private spawnInitialMonsters(): MonsterUnitState[] {
     const claimed = new Set<string>();
-    return wave.monsters.map((spawn) => {
+    return this.map.initialMonsters.map((spawn) => {
       const def = this.registry.monsters[spawn.monsterId];
-      const occupant = this.players.find((p) => p.hp > 0 && equalsVec2(p.position, spawn.spawn));
-      if (occupant) {
-        // Standing on a spawn tile is a risk, not a free block: the monster
-        // gets one ambush hit in as it forces its way in, then still takes
-        // the nearest free tile (units never share a cell).
-        this.dealDamageWithEvent(occupant, this.ambushDamageFor(def));
-      }
-      const pos = this.findFreeSpawnTile(spawn.spawn, claimed, avoidMonsters);
+      const pos = this.findFreeSpawnTile(spawn.spawn, claimed, []);
       claimed.add(`${pos.x},${pos.y}`);
       this.monsterSpawnCounter += 1;
       return {
@@ -515,20 +495,40 @@ export class BattleEngine {
     });
   }
 
-  /** The damage a monster's ambush hit deals: its own first damage-effect amount, or 1 if it has none. */
-  private ambushDamageFor(def: MonsterDef): number {
-    for (const skillId of def.skillIds) {
-      const skill = this.registry.skills[skillId];
-      const dmg = skill?.effects.find((e) => e.type === 'damage');
-      if (dmg) return dmg.amount;
+  /**
+   * A3: resolve every spawnSchedule entry telegraphed for `endingTurn`. ANY
+   * living unit still standing on the tile — player or monster alike, exactly
+   * as in ITB — blocks the spawn entirely and takes EMERGENCE_BLOCK_DAMAGE
+   * instead: no ambush hit, no "monster still gets in nearby". Shoving an
+   * ENEMY onto an emergence tile to plug it (and hurt it) is a core ITB
+   * play, so the block deliberately isn't player-only.
+   */
+  private resolveScheduledSpawns(endingTurn: number): void {
+    const due = this.map.spawnSchedule.filter((entry) => entry.telegraphTurn === endingTurn);
+    for (const entry of due) {
+      const blocker =
+        this.players.find((p) => p.hp > 0 && equalsVec2(p.position, entry.tile)) ??
+        this.monsters.find((m) => m.hp > 0 && equalsVec2(m.position, entry.tile));
+      if (blocker) {
+        this.dealDamageWithEvent(blocker, EMERGENCE_BLOCK_DAMAGE);
+        continue;
+      }
+      const def = this.registry.monsters[entry.monsterId];
+      this.monsterSpawnCounter += 1;
+      this.monsters.push({
+        instanceId: `${entry.monsterId}#${this.monsterSpawnCounter}`,
+        monsterId: entry.monsterId,
+        position: { ...entry.tile },
+        hp: def.maxHp,
+        maxHp: def.maxHp,
+        shield: 0,
+      });
     }
-    return 1;
   }
 
   /**
-   * A wave's designated spawn tile can end up occupied by a player who
-   * wandered there in a previous wave. BFS outward for the nearest free
-   * tile instead of spawning on top of them.
+   * A spawn tile can end up occupied by a monster already on the board.
+   * BFS outward for the nearest free tile instead of stacking on top of it.
    */
   private findFreeSpawnTile(preferred: Vec2, claimed: Set<string>, avoidMonsters: MonsterUnitState[]): Vec2 {
     const isFree = (p: Vec2) =>
@@ -639,7 +639,7 @@ export class BattleEngine {
     };
     for (const effect of skill.effects) {
       if (effect.type === 'heal') continue;
-      for (const target of this.resolveTargets(m, dirVec, skill.range, effect.target)) {
+      for (const target of this.resolveTargets(m, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type))) {
         if (target.kind === 'self') continue;
         if (target.kind === 'base') {
           addTile(target.at, effect.type === 'damage' ? this.effectAmount(effect, this.baseHp) : 0);
@@ -762,7 +762,7 @@ export class BattleEngine {
       const dirVec = MOVE_VECTORS[intent.direction];
       for (const effect of skill.effects) {
         if (effect.type !== 'damage') continue;
-        const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target);
+        const targets = this.resolveTargets(monster, dirVec, skill.range, effect.target, this.sideFilterForEffect(effect.type));
         for (const target of targets) {
           if (target.kind === 'self') continue; // a monster hitting itself isn't a player-facing threat preview
           if (target.kind === 'base') {
@@ -924,6 +924,35 @@ export class BattleEngine {
       : this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p));
   }
 
+  /** Any live unit standing on tile `p`, either side — for ITB friendly fire, where an attack hits whatever occupies the tile. Players are checked first, but a tile can only hold one unit at a time so order is immaterial. */
+  private liveAnyUnitAt(p: Vec2): PlayerUnitState | MonsterUnitState | undefined {
+    return (
+      this.players.find((x) => x.hp > 0 && equalsVec2(x.position, p)) ??
+      this.monsters.find((x) => x.hp > 0 && equalsVec2(x.position, p))
+    );
+  }
+
+  /**
+   * Which side(s) a mixed-crowd effect can land on, derived from its type:
+   * ITB damage and pushes hit ANYTHING on the tile (full friendly fire — your
+   * own mech, another enemy you shoved into the line, etc.); heals and shields
+   * only land on the caster's own side; taunt (our custom debuff, no ITB
+   * analog) targets a foe. Whole-field modes (allEnemies/allUnits/allAllies)
+   * hardcode their own side rules and never consult this.
+   */
+  private sideFilterForEffect(type: EffectType): SideFilter {
+    switch (type) {
+      case 'damage':
+      case 'push':
+        return 'any';
+      case 'heal':
+      case 'shield':
+        return 'allies';
+      case 'taunt':
+        return 'enemies';
+    }
+  }
+
   /** Wraps a found unit as a ResolvedTarget of the matching kind. */
   private wrapTarget(unit: PlayerUnitState | MonsterUnitState): ResolvedTarget {
     return this.isMonster(unit) ? { kind: 'monster', unit } : { kind: 'player', unit };
@@ -936,24 +965,24 @@ export class BattleEngine {
    * instead of a value / null — callers loop over the result either way, so
    * behavior for those two modes is unchanged).
    *
-   * `targetsAllies` flips WHICH side's units a directional/mixed-side ray or
-   * area can land on — false (damage/push/shield's usual case) means a
-   * player's cast only ever finds monsters and a monster's cast only ever
-   * finds players, same as before; true (heal) means a player's cast only
-   * ever finds fellow players and a monster's cast only ever finds fellow
-   * monsters. applyEffect()'s heal case has no ally/enemy check of its own —
-   * this is the one place that decides who a heal can legally land on (see
-   * computeTargetable() in BattleScene for the matching UI restriction).
-   * This flag only affects the "mixed crowd" modes (firstInLine, pierceLine,
-   * aoeCross, aoeRing, aoeArc3) — the two whole-map modes below hardcode
-   * their own side rules and ignore it entirely.
+   * `sideFilter` decides WHICH side's units a directional/mixed-side ray or
+   * area can land on. 'any' (ITB friendly fire — the damage/push case) finds
+   * whatever unit occupies the tile, either side: a player's shot can strike a
+   * fellow mech, a monster's shot can strike another monster you shoved into
+   * its line. 'enemies' finds only the opposing side (our custom taunt debuff);
+   * 'allies' finds only the caster's own side (heal/shield) — applyEffect()'s
+   * heal case has no ally/enemy check of its own, so this is the one place that
+   * decides who a heal can legally land on (see computeTargetable() in
+   * BattleScene for the matching UI restriction). This only affects the "mixed
+   * crowd" modes (firstInLine, pierceLine, aoeCross, aoeRing, aoeArc3) — the
+   * whole-map modes below hardcode their own side rules and ignore it.
    */
   private resolveTargets(
     caster: PlayerUnitState | MonsterUnitState,
     dir: Vec2,
     range: number,
     mode: TargetMode,
-    targetsAllies = false,
+    sideFilter: SideFilter = 'enemies',
   ): ResolvedTarget[] {
     if (mode === 'self') return [{ kind: 'self' }];
 
@@ -1001,7 +1030,12 @@ export class BattleEngine {
       return targets;
     }
 
-    const searchPlayers = targetsAllies ? casterIsPlayer : !casterIsPlayer;
+    // For 'any' (friendly fire) the tile lookup ignores side entirely; for
+    // 'allies'/'enemies' it resolves to the one side that filter selects.
+    const findUnit = (p: Vec2): PlayerUnitState | MonsterUnitState | undefined =>
+      sideFilter === 'any'
+        ? this.liveAnyUnitAt(p)
+        : this.liveUnitAt(p, sideFilter === 'allies' ? casterIsPlayer : !casterIsPlayer);
 
     // Point-blank area shapes around the caster — no line of sight check
     // (they're adjacent tiles, not a projectile), no direction needed.
@@ -1009,7 +1043,7 @@ export class BattleEngine {
       const offsets = mode === 'aoeCross' ? BattleEngine.CROSS_OFFSETS : BattleEngine.RING_OFFSETS;
       const targets: ResolvedTarget[] = [];
       for (const offset of offsets) {
-        const unit = this.liveUnitAt(add(casterPos, offset), searchPlayers);
+        const unit = findUnit(add(casterPos, offset));
         if (unit) targets.push(this.wrapTarget(unit));
       }
       return targets;
@@ -1028,7 +1062,7 @@ export class BattleEngine {
       const cells = [forward, add(forward, perp), add(forward, { x: -perp.x, y: -perp.y })];
       const targets: ResolvedTarget[] = [];
       for (const cell of cells) {
-        const unit = this.liveUnitAt(cell, searchPlayers);
+        const unit = findUnit(cell);
         if (unit) targets.push(this.wrapTarget(unit));
       }
       return targets;
@@ -1045,14 +1079,17 @@ export class BattleEngine {
     for (let step = 1; step <= range; step++) {
       const p = add(casterPos, { x: dir.x * step, y: dir.y * step });
       if (this.isBaseTile(p)) {
-        // A monster's shot reaching its own base tile hits the base; a
-        // player's shot (or any heal) never targets the base — it just
-        // stops there instead. Either way the base blocks further travel.
-        if (!casterIsPlayer && !targetsAllies) targets.push({ kind: 'base', at: { ...p } });
+        // A monster's attack reaching a base tile hits the base; a player's
+        // shot (or any heal, which only lands on allies) never targets the
+        // base — it just stops there. Either way the base blocks further
+        // travel. 'allies' is the only filter that spares the base here.
+        // `at` records the exact tile struck — intent telegraphs need it to
+        // mark the board; applyEffect ignores it (base HP is one shared pool).
+        if (!casterIsPlayer && sideFilter !== 'allies') targets.push({ kind: 'base', at: { ...p } });
         break;
       }
       if (this.isWall(p)) break;
-      const unit = this.liveUnitAt(p, searchPlayers);
+      const unit = findUnit(p);
       if (unit) {
         targets.push(this.wrapTarget(unit));
         if (mode === 'firstInLine') break;
@@ -1127,10 +1164,10 @@ export class BattleEngine {
         break;
       }
       case 'taunt': {
-        // Taunt only makes sense against a monster — a player skill's target
-        // is always resolved from the enemy side (see resolveTarget's
-        // searchPlayers logic), so `unit` here is a MonsterUnitState in
-        // every real case. The 'instanceId' narrowing below is what makes
+        // Taunt only makes sense against a monster — its 'enemies' sideFilter
+        // (see sideFilterForEffect) resolves a player caster's target from the
+        // monster side only, so `unit` here is a MonsterUnitState in every
+        // real case. The 'instanceId' narrowing below is what makes
         // that concrete for TS; a caster is always a player for this effect
         // (only a hero skill uses it in this batch).
         if ('instanceId' in unit && !('instanceId' in caster)) {

@@ -132,12 +132,17 @@ const yanwuGroundMap = {
     { x: 2, y: 1 },
     { x: 2, y: 2 },
   ],
-  waves: [{ turns: 4, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }] }],
+  initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }],
+  spawnSchedule: [{ telegraphTurn: 2, monsterId: 'yin_ghost', tile: { x: 4, y: 2 } }],
+  totalTurns: 4,
 };
 
 describe('parseMapDef', () => {
   it('parses a valid map', () => {
-    expect(parseMapDef(yanwuGroundMap).waves).toHaveLength(1);
+    const parsed = parseMapDef(yanwuGroundMap);
+    expect(parsed.initialMonsters).toHaveLength(1);
+    expect(parsed.spawnSchedule).toHaveLength(1);
+    expect(parsed.totalTurns).toBe(4);
   });
 
   it('rejects a playerStart on a wall', () => {
@@ -146,17 +151,28 @@ describe('parseMapDef', () => {
     ).toThrow(/not on a walkable tile/);
   });
 
-  it('rejects a wave spawn outside the grid', () => {
+  it('rejects an initialMonsters spawn outside the grid', () => {
     expect(() =>
       parseMapDef({
         ...yanwuGroundMap,
-        waves: [{ monsters: [{ monsterId: 'yin_ghost', spawn: { x: 99, y: 99 } }] }],
+        initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 99, y: 99 } }],
       }),
     ).toThrow(/not walkable/);
   });
 
-  it('rejects a map with no waves', () => {
-    expect(() => parseMapDef({ ...yanwuGroundMap, waves: [] })).toThrow(/no waves/);
+  it('rejects a spawnSchedule entry tile outside the grid', () => {
+    expect(() =>
+      parseMapDef({
+        ...yanwuGroundMap,
+        spawnSchedule: [{ telegraphTurn: 2, monsterId: 'yin_ghost', tile: { x: 99, y: 99 } }],
+      }),
+    ).toThrow(/not walkable/);
+  });
+
+  it('rejects a map with no monsters (initialMonsters and spawnSchedule both empty)', () => {
+    expect(() =>
+      parseMapDef({ ...yanwuGroundMap, initialMonsters: [], spawnSchedule: [] }),
+    ).toThrow(/no monsters/);
   });
 
   it('accepts a hazard tile (~) in the grid', () => {
@@ -174,13 +190,26 @@ describe('parseMapDef', () => {
     expect(() => parseMapDef({ ...yanwuGroundMap, baseHp: 0 })).toThrow(/baseHp/);
   });
 
-  it('rejects a wave with a non-positive turns budget', () => {
+  it('rejects a non-positive totalTurns', () => {
+    expect(() => parseMapDef({ ...yanwuGroundMap, totalTurns: 0 })).toThrow(/totalTurns/);
+  });
+
+  it('rejects a spawnSchedule entry whose telegraphTurn exceeds totalTurns', () => {
     expect(() =>
       parseMapDef({
         ...yanwuGroundMap,
-        waves: [{ turns: 0, monsters: [{ monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } }] }],
+        spawnSchedule: [{ telegraphTurn: 5, monsterId: 'yin_ghost', tile: { x: 4, y: 2 } }],
       }),
-    ).toThrow(/turns/);
+    ).toThrow(/exceeds totalTurns/);
+  });
+
+  it('rejects a spawnSchedule entry with a non-positive telegraphTurn', () => {
+    expect(() =>
+      parseMapDef({
+        ...yanwuGroundMap,
+        spawnSchedule: [{ telegraphTurn: 0, monsterId: 'yin_ghost', tile: { x: 4, y: 2 } }],
+      }),
+    ).toThrow(/telegraphTurn must be > 0/);
   });
 
   it('rejects an unknown grid character', () => {
