@@ -139,13 +139,19 @@ export class BattleEngine {
   }
 
   getIntents(): MonsterIntent[] {
-    // Deep-copy the nested Vec2s/tiles so a caller poking at the returned
-    // intents can never corrupt the locked telegraph.
-    return this.currentIntents.map((i) =>
-      i.kind === 'skill'
-        ? { ...i, tiles: i.tiles.map((t) => ({ pos: { ...t.pos }, damage: t.damage })) }
-        : { ...i, to: { ...i.to }, aim: i.aim ? { ...i.aim } : i.aim },
-    );
+    // Skill intents' strike tiles are LIVE (ITB semantics): direction/order
+    // were locked at turn start, but the tiles are re-resolved against the
+    // board AS IT STANDS on every call — a player stepping into the line of
+    // fire sees the red tile snap onto them instantly, and one stepping out
+    // sees it stay with the attack's shape. resetTurn() needs no special
+    // handling: it restores the board, so the next call resolves right back
+    // to the turn-start picture. The freshly-built arrays double as the
+    // defensive copy (callers can't corrupt engine state through them).
+    return this.currentIntents.map((i) => {
+      if (i.kind !== 'skill') return { ...i, to: { ...i.to }, aim: i.aim ? { ...i.aim } : i.aim };
+      const monster = this.monsters.find((m) => m.instanceId === i.instanceId && m.hp > 0);
+      return { ...i, tiles: monster ? this.skillIntentTiles(monster, i.skillId, i.direction) : [] };
+    });
   }
 
   /**
@@ -322,13 +328,12 @@ export class BattleEngine {
         // from the telegraph; only how far it actually gets is live.
         monster.position = this.resolveMoveDestination(monster, intent);
       } else {
-        // The skill re-resolves its targets against the board AS IT IS NOW,
-        // not intent.tiles: the telegraphed tiles are the turn-start promise
-        // the player planned around, but the attack itself is a direction +
-        // shape — a hero who stepped out of a telegraphed tile is safe, and
-        // one who stepped INTO the line of fire gets hit. Both layers (locked
-        // tiles + live getAttackPreviews) are honest precisely because this
-        // resolution is live.
+        // The skill resolves its targets against the board AS IT IS NOW —
+        // the same live resolution getIntents()' tiles show (only direction
+        // and order were locked at turn start): a hero who stepped out of a
+        // red tile is safe, one who stepped INTO the line of fire gets hit,
+        // and the red tiles on screen at end-turn time are exactly what
+        // lands here.
         const skill = this.registry.skills[intent.skillId];
         if (!skill) continue;
         const dirVec = MOVE_VECTORS[intent.direction];
@@ -594,9 +599,10 @@ export class BattleEngine {
   }
 
   /**
-   * Builds a skill intent with its attack tiles resolved and LOCKED against
-   * the board as it stands right now (turn start — computeIntents is the
-   * only caller path). `order` starts at 0 and is stamped with the real
+   * Builds a skill intent. The stored `tiles` are only the snapshot from
+   * this moment (turn start — computeIntents is the only caller path);
+   * getIntents() re-resolves tiles live on every call and never reads this
+   * stored array back. `order` starts at 0 and is stamped with the real
    * 1-based attack rank by computeIntents() once the whole turn's intent
    * list exists.
    */
@@ -612,10 +618,10 @@ export class BattleEngine {
   }
 
   /**
-   * The exact tiles a monster's telegraphed skill will strike, resolved with
-   * the same resolveTargets() call endTurn() will use — but against the
-   * TURN-START board, then locked (see IntentTile in types.ts for the
-   * two-layer telegraph contract vs the live getAttackPreviews()). Heal
+   * The exact tiles a monster's telegraphed skill would strike if the turn
+   * resolved right now — the same resolveTargets() walk endTurn() performs,
+   * against the CURRENT board (see IntentTile in types.ts for the live
+   * telegraph contract; getIntents() calls this on every read). Heal
    * effects are skipped: a monster topping up its allies is not a threat
    * tile the player can stand on or dodge out of. Damage on a tile sums
    * across the skill's damage effects; a tile hit only by non-damage

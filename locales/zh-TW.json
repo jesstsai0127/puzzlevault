@@ -57,7 +57,7 @@
   "map.lesson_ap_cost.name": "小關：先移動，再動作",
   "map.lesson_ap_cost.hint": "這關示範：每位俠客每回合先移動（一次走完）、再做一個動作——技能或調息擇一。出手之後就不能再走位，所以先想好站哪裡，再決定出不出招。",
   "map.lesson_opportunity_attack.name": "小關：出手前站好位",
-  "map.lesson_opportunity_attack.hint": "這關示範：動作會結束這位俠客的回合——打完不能撤退，你站的位置就是你挨打的位置。先看清妖物標在棋盤上的紅框落點格（跟出手順序 ①②③），走到既打得到、又不站在紅格上的位置再出手。",
+  "map.lesson_opportunity_attack.hint": "這關示範：動作會結束這位俠客的回合——打完不能撤退，你站的位置就是你挨打的位置。先看清妖物標在棋盤上的紅框落點格（跟出手順序 ①②③）——紅格會隨你的走位即時更新，走到既打得到、又不站在紅格上的位置再出手。",
   "map.lesson_push_abyss.name": "小關：排雲掌推深淵",
   "map.lesson_push_abyss.hint": "這關示範：排雲掌可以把妖物直接震進深淵地形，當場擊殺——妖物掉下去不像俠客只是受傷，是直接死亡。",
   "map.lesson_healer.name": "小關：補師怎麼用",

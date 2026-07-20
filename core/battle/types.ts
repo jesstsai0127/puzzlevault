@@ -54,17 +54,19 @@ export interface MonsterUnitState {
 
 /**
  * One board tile a telegraphed monster attack will strike, with the damage
- * that single skill deals there. Resolved ONCE against the TURN-START board
- * (computeIntents) and then locked — the ITB telegraph contract: these are
- * the tiles the monster has committed to attacking, and they deliberately do
- * NOT re-resolve as the player repositions mid-turn (stepping OUT of a
- * telegraphed tile is exactly how you dodge). The complementary LIVE layer is
- * getAttackPreviews(): per-target "-N" totals re-resolved against the board
- * as it stands right now, so the player sees both "where the attack is aimed"
- * (fixed) and "who it would actually hit if I ended the turn here" (live).
- * `damage` sums the skill's damage effects on that tile (percent damage is
- * evaluated against the occupant's turn-start HP); 0 means a non-damage
- * threat (e.g. push-only) landing there.
+ * that single skill deals there. LIVE-accurate — the ITB telegraph contract:
+ * what the monster locks at turn start is its WEAPON + DIRECTION (and its
+ * attack order); the strike tiles themselves are re-resolved against the
+ * board AS IT STANDS on every getIntents() call, so at any moment they
+ * answer "if the turn resolved right now, which tiles get hit." Step out of
+ * a red tile and it stays with the attack's shape, not with you (the dodge);
+ * step INTO the line of fire and the red tile snaps onto you immediately.
+ * endTurn() resolves with this same live logic, so the tiles shown when the
+ * turn ends are exactly what lands. getAttackPreviews() is the same
+ * information summed per TARGET (the "-N" over a unit / the base) instead of
+ * per tile. `damage` sums the skill's damage effects on that tile (percent
+ * damage is evaluated against the occupant's CURRENT hp); 0 means a
+ * non-damage threat (e.g. push-only) landing there.
  */
 export interface IntentTile {
   pos: Vec2;
@@ -88,7 +90,13 @@ export type MonsterIntent =
        * ordering (shield charges, kill order) is player-relevant.
        */
       order: number;
-      /** Exact turn-start-locked attack tiles — see IntentTile for the two-layer telegraph semantics. */
+      /**
+       * Exact strike tiles, LIVE: getIntents() re-resolves these against the
+       * current board on every call (see IntentTile) — only direction/order
+       * are locked at turn start. The array stored inside the engine is just
+       * the snapshot from intent-creation time; always read tiles through
+       * getIntents(), never off a kept reference.
+       */
       tiles: IntentTile[];
     };
 

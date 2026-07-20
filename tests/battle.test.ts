@@ -2306,7 +2306,7 @@ describe('BattleEngine: shield stacking cap', () => {
   });
 });
 
-describe('BattleEngine: exact intent telegraphs (A2 — locked strike tiles + attack resolution order)', () => {
+describe('BattleEngine: exact intent telegraphs (A2 — live strike tiles + attack resolution order)', () => {
   // 9x4 corridor: players and monsters share row y=1; the required base tile
   // sits at (1,2), out of every line of fire used here.
   const corridorGrid = ['#########', '#       #', '#B      #', '#########'];
@@ -2347,10 +2347,64 @@ describe('BattleEngine: exact intent telegraphs (A2 — locked strike tiles + at
       { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestBaseTile' } },
     ],
   };
+  /** A ghost that snipes the nearest player with the fixture ranged_skill (firstInLine, range 3, 2 damage). */
+  const rangedGhost: MonsterDef = {
+    formatVersion: 1,
+    id: 'ranged_ghost',
+    nameKey: 'monster.ranged_ghost.name',
+    spriteRef: 'mon_ranged_ghost',
+    maxHp: 4,
+    moveRange: 1,
+    skillIds: ['ranged_skill'],
+    aiRules: [
+      { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 3 }, action: { kind: 'useSkill', skillId: 'ranged_skill' } },
+      { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+    ],
+  };
+  /** A ghost whose only threat is the fixture push_skill (push 2, no damage) — for the damage-0 threat-tile case. */
+  const pusherGhost: MonsterDef = {
+    formatVersion: 1,
+    id: 'pusher_ghost',
+    nameKey: 'monster.pusher_ghost.name',
+    spriteRef: 'mon_pusher_ghost',
+    maxHp: 2,
+    moveRange: 1,
+    skillIds: ['push_skill'],
+    aiRules: [
+      { when: { kind: 'targetInRange', target: 'nearestPlayer', range: 1 }, action: { kind: 'useSkill', skillId: 'push_skill' } },
+      { when: { kind: 'always' }, action: { kind: 'moveToward', target: 'nearestPlayer' } },
+    ],
+  };
+  const healPulse: SkillDef = {
+    formatVersion: 1,
+    id: 'heal_pulse',
+    nameKey: 'skill.heal_pulse.name',
+    descKey: 'skill.heal_pulse.desc',
+    range: 1,
+    effects: [{ type: 'heal', amount: 1, target: 'aoeCross' }],
+  };
+  /** A ghost that only heals its neighbors — a heal is not a threat, so it must telegraph no tiles. */
+  const healerGhost: MonsterDef = {
+    formatVersion: 1,
+    id: 'healer_ghost',
+    nameKey: 'monster.healer_ghost.name',
+    spriteRef: 'mon_healer_ghost',
+    maxHp: 2,
+    moveRange: 1,
+    skillIds: ['heal_pulse'],
+    aiRules: [{ when: { kind: 'always' }, action: { kind: 'useSkill', skillId: 'heal_pulse' } }],
+  };
   const telegraphRegistry: ContentRegistry = {
     characters: registry.characters,
-    skills: { ...registry.skills, pierce_bolt_m: pierceBoltM },
-    monsters: { ...registry.monsters, pierce_ghost: pierceGhost, base_ghost: baseGhost },
+    skills: { ...registry.skills, pierce_bolt_m: pierceBoltM, heal_pulse: healPulse },
+    monsters: {
+      ...registry.monsters,
+      pierce_ghost: pierceGhost,
+      base_ghost: baseGhost,
+      ranged_ghost: rangedGhost,
+      pusher_ghost: pusherGhost,
+      healer_ghost: healerGhost,
+    },
   };
 
   function corridorMap(monsters: { monsterId: string; spawn: { x: number; y: number } }[], playerStarts: { x: number; y: number }[]): MapDef {
@@ -2405,22 +2459,80 @@ describe('BattleEngine: exact intent telegraphs (A2 — locked strike tiles + at
     expect(intent.tiles).toEqual([{ pos: { x: 1, y: 2 }, damage: 1 }]);
   });
 
-  it('telegraph tiles are LOCKED at turn start (do not follow the player), while getAttackPreviews stays live', () => {
+  /** The current turn's single skill intent's tiles — every live-telegraph test below re-reads through this. */
+  function skillTiles(engine: BattleEngine): { pos: { x: number; y: number }; damage: number }[] {
+    const intent = engine.getIntents()[0];
+    if (intent.kind !== 'skill') throw new Error(`expected a skill intent, got ${intent.kind}`);
+    return intent.tiles;
+  }
+
+  it('stepping OUT of a telegraphed tile empties it live, and the resolved turn deals no damage', () => {
     // Player at (2,1) with an open escape at (2,2); ghost adjacent at (3,1).
     const map = corridorMap([{ monsterId: 'yin_ghost', spawn: { x: 3, y: 1 } }], [{ x: 2, y: 1 }]);
     const engine = new BattleEngine(map, ['li_yan'], telegraphRegistry);
+    expect(skillTiles(engine)).toEqual([{ pos: { x: 2, y: 1 }, damage: 1 }]);
     expect(engine.getAttackPreviews()).toEqual([{ target: { kind: 'player', unitIndex: 0 }, damage: 1 }]);
 
-    // Step out of the telegraphed tile: the red tile must NOT move with the
-    // player (it's the turn-start promise), but the live "-N" preview must
-    // drop to nothing — and the resolved turn must deal no damage.
+    // Step out: the claw's line of fire is now empty, so BOTH layers agree
+    // live — no telegraph tile, no "-N" — and the resolved turn matches.
     expect(engine.moveUnit(0, { x: 2, y: 2 })).toEqual({ ok: true });
-    const intent = engine.getIntents()[0];
-    if (intent.kind !== 'skill') throw new Error(`expected a skill intent, got ${intent.kind}`);
-    expect(intent.tiles).toEqual([{ pos: { x: 2, y: 1 }, damage: 1 }]);
+    expect(skillTiles(engine)).toEqual([]);
     expect(engine.getAttackPreviews()).toEqual([]);
     engine.endTurn();
     expect(engine.getSnapshot().players[0].hp).toBe(6);
+  });
+
+  it('stepping INTO the line of fire snaps the telegraph tile onto the new blocker live; resetTurn restores it', () => {
+    // Sniper at (6,1) telegraphs a beam left at player 0 on (3,1) — in
+    // range 3, firstInLine. Player 1 starts off-line at (2,2).
+    const map = corridorMap(
+      [{ monsterId: 'ranged_ghost', spawn: { x: 6, y: 1 } }],
+      [
+        { x: 3, y: 1 },
+        { x: 2, y: 2 },
+      ],
+    );
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], telegraphRegistry);
+    expect(skillTiles(engine)).toEqual([{ pos: { x: 3, y: 1 }, damage: 2 }]);
+
+    // Player 1 body-blocks at (4,1): firstInLine now stops there, so the
+    // red tile must move onto the blocker IMMEDIATELY (ITB live accuracy).
+    expect(engine.moveUnit(1, { x: 4, y: 1 })).toEqual({ ok: true });
+    expect(skillTiles(engine)).toEqual([{ pos: { x: 4, y: 1 }, damage: 2 }]);
+    expect(engine.getAttackPreviews()).toEqual([{ target: { kind: 'player', unitIndex: 1 }, damage: 2 }]);
+
+    // resetTurn() restores the board — the live telegraph naturally reads
+    // back as the turn-start picture, no special-casing needed.
+    engine.resetTurn();
+    expect(skillTiles(engine)).toEqual([{ pos: { x: 3, y: 1 }, damage: 2 }]);
+
+    // Re-block and resolve: what the red tile showed is exactly what lands.
+    expect(engine.moveUnit(1, { x: 4, y: 1 })).toEqual({ ok: true });
+    engine.endTurn();
+    expect(engine.getSnapshot().players[1].hp).toBe(3); // 5 - 2, the blocker ate the shot
+    expect(engine.getSnapshot().players[0].hp).toBe(6); // the original target walked away with nothing
+  });
+
+  it('heal effects telegraph no threat tiles', () => {
+    // Healer at (3,1) with a wounded-adjacent friend at (4,1): its heal
+    // pulse is not a threat, so the skill intent carries zero tiles.
+    const map = corridorMap(
+      [
+        { monsterId: 'healer_ghost', spawn: { x: 3, y: 1 } },
+        { monsterId: 'yin_ghost', spawn: { x: 4, y: 1 } },
+      ],
+      [{ x: 6, y: 2 }],
+    );
+    const engine = new BattleEngine(map, ['li_yan'], telegraphRegistry);
+    const healIntent = engine.getIntents().find((i) => i.kind === 'skill' && i.skillId === 'heal_pulse');
+    if (healIntent?.kind !== 'skill') throw new Error('expected the healer to telegraph its heal skill');
+    expect(healIntent.tiles).toEqual([]);
+  });
+
+  it('a push-only attack still telegraphs its tile, at damage 0', () => {
+    const map = corridorMap([{ monsterId: 'pusher_ghost', spawn: { x: 3, y: 1 } }], [{ x: 2, y: 1 }]);
+    const engine = new BattleEngine(map, ['li_yan'], telegraphRegistry);
+    expect(skillTiles(engine)).toEqual([{ pos: { x: 2, y: 1 }, damage: 0 }]);
   });
 
   it('attack order is 1-based in spawn order, skips movers, and is stable across repeated getIntents() calls', () => {

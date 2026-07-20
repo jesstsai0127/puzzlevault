@@ -77,7 +77,7 @@ const RULES_PANEL_STATIC = [
   '',
   '👻 的下一步出手前就全部看得到：要攻擊的妖物會把落點直接標成棋盤上的紅框格，格上的數字是那幾擊合計的傷害；👻 旁的 ①②③ 是出手順序（① 最先結算）。只會移動的妖物維持箭頭＋目的格描邊。',
   '',
-  '紅框格是回合開始就鎖定的落點，不會跟著你走位改變——走出紅格（或把隊友推出紅格），那一擊就落空；反過來，走進妖物的攻擊路線上也可能挨打。單位頭上的紅色「-N」才是照你現在站位結算會掉的血，會隨走位即時更新。看紅格躲攻擊，是這遊戲的核心玩法。',
+  '紅框格＝下回合結算時真的會挨打的格子，隨棋盤即時更新：妖物鎖定的是武器和方向，走出紅格（或把隊友推出紅格），那一擊就落空；走進妖物的攻擊路線，紅格會立刻跟到你身上。單位頭上的紅色「-N」是同一份資訊的合計視角——這個目標下回合總共會挨多少。看紅格走位拆招，是這遊戲的核心玩法。',
   '',
   '每位俠客每回合：先移動、再做一個動作。移動一次走完（點亮起的格子，最遠走到自己的移動力）；動作是技能或『調息』擇一，做完這回合就結束。',
   '',
@@ -1129,12 +1129,14 @@ export class BattleScene extends Phaser.Scene {
     const intents = this.engine.getIntents().filter((i) => livingMonsters.some((m) => m.instanceId === i.instanceId));
 
     // ITB-style attack telegraph: every tile a monster's telegraphed skill
-    // will strike, marked directly on the board. These tiles were resolved
-    // ONCE at turn start and are locked — they deliberately do NOT follow
-    // the player's mid-turn repositioning (walking OUT of a red tile is the
-    // dodge; the live consequence layer is the "-N" damagePreviewMarkers
-    // below, which DO re-resolve every render). Multiple monsters striking
-    // the same tile stack into one summed damage number.
+    // would strike if the turn resolved right now, marked directly on the
+    // board. LIVE-accurate — getIntents() re-resolves the tiles against the
+    // current board every render (only weapon/direction/order were locked at
+    // turn start): walk out of a red tile and it stays on the attack's
+    // shape; walk into the line of fire and it snaps onto you instantly.
+    // The "-N" damagePreviewMarkers below are the same live information
+    // summed per target instead of per tile. Multiple monsters striking the
+    // same tile stack into one summed damage number.
     const telegraphDamage = new Map<string, { x: number; y: number; damage: number }>();
     for (const intent of intents) {
       if (intent.kind !== 'skill') continue;

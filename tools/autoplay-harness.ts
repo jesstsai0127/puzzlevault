@@ -96,8 +96,9 @@ function printBoard(engine: BattleEngine, mapId: string): void {
       if (intent?.kind === 'move') {
         intentStr = `move to (${intent.to.x},${intent.to.y})`;
       } else if (intent?.kind === 'skill') {
-        // Exact telegraph: turn-start-locked strike tiles (with per-tile
-        // damage) and the attack's resolution rank — order 1 lands first.
+        // Exact telegraph: LIVE strike tiles (re-resolved against the
+        // current board on every getIntents(), with per-tile damage) and
+        // the attack's resolution rank — order 1 lands first.
         const tiles = intent.tiles.map((t) => `(${t.pos.x},${t.pos.y})x${t.damage}`).join(' ') || 'none';
         intentStr = `skill ${intent.skillId} dir ${intent.direction} | order ${intent.order} | tiles ${tiles}`;
       }
