@@ -1,4 +1,4 @@
-import { type CampaignState, ISLAND_COUNT, newCampaign } from './state';
+import { type CampaignState, ISLAND_COUNT, newCampaign } from '../../core/campaign/state';
 
 /**
  * localStorage persistence for the campaign grid.
@@ -72,6 +72,13 @@ function isValid(value: unknown): value is CampaignState {
   ) {
     return false;
   }
+  // activeMission may be absent (a save written before it existed), null, or
+  // a well-formed record. Anything else is corrupt.
+  if (s.activeMission !== null && s.activeMission !== undefined) {
+    if (typeof s.activeMission !== 'object') return false;
+    const a = s.activeMission as Record<string, unknown>;
+    if (typeof a.mapId !== 'string' || typeof a.resetTurnUsed !== 'boolean') return false;
+  }
   return true;
 }
 
@@ -83,7 +90,9 @@ export function loadCampaign(): CampaignState {
     const raw = store.getItem(CAMPAIGN_STORAGE_KEY);
     if (!raw) return newCampaign();
     const parsed: unknown = JSON.parse(raw);
-    return isValid(parsed) ? parsed : newCampaign();
+    if (!isValid(parsed)) return newCampaign();
+    // Normalize the optional field so callers never see `undefined`.
+    return { ...parsed, activeMission: parsed.activeMission ?? null };
   } catch {
     return newCampaign();
   }
