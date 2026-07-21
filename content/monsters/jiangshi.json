@@ -17,7 +17,7 @@
     },
     {
       "when": { "kind": "always" },
-      "action": { "kind": "moveToward", "target": "nearestPlayer" }
+      "action": { "kind": "moveToward", "target": "nearestBaseTile" }
     }
   ]
 }
