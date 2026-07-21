@@ -11,14 +11,17 @@ import { levelSelectUrl, tutorialStepUrl } from './levelNav';
 import {
   allowsLevelRestart,
   applyMissionResult,
+  beginMission,
   canEnterMission,
   isCampaignMap,
   isTutorialStep,
+  markResetTurnUsed,
   newCampaign,
+  resetTurnUsedFor,
   syncGridHp,
   type CampaignState,
 } from '../../core/campaign/state';
-import { loadCampaign, saveCampaign } from '../../core/campaign/storage';
+import { loadCampaign, saveCampaign } from '../campaign/storage';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
@@ -279,22 +282,28 @@ export class BattleScene extends Phaser.Scene {
     // campaign-wide grid, so damage taken here is still missing next
     // mission. Non-campaign maps (lesson_*, direct debug launches) keep
     // their own map.baseHp and never touch the run.
-    // TEMPORARY (remove when agent B's engine change lands): BattleEngine's
-    // 4th `opts` parameter with baseHpOverride is the agreed contract but is
-    // not in core/battle/engine.ts yet, so this cast is what keeps tsc green
-    // without editing engine.ts from this branch. Drop the cast once merged.
-    const EngineCtor = BattleEngine as unknown as new (
-      map: MapDef,
-      squadCharacterIds: string[],
-      registry: typeof import('../../content/registry').registry,
-      opts?: { baseHpOverride?: number },
-    ) => BattleEngine;
-    this.engine = new EngineCtor(
+    this.engine = new BattleEngine(
       this.map,
       this.map.squadCharacterIds ?? STARTING_SQUAD,
       registry,
       this.onCampaignGrid ? { baseHpOverride: this.campaign.gridHp } : undefined,
     );
+
+    // Resuming a mission the player already started (a reload, or a return
+    // trip through level select). ITB grants exactly one turn-reset per
+    // mission, but resetTurnUsed lives only in the engine instance, so a
+    // reload used to hand out a fresh one every time — a free resource on
+    // demand. The flag is restored by spending it: calling resetTurn() on a
+    // brand-new engine sets it while rewinding to a turn-start snapshot that
+    // is still the pristine opening board, so it consumes the reset without
+    // disturbing anything. That keeps the restore inside the engine's public
+    // API rather than reaching into its private state.
+    if (this.onCampaignGrid) {
+      const resumingWithResetSpent = resetTurnUsedFor(this.campaign, this.map.id);
+      this.campaign = beginMission(this.campaign, this.map.id);
+      saveCampaign(this.campaign);
+      if (resumingWithResetSpent) this.engine.resetTurn();
+    }
 
     // Left-align the board so the right side has a wide column for the rules panel.
     this.offsetX = 40;
@@ -799,6 +808,14 @@ export class BattleScene extends Phaser.Scene {
 
   private handleResetTurn() {
     this.engine.resetTurn();
+    // Persist that the mission's single turn-reset is now spent, so a reload
+    // cannot hand out another one. Read the engine's own flag rather than
+    // assuming the call took effect — resetTurn() is a no-op when the reset
+    // was already used or an outcome is pending.
+    if (this.onCampaignGrid && this.engine.getSnapshot().resetTurnUsed) {
+      this.campaign = markResetTurnUsed(this.campaign);
+      saveCampaign(this.campaign);
+    }
     // After the rewind, not before: resetTurn() restores baseHp along with
     // the rest of the board, and the grid has to follow it back up. This is
     // ITB's legal once-per-mission rewind — the player must not stay charged
