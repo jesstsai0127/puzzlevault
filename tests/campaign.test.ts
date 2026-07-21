@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   allowsLevelRestart,
   applyMissionResult,
@@ -473,6 +473,16 @@ describe('isCampaignMap', () => {
 // also exercises the no-storage fallback path for free.
 // ---------------------------------------------------------------------
 
+/**
+ * Installs a fresh fake localStorage AND syncs storage.ts's revision guard to
+ * it — mirroring a real page load, which always calls loadCampaign() once
+ * before it can ever call saveCampaign(). Without this sync, storage.ts's
+ * module-level revision tracker keeps whatever value the LAST test in this
+ * file happened to leave it at, so a test that saves before loading (a
+ * pattern the real app never does, but several tests here did, pre-dating the
+ * revision guard) would have its save spuriously dropped as "stale" against
+ * an empty store it never actually raced against.
+ */
 function installFakeStorage(): Record<string, string> {
   const data: Record<string, string> = {};
   (globalThis as { localStorage?: unknown }).localStorage = {
@@ -484,6 +494,7 @@ function installFakeStorage(): Record<string, string> {
       delete data[k];
     },
   };
+  loadCampaign();
   return data;
 }
 
@@ -580,5 +591,47 @@ describe('campaign storage', () => {
     expect(loadCampaign().gridHp).toBe(GRID_START - 5);
     clearCampaign();
     expect(loadCampaign()).toEqual(newCampaign());
+  });
+
+  // Two full-page sessions ("tabs") open the same save. Each loads once at
+  // startup and only ever writes back, so a stale tab's save must not be
+  // able to clobber progress a fresher tab already recorded. Each "tab" is
+  // its own isolated import of storage.ts (vi.resetModules + dynamic import)
+  // sharing only the fake localStorage on globalThis — the same relationship
+  // real browser tabs have to each other, and the only way to give each one
+  // its own independent in-memory revision tracking the way separate pages
+  // actually would.
+  it('a stale tab cannot overwrite a fresher save with older data (revision guard)', async () => {
+    installFakeStorage();
+
+    vi.resetModules();
+    const bootstrap = await import('../src/campaign/storage');
+    bootstrap.saveCampaign(newCampaign()); // establishes rev 1 in shared storage
+
+    vi.resetModules();
+    const tabAStorage = await import('../src/campaign/storage');
+    const tabA = tabAStorage.loadCampaign(); // tab A's own module sees rev 1
+
+    vi.resetModules();
+    const tabBStorage = await import('../src/campaign/storage');
+    const tabB = tabBStorage.loadCampaign(); // tab B's own module also sees rev 1
+
+    // Tab A takes damage and syncs first: gridHp 8 -> 6, rev 1 -> 2.
+    const afterA = play(tabA, regularMapIds(0)[0], 2);
+    tabAStorage.saveCampaign(afterA);
+    expect(tabAStorage.loadCampaign().gridHp).toBe(GRID_START - 2);
+
+    // Tab B never saw A's write (still thinks rev is 1). If it now saves its
+    // own stale, undamaged in-memory state, that write must be dropped — not
+    // silently heal the grid back up by overwriting A's already-recorded loss.
+    tabBStorage.saveCampaign(tabB);
+    expect(tabAStorage.loadCampaign().gridHp).toBe(GRID_START - 2); // still A's number, not tab B's undamaged 8
+
+    // A single dropped save must not wedge tab B forever: once it resyncs to
+    // the current revision, its NEXT save (now built on fresh data) lands.
+    const tabBRefreshed = tabBStorage.loadCampaign();
+    const afterB = play(tabBRefreshed, regularMapIds(1)[0], 1);
+    tabBStorage.saveCampaign(afterB);
+    expect(tabAStorage.loadCampaign().gridHp).toBe(GRID_START - 2 - 1);
   });
 });
