@@ -14,8 +14,14 @@ import type { MapDef } from '../core/content/types';
 /** The 20 campaign missions, in island/mission order — the ITB-verified 4-islands × 5-missions structure. */
 const CAMPAIGN_MAP_IDS = [1, 2, 3, 4].flatMap((island) => [1, 2, 3, 4, 5].map((m) => `island${island}_m${m}`));
 
-/** A5 threat classification: yuan_ling never attacks players (it flees them), so it counts ONLY as a base threat. */
-const BASE_THREATS = new Set(['yin_ghost', 'yuan_ling']);
+/**
+ * A5 threat classification: yuan_ling never attacks players (it flees them),
+ * so it counts ONLY as a base threat. jiangshi was retuned to beeline for
+ * the base like yin_ghost (see content/monsters/jiangshi.json), so it now
+ * counts as BOTH — it still claws through any hero blocking its lane on the
+ * way there, so the player-threat texture is real, not just historical.
+ */
+const BASE_THREATS = new Set(['yin_ghost', 'yuan_ling', 'jiangshi']);
 const PLAYER_THREATS = new Set(['yao_lang', 'teng_yao', 'jiangshi']);
 
 function allMonsterIds(map: MapDef): string[] {
@@ -224,6 +230,44 @@ describe('campaign missions: ITB-verified hard specs (8×8 grid, 5 turns, 3-pers
     expect(islandRoster(3).has('jiangshi')).toBe(false);
     expect(islandRoster(4).has('jiangshi')).toBe(true);
   });
+
+  // Difficulty audit (2026-07-21, content-retune batch): a greedy/non-thinking
+  // playthrough of the full campaign got as far as mission 16 of 17 before the
+  // shared grid (A9) finally ran out — margin so thin it barely cleared the
+  // "普通 = 隨便玩會輸" bar (design/roadmap.md:251). Auditing WHY showed island 3
+  // and (especially) island 4 had base-threat HP sitting as low as 18.5% of the
+  // mission's total monster HP pool — most of the danger was aimed at PLAYERS,
+  // not the objective, so a greedy player who just focused kills took almost no
+  // base damage. jiangshi was retuned to rush the base (see
+  // content/monsters/jiangshi.json) specifically to fix island 4; this locks
+  // the fix in place so a future content edit can't silently drain it back out.
+  //
+  // Scoped to islands 3 and 4 only — those are the two the audit flagged, and
+  // island 4's jiangshi retune is the mechanism this test is guarding. Islands
+  // 1-2 are intentionally left alone: island1_m3 is a deliberate all-wolves
+  // "swarm" map (its own solvability test's whole point is that base safety
+  // there comes from a single pre-emptive pit-push, not from grinding down
+  // base-threat HP), and islands 1-2 already sit at 60%+ without any of this
+  // batch's changes — including them would just be asserting a fact, not
+  // guarding a fix.
+  //
+  // 35% is the floor: island3_m2 is the lowest map in the post-retune content
+  // at 38.5%, so 35 leaves a few points of real headroom (a future edit has to
+  // clearly regress, not just round differently) while sitting well above the
+  // pre-fix island4 low of 18.5% and below island1_m3's unrelated 33.3% swarm
+  // outlier, which this test deliberately doesn't touch.
+  it.each([3, 4])('island%i: every mission keeps base-threat HP at or above 35%% of the total monster HP pool', (island) => {
+    for (const m of [1, 2, 3, 4, 5]) {
+      const id = `island${island}_m${m}`;
+      const ids = allMonsterIds(maps[id]);
+      const totalHp = ids.reduce((sum, mid) => sum + registry.monsters[mid].maxHp, 0);
+      const baseThreatHp = ids
+        .filter((mid) => BASE_THREATS.has(mid))
+        .reduce((sum, mid) => sum + registry.monsters[mid].maxHp, 0);
+      const pct = (baseThreatHp / totalHp) * 100;
+      expect(pct, `${id}: base-threat HP is ${pct.toFixed(1)}% of the pool (${baseThreatHp}/${totalHp}) — below the 35% floor`).toBeGreaterThanOrEqual(35);
+    }
+  });
 });
 
 describe('island1_m1: winnable via the intended ITB line, not only survivable (solvability upper check)', () => {
@@ -279,36 +323,46 @@ describe('island1_m2: winnable via the choke line (solvability upper check)', ()
     const map = maps.island1_m2;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
-    // T1 — su_qing takes the corridor mouth and chips the row-3 ghost; li_yan
-    // starts the long route down the row-6 passage.
+    // T1 — su_qing takes the corridor mouth and chips the row-3 ghost (the
+    // ITB weapon push is now live, so this shove already slides it a tile
+    // toward the base — accounted for below); li_yan starts the long route
+    // down the row-6 passage; bai_zhi parks on the (5,6) reinforcement tile
+    // BEFORE it's telegraphed — occupying an emergence tile when it resolves
+    // blocks the spawn outright (A3), trading a mere 1 flat chip for what
+    // would otherwise be a whole second wolf.
     expect(engine.moveUnit(1, { x: 5, y: 3 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
     expect(engine.moveUnit(0, { x: 4, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 5, y: 6 }).ok).toBe(true);
     engine.endTurn();
 
-    // T2 — su_qing finishes the row-3 ghost down the pipe; li_yan reaches the
-    // second ghost's column and chips it.
+    // T2 — su_qing's second shot reaches exactly 3 tiles down the now-clear
+    // pipe and finishes the row-3 ghost; li_yan reaches the row-6 ghost's
+    // column and chips it (the push slides it one tile further from the
+    // base, which the T3 follow-up below accounts for); bai_zhi holds the
+    // blocking tile and eats the 1-damage emergence block instead of a wolf.
     expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
     expect(engine.moveUnit(0, { x: 3, y: 5 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
     engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // both ghosts still pre-claw
 
-    // T3 — li_yan kills the second ghost before it reaches the base; su_qing
-    // repositions and clears a wolf.
-    expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
+    // T3 — li_yan closes the extra pushed-away tile and finishes the second
+    // ghost before it ever reaches the base; su_qing cuts down the surviving
+    // wolf that closed to melee range.
+    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 5, y: 5 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
     engine.endTurn();
 
-    // T4 — clear the last wolf; T5 — ride out the clock.
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    // T4, T5 — nothing left; ride out the clock.
     engine.endTurn();
     engine.endTurn();
 
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(8); // neither ghost ever crossed the wall to the base
+    expect(snap.baseHp).toBe(8); // neither ghost ever crossed to the base
     expect(snap.players.every((p) => p.hp > 0)).toBe(true);
   });
 });
@@ -363,35 +417,42 @@ describe('island1_m4: winnable against the 3-ghost rush via pit-push + tempo (so
     const map = maps.island1_m4;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
-    // T1 — li_yan steps onto (5,4) to body-block the lower ghost; su_qing chips
-    // the upper one; bai_zhi repositions.
+    // T1 — li_yan steps onto (5,4), body-blocking the lower ghost; su_qing's
+    // shot down the (4,*) column hits the upper ghost — the push shoves it
+    // straight into the body-blocked lower ghost, a collision that kills the
+    // upper ghost outright (2 direct + 1 collision = 3) and chips the lower
+    // one for free; bai_zhi repositions clear of the column.
     expect(engine.moveUnit(0, { x: 5, y: 4 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 3, y: 5 }).ok).toBe(true);
     engine.endTurn();
 
-    // T2 — the chipped ghost has advanced to (5,3); li_yan palm_waves it UP two
-    // tiles into the y=1 hazard (a kill without spending damage); su_qing chips
-    // the blocked ghost.
-    expect(engine.useSkill(0, 'palm_wave', 'up').ok).toBe(true);
+    // T2 — the same shot down the column finishes the chipped lower ghost —
+    // both ghosts are dead a turn ahead of the original (push-free) plan;
+    // bai_zhi steps off the firing line so a later shot down this column
+    // can't clip her.
+    expect(engine.useSkill(0, 'palm_wave', 'up').ok).toBe(true); // no target left in range — a harmless no-op swing
     expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
     expect(engine.getSnapshot().baseHp).toBe(8); // base still pristine going into the back half
     engine.endTurn();
+    // T2's end telegraphs the scripted 3rd ghost's emergence at (3,3), and the
+    // wolf has closed to melee range on su_qing.
 
-    // T3 — su_qing finishes the blocked ghost; li_yan turns on the emerged one.
-    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    // T3 — su_qing cuts down the adjacent wolf; li_yan closes on the freshly
+    // emerged 3rd ghost and chips it (the push slides it one tile away, same
+    // as island1_m2's row-3 ghost — the T4 follow-up accounts for it).
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
     expect(engine.moveUnit(0, { x: 4, y: 3 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
     engine.endTurn();
 
-    // T4 — li_yan kills the last ghost (body-blocked into staying put); su_qing
-    // cuts down the wolf. Board clear.
+    // T4 — the pushed ghost drifted back adjacent on its own move; li_yan
+    // finishes it from the same tile without needing to reposition.
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
     engine.endTurn();
 
-    // T5 — ride out the clock.
+    // T5 — board clear; ride out the clock.
     engine.endTurn();
 
     const snap = engine.getSnapshot();
@@ -408,40 +469,55 @@ describe('island1_m5 (island boss): winnable via double hazard-pit-push (solvabi
   // COLUMNS as the answer — li_yan palm_waves the left ghost into the x=1 pit,
   // then the right ghost into the x=6 pit, while su_qing snipes the middle one
   // up the open lane and bai_zhi keeps her healthy. Base is never touched.
-  it('pit both flank ghosts into the hazard columns, snipe the middle, clear the wolves — base untouched, full squad', () => {
+  it('pit the left ghost, chip-then-push the middle ghost into the hazard, kill the right ghost, clear the wolves', () => {
     const map = maps.island1_m5;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
     // T1 — li_yan steps to (3,4) and shoves the left ghost west into the x=1
-    // hazard column; su_qing chips the central ghost up the open lane.
+    // hazard column (a free kill, no damage spent); su_qing chips the middle
+    // ghost (spawned directly below the base) up the open lane.
     expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
     expect(engine.useSkill(0, 'palm_wave', 'left').ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 5, y: 6 }).ok).toBe(true);
     engine.endTurn();
 
-    // T2 — the right ghost has closed to (4,4); li_yan shoves it east into the
-    // x=6 hazard column; su_qing finishes the central ghost.
-    expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
+    // T2 — the right ghost has already closed to melee range on the base
+    // (it reaches (5,3) after just one free move — the ITB weapon push means
+    // it must be dealt with THIS turn, before its already-locked-in attack
+    // resolves at T2's end); li_yan chips it and the push slides it off the
+    // base tile, buying one more turn. Su_qing finishes the middle ghost
+    // (pushed straight into the x=6 hazard column — a bonus kill, not the
+    // original plan, but the push mechanic delivers it for free). Bai_zhi
+    // tops off su_qing pre-emptively for the wolf hit landing at this turn's
+    // end (the right ghost's claw was already locked in before li_yan acted
+    // — see above — so the base still takes that one hit).
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
-    expect(engine.getSnapshot().baseHp).toBe(8); // all three ghosts dealt with, base pristine
+    expect(engine.moveUnit(0, { x: 5, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.useSkill(2, 'major_heal', 'left').ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(6); // one claw got through before li_yan could reach it
+
+    // T3 — li_yan closes the pushed-away tile and finishes the right ghost;
+    // bai_zhi tops su_qing up again ahead of this turn's wolf hit.
+    expect(engine.moveUnit(0, { x: 5, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.useSkill(2, 'major_heal', 'left').ok).toBe(true);
     engine.endTurn();
 
-    // T3 — clear both wolves; bai_zhi tops su_qing back up.
+    // T4 — every ghost is down; clean up both wolves before they can land
+    // another hit.
     expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
-    expect(engine.moveUnit(0, { x: 5, y: 5 }).ok).toBe(true);
-    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
-    expect(engine.useSkill(2, 'minor_heal', 'down').ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
     engine.endTurn();
 
-    // T4, T5 — board clear; ride out the clock.
-    engine.endTurn();
+    // T5 — board clear; ride out the clock.
     engine.endTurn();
 
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(8);
+    expect(snap.baseHp).toBe(6); // the one unavoidable claw before li_yan could reach the right ghost
     expect(snap.players.every((p) => p.hp > 0)).toBe(true);
   });
 });
@@ -449,44 +525,50 @@ describe('island1_m5 (island boss): winnable via double hazard-pit-push (solvabi
 describe('island2_m1: winnable — clear the ghost column, block the yuan_ling bolt (solvability upper check)', () => {
   // Island 2 introduces the yuan_ling, a ranged base-hunter. Here two ghosts
   // file up column 3 to the west base while a yuan_ling lines up a bolt down
-  // row 3. li_yan melees the single-file column while su_qing snipes; then
-  // su_qing plants herself on row 3 so the yuan_ling's bolt strikes HER
-  // (friendly fire) instead of the base — the intended counter to the new
-  // threat. One ghost claw lands (base 8→6) before the column falls; a legit
-  // hold, not a flawless clear.
-  it('melee the ghost column + body-block the ranged bolt — base held, whole squad alive', () => {
+  // row 3. li_yan melees the lead ghost — the ITB weapon push shoves it
+  // straight into the second ghost queued behind it, a collision that chips
+  // BOTH; su_qing's column-2 sniper line then cleans up each survivor in
+  // turn before either claws, and finishes with a straight shot down row 3
+  // that one-shots the yuan_ling before it ever bolts. A clean hold: the
+  // push turned what used to be "one claw lands" into a flawless clear.
+  it('melee the ghost column + snipe down the yuan_ling lane — base untouched, whole squad alive', () => {
     const map = maps.island2_m1;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
-    // T1 — li_yan steps onto column 3 and chips the lead ghost; su_qing moves up
-    // column 2 to catch the ghosts as they shift toward the base.
+    // T1 — li_yan steps onto column 3 and hits the lead ghost; the push
+    // collides it into the second ghost queued behind it, chipping both;
+    // su_qing moves up column 2 to line up the follow-up shots.
     expect(engine.moveUnit(0, { x: 3, y: 3 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
     expect(engine.moveUnit(1, { x: 2, y: 4 }).ok).toBe(true);
     engine.endTurn();
 
-    // T2 — su_qing snipes the lead ghost dead; li_yan closes on the second.
+    // T2 — su_qing's shot up column 2 finishes the lead ghost (already at 1
+    // hp from the T1 collision); li_yan closes in on the second.
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
     expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
     engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // both ghosts dead, neither ever got a claw in
 
-    // T3 — li_yan finishes the last ghost; su_qing plants on row 3 in the bolt
-    // lane.
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    // T3 — su_qing steps onto row 3 and fires straight down the yuan_ling's
+    // own lane — a clean one-shot before it can ever bolt the base.
     expect(engine.moveUnit(1, { x: 2, y: 3 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    engine.endTurn();
-
-    // T4 — su_qing holds the bolt lane and fires east; T5 — ride it out.
-    expect(engine.moveUnit(1, { x: 3, y: 3 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     engine.endTurn();
+
+    // T4 — su_qing runs down the reinforcement wolf before it can land a
+    // second hit on bai_zhi.
+    expect(engine.moveUnit(1, { x: 5, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    engine.endTurn();
+
+    // T5 — board clear; ride out the clock.
     engine.endTurn();
 
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(6); // exactly one ghost claw landed before the column fell — a hold, not a flawless clear
+    expect(snap.baseHp).toBe(8); // neither ghost nor the yuan_ling ever landed a hit
     expect(snap.players.every((p) => p.hp > 0)).toBe(true);
   });
 });
@@ -501,31 +583,39 @@ describe('island2_m2: winnable via the dual-base split (solvability upper check)
     const map = maps.island2_m2;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
-    // T1 — li_yan chips the west ghost in melee; su_qing chips the east ghost
-    // from range; bai_zhi tucks into the center.
+    // T1 — li_yan hits the west ghost, su_qing the east one; the ITB weapon
+    // push shoves each straight toward its own base corner (west ghost to
+    // column 1, east ghost to column 6) — chipped, not yet dead; bai_zhi
+    // tucks into the center.
     expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
     engine.endTurn();
 
-    // T2 — both lanes finish their ghost before it can claw (base stays full).
-    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    // T2 — both ghosts have advanced up their own base column; li_yan and
+    // su_qing reposition onto each lane and finish them before either claws.
+    expect(engine.moveUnit(0, { x: 2, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 4, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    engine.endTurn();
     expect(engine.getSnapshot().baseHp).toBe(8); // both base-threats dead, not a scratch on either base
+
+    // T3 — reposition clear of each other's firing lanes (a stray shot down
+    // an empty column would otherwise clip a teammate) ahead of mopping up
+    // the yuan_ling and the two wolves; nothing is in range yet this turn.
+    expect(engine.moveUnit(2, { x: 3, y: 3 }).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 3 }).ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
     engine.endTurn();
 
-    // T3 — su_qing kills the yuan_ling, li_yan a wolf; bai_zhi pulls clear.
+    // T4 — su_qing snipes the yuan_ling straight down its column; li_yan cuts
+    // down the wolf that closed on her.
     expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
-    expect(engine.moveUnit(0, { x: 2, y: 5 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 4, y: 3 }).ok).toBe(true);
     engine.endTurn();
 
-    // T4 — su_qing swings east for another wolf; T5 — ride it out.
-    expect(engine.moveUnit(1, { x: 6, y: 5 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
-    engine.endTurn();
+    // T5 — the last wolf hasn't caught up to anyone; ride out the clock.
     engine.endTurn();
 
     const snap = engine.getSnapshot();
@@ -582,16 +672,17 @@ describe('island2_m4: winnable via LOS-through-hazard snipe + kiting (solvabilit
   // A tight hold. A yuan_ling parks at (1,3) and bolts up column 1 into the base
   // from turn 1; the key read is that hazard tiles DON'T block line of sight, so
   // su_qing can drop to (1,6) and one-shot it straight up the column through the
-  // (1,4) pit. Meanwhile bai_zhi (a healer with no attack, starting next to a
-  // wolf) kites it forever — her move outranges the wolf, and stepping away
-  // dodges the telegraphed bite. The base bleeds to 2 but survives, whole squad
-  // intact — a genuine hard mission, not a flawless clear.
-  it('snipe the yuan_ling through the hazard, kite the wolf, hold the base — squad survives', () => {
+  // (1,4) pit. The scripted ghost dies pre-claw turn 2, and the ITB weapon push
+  // collides its telegraphed reinforcement into the (2,1) wall for a second
+  // one-turn-earlier kill — between the two, the base is never actually
+  // touched, upgrading this from the original "bleeds to 2" hold into a
+  // flawless clear. Bai_zhi (a healer with no attack) never needs to fight.
+  it('snipe the yuan_ling through the hazard, pit-collide both ghosts — base untouched, whole squad alive', () => {
     const map = maps.island2_m4;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
     // T1 — li_yan vacates the corridor so su_qing can reach (1,6) and snipe the
-    // yuan_ling up column 1 (through the pit); bai_zhi begins kiting the wolf.
+    // yuan_ling up column 1 (through the pit); bai_zhi repositions clear.
     expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
     expect(engine.moveUnit(1, { x: 1, y: 6 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
@@ -599,31 +690,37 @@ describe('island2_m4: winnable via LOS-through-hazard snipe + kiting (solvabilit
     expect(engine.getSnapshot().baseHp).toBe(8); // no bolt landed — the yuan_ling is already dead
     engine.endTurn();
 
-    // T2 — both damage-dealers turn on the ghosts closing on the base; bai_zhi
-    // keeps fleeing.
+    // T2 — li_yan hits the scripted ghost; the push slams it straight into
+    // the (2,0) wall behind it, a collision that kills it outright (2 direct
+    // + 1 collision = 3) before it can ever claw.
     expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
     expect(engine.moveUnit(1, { x: 2, y: 5 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // the scripted ghost never landed a claw either
+
+    // T3 — li_yan chips the freshly emerged 2nd ghost (the push slides it a
+    // tile down its own column, same pattern as island1_m2/m4 — the T4
+    // follow-up below accounts for it); bai_zhi repositions clear.
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 5, y: 5 }).ok).toBe(true);
     engine.endTurn();
 
-    // T3 — li_yan finishes the lead ghost; su_qing thins the reinforcement;
-    // bai_zhi ducks into the far corner.
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 2, y: 4 }).ok).toBe(true);
+    // T4 — su_qing snipes the emerged ghost dead up its column before it can
+    // ever claw; li_yan repositions toward the last wolf.
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 3, y: 3 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 6, y: 5 }).ok).toBe(true);
     engine.endTurn();
 
-    // T4 — bai_zhi keeps her distance; T5 — ride it out.
-    expect(engine.moveUnit(2, { x: 1, y: 5 }).ok).toBe(true);
-    engine.endTurn();
+    // T5 — su_qing is already in range of the last wolf; clean kill, no
+    // repositioning needed. Board clear.
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     engine.endTurn();
 
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(2); // held on 2 — a deliberately tight island-2 mission
+    expect(snap.baseHp).toBe(8); // neither ghost nor the yuan_ling ever landed a hit
     expect(snap.players.every((p) => p.hp > 0)).toBe(true);
   });
 });
@@ -686,33 +783,43 @@ describe('island3_m1: winnable — pit a ghost, block the artillery line, kite (
     const map = maps.island3_m1;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
-    // T1 — li_yan pits the near ghost into (4,2); su_qing chips the far ghost;
-    // bai_zhi backs off the wolves.
+    // T1 — li_yan pits the near ghost into (4,2) (a free kill); su_qing chips
+    // the far ghost — the push slides it further down the row (accounted for
+    // in T2 below); bai_zhi backs off the wolves.
     expect(engine.useSkill(0, 'palm_wave', 'right').ok).toBe(true);
     expect(engine.moveUnit(1, { x: 2, y: 3 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 2, y: 5 }).ok).toBe(true);
     engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(6); // teng_yao's turn-1 shot already landed before anyone could reach the line
 
-    // T2 — su_qing finishes the far ghost; li_yan steps onto (4,1) to eat the
-    // teng_yao's line and chip it; bai_zhi keeps kiting.
+    // T2 — su_qing's shot still reaches the pushed-away ghost at max range and
+    // finishes it; li_yan steps onto (4,1) to eat the teng_yao's line
+    // (blocking it from the base) and chips it — the push shoves it one tile
+    // further down the row, same pattern as everywhere else this push
+    // interacts with terrain; bai_zhi keeps kiting.
     expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     expect(engine.moveUnit(0, { x: 4, y: 1 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
     engine.endTurn();
 
-    // T3 — li_yan kills the teng_yao; su_qing turns on the wolves; bai_zhi tucks
-    // into the corner.
+    // T3 — li_yan closes the pushed-away tile and kills the teng_yao; su_qing
+    // repositions; bai_zhi tucks into the corner.
+    expect(engine.moveUnit(0, { x: 5, y: 1 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
     expect(engine.moveUnit(1, { x: 4, y: 4 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
     engine.endTurn();
 
-    // T4 — su_qing picks off a wolf; T5 — ride it out.
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    // T4 — li_yan mops up one wolf; su_qing the other.
+    expect(engine.moveUnit(0, { x: 5, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
     engine.endTurn();
+
+    // T5 — the last wolf catches bai_zhi (a healer, no attack of her own to
+    // answer it with) for one hit; she survives it. Ride out the clock.
     engine.endTurn();
 
     const snap = engine.getSnapshot();
@@ -905,158 +1012,186 @@ describe('island3_m5 (island boss): winnable — pit, then block the reinforceme
   });
 });
 
-describe('island4_m1: winnable — split for the ghosts, kite the slow jiangshi (solvability upper check)', () => {
-  // Island 4 introduces the jiangshi: a heavy (hp6, dmg3 + knockback) that hunts
-  // players — but it moves only ONE tile a turn. The lesson: it's terrifying up
-  // close and trivial to kite. (Redesigned from a layout where the jiangshi
-  // walled off the base-ghosts and a reinforcement spawned in an unreachable
-  // corner.) li_yan and su_qing split to kill the two base-ghosts pre-claw, then
-  // the whole squad simply walks away from the jiangshi for the rest of the game.
-  it('kill both ghosts pre-claw, then kite the jiangshi to the clock — base untouched, whole squad alive', () => {
+describe('island4_m1: winnable — split for the ghosts, pin-and-grind the base-rushing jiangshi (solvability upper check)', () => {
+  // Island 4 introduces the jiangshi: a heavy (hp6, dmg3 + knockback) that now
+  // beelines for the BASE, not the players (retuned from an earlier build where
+  // it chased heroes and was trivially kited — that made every jiangshi mission
+  // a non-threat once the squad just walked away, which measurably undertuned
+  // the whole island; see design/roadmap.md's difficulty audit). It still only
+  // moves ONE tile a turn and still claws through a hero blocking its lane, so
+  // the counter is symmetric: li_yan and su_qing each kill their base-ghost,
+  // then camp adjacent to their own jiangshi and hit it EVERY turn — the ITB
+  // weapon push shoves it back exactly as far as its own move recovers, so it
+  // never advances while it's being ground down (2 dmg × 3 hits = dead at
+  // exactly hp6, and it never lands a single claw the whole fight).
+  it('kill both ghosts pre-claw, then pin both jiangshi in place until they die — base untouched, whole squad alive', () => {
     const map = maps.island4_m1;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
     // T1 — li_yan chips the west ghost up column 3; su_qing chips the east ghost
-    // up column 4; bai_zhi rests (the jiangshi are two tiles away and slow).
+    // up column 4; bai_zhi repositions clear (the jiangshi are still four tiles
+    // out and slow).
     expect(engine.moveUnit(0, { x: 3, y: 4 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
     expect(engine.moveUnit(1, { x: 4, y: 4 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    expect(engine.rest(2).ok).toBe(true);
-    engine.endTurn();
-
-    // T2 — each finishes its ghost as it slides toward its base (both pre-claw).
-    expect(engine.moveUnit(0, { x: 2, y: 4 }).ok).toBe(true);
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 5, y: 4 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 3, y: 4 }).ok).toBe(true);
-    expect(engine.getSnapshot().baseHp).toBe(8); // both ghosts dead before either clawed
-    engine.endTurn();
-
-    // T3 — su_qing kills the fast wolf (the only pursuer that could catch anyone);
-    // li_yan and bai_zhi start walking away from the jiangshi.
-    expect(engine.useSkill(1, 'flying_sword', 'left').ok).toBe(true);
-    expect(engine.moveUnit(0, { x: 2, y: 5 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 4, y: 4 }).ok).toBe(true);
-    engine.endTurn();
-
-    // T4-T5 — nothing left but two slow jiangshi; the squad keeps its distance.
-    expect(engine.moveUnit(0, { x: 2, y: 6 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 5, y: 6 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
-    engine.endTurn();
-
-    expect(engine.moveUnit(0, { x: 3, y: 6 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 6, y: 6 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 4, y: 4 }).ok).toBe(true);
-    engine.endTurn();
-
-    const snap = engine.getSnapshot();
-    expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(8);
-    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
-  });
-});
-
-describe('island4_m2: winnable — kill the ghosts, kite the heavies on the hazard field (solvability upper check)', () => {
-  // Second jiangshi map (redesigned from an overloaded layout that forced you to
-  // sacrifice units holding a teng_yao line). Two ghosts threaten the west base —
-  // one starts adjacent and gets one claw in before li_yan cuts it down (base
-  // 8→6); su_qing hunts the other. Then, as in m1, the squad just walks away from
-  // the two slow jiangshi for the rest of the game.
-  it('drop both ghosts then kite the jiangshi — base held, whole squad alive', () => {
-    const map = maps.island4_m2;
-    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
-
-    // T1 — li_yan chips the base-adjacent ghost; su_qing chips the other up its
-    // column; bai_zhi eases away from the jiangshi.
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 3, y: 4 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 3, y: 5 }).ok).toBe(true);
     engine.endTurn();
 
-    // T2 — li_yan finishes the adjacent ghost; su_qing finishes the other.
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 2, y: 4 }).ok).toBe(true);
-    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
-    engine.endTurn();
-    expect(engine.getSnapshot().baseHp).toBe(6); // both base-threats dead; only the one turn-1 claw got through
-
-    // T3-T5 — nothing left but two slow jiangshi and a wolf; the squad keeps
-    // walking away from them.
+    // T2 — each finishes its ghost as it slides toward its base (both pre-claw).
     expect(engine.moveUnit(0, { x: 2, y: 3 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 1, y: 5 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 5, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'up').ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // both ghosts dead before either clawed
+
+    // T3 — both jiangshi have closed to (1,4)/(6,4), one tile below their own
+    // base column; li_yan and su_qing plant next to each and start hitting —
+    // the push shoves each one tile further away every turn, so it re-walks
+    // the exact tile it lost and never actually gets closer.
+    expect(engine.moveUnit(0, { x: 1, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 6, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 2, y: 5 }).ok).toBe(true);
     engine.endTurn();
 
-    expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 2, y: 5 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
+    // T4 — second hit on each, same pattern — hp6 → hp2, still pinned in place.
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 2, y: 4 }).ok).toBe(true);
     engine.endTurn();
 
-    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 1, y: 5 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    // T5 — the third hit finishes both — su_qing's ranged shot still reaches
+    // down the column, but li_yan (melee) has to close the one tile the last
+    // push opened up before she can land the kill.
+    expect(engine.moveUnit(0, { x: 1, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'down').ok).toBe(true);
     engine.endTurn();
 
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(6);
+    expect(snap.baseHp).toBe(8); // neither jiangshi ever landed a claw
     expect(snap.players.every((p) => p.hp > 0)).toBe(true);
   });
 });
 
-describe('island4_m3: winnable — hold the row-3 lane, kite the heavies across the choke (solvability upper check)', () => {
-  // Template-B choke with the island-4 heavies (redesigned from a layout where
-  // two ghosts west of the wall killed the base before the boxed-in squad could
-  // cross). Now defenders start west: li_yan kills the base-adjacent ghost while
-  // su_qing plants on the row-3 lane — she blocks the yuan_ling's bolt through
-  // the gap AND snipes the second ghost and the yuan_ling straight down the row.
-  // The two jiangshi have to file across the choke and are simply kited.
-  it('kill the ghosts + block-and-snipe down row 3, kite the jiangshi — base held, whole squad alive', () => {
+describe('island4_m2: winnable — kill the ghosts, then just stay out of the jiangshi lane (solvability upper check)', () => {
+  // Second jiangshi map. Both jiangshi start FAR east (columns 5-6) and now
+  // beeline for the base (see island4_m1's header comment on the AI retune),
+  // filing single-file up row 4 — but even unopposed, the math means neither
+  // one is ever within a tile of the base before turn 5 runs out (verified:
+  // a fully passive run dies to the two GHOSTS alone, turn 3, with both
+  // jiangshi still two-plus tiles short). So the counter here isn't fighting
+  // them at all — it's killing the two actual base-threats fast, then simply
+  // never standing on row 4 (a hero blocking a jiangshi's very next step gets
+  // clawed through regardless of how far from the base that step is — see
+  // island4_m1). One ghost starts already adjacent to the base and its claw
+  // is already locked in for the end of turn 1 — the very first action has
+  // to be the kill, not just a chip.
+  it('kill both ghosts before either claws, then stay off row 4 — base untouched, whole squad alive', () => {
+    const map = maps.island4_m2;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
+
+    // T1 — the west ghost starts adjacent to the base; li_yan's hit pushes it
+    // straight into the (2,0) wall behind it, a collision kill (2 direct + 1
+    // collision = 3) before it can claw. Su_qing chips the second ghost —
+    // the push slides it away (accounted for in T2); bai_zhi steps clear of
+    // the wolf that starts next to her.
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 2, y: 3 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // the already-adjacent ghost died before its locked-in claw could land
+
+    // T2 — su_qing's shot still reaches the pushed-away ghost at max range
+    // and finishes it. Base is now completely clear of threats.
+    expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8);
+
+    // T3 — with no base-threats left, everyone repositions off row 4 (the
+    // jiangshi's single-file lane) onto row 2/3 or the far corner instead.
+    expect(engine.moveUnit(1, { x: 3, y: 2 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 1, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T4 — li_yan swings south (off row 4 the whole way) to finish the last
+    // wolf; su_qing and bai_zhi hold their safe tiles.
+    expect(engine.moveUnit(0, { x: 2, y: 5 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true);
+    engine.endTurn();
+
+    // T5 — a jiangshi has caught up enough that li_yan is standing in its
+    // very next step; it claws through her instead of the (still two tiles
+    // short) base — she easily survives the one hit. Ride out the clock.
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8); // neither ghost, nor either jiangshi, ever touched the base
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
+describe('island4_m3: winnable — hold the row-3 lane, then let the choke run out the clock on the heavies (solvability upper check)', () => {
+  // Template-B choke with the island-4 heavies. Both jiangshi start far east
+  // (columns 5-6) and now beeline for the base (see island4_m1's header on
+  // the AI retune), but the choke wall forces them to detour through row 3
+  // or row 6 — even taking the most direct route, neither is within a tile
+  // of the base before the clock runs out. Li_yan kills the base-adjacent
+  // ghost while su_qing plants on the row-3 lane: she blocks the yuan_ling's
+  // bolt through the gap AND snipes the second ghost and the yuan_ling
+  // straight down the row. With every real base-threat dead by turn 3, the
+  // rest of the mission is just staying off whatever tile a jiangshi wants
+  // to step into next (see island4_m1/m2) while the clock runs out.
+  it('kill the ghosts + block-and-snipe down row 3, then stay clear of the heavies — base untouched, whole squad alive', () => {
     const map = maps.island4_m3;
     const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, su_qing, bai_zhi]
 
-    // T1 — li_yan chips the base-adjacent ghost; su_qing takes the row-3 lane and
-    // chips the second ghost down it; bai_zhi steps clear of the jiangshi.
+    // T1 — li_yan's hit on the base-adjacent ghost pushes it into the (2,0)
+    // wall behind it, a collision kill before its already-locked claw can
+    // land; su_qing takes the row-3 lane and chips the second ghost down it
+    // (the push slides it away — the T2 shot below still reaches it at max
+    // range); bai_zhi steps clear of the approaching jiangshi.
     expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
     expect(engine.moveUnit(1, { x: 2, y: 3 }).ok).toBe(true);
     expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 3, y: 5 }).ok).toBe(true);
     engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // the already-adjacent ghost died before its locked-in claw could land
 
-    // T2 — li_yan finishes the adjacent ghost; su_qing finishes the second ghost
-    // down the lane (still blocking the yuan_ling behind it).
-    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    // T2 — su_qing's shot still reaches the pushed-away ghost at max range
+    // and finishes it (still blocking the yuan_ling's lane behind it).
     expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     expect(engine.moveUnit(2, { x: 2, y: 6 }).ok).toBe(true);
     engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8);
 
-    // T3 — su_qing snipes the yuan_ling down the now-clear row; li_yan and bai_zhi
-    // start walking away from the jiangshi.
+    // T3 — su_qing snipes the yuan_ling down the now-clear row — every real
+    // base-threat is dead; li_yan repositions off the choke, bai_zhi keeps
+    // retreating from the jiangshi coming up row 6.
     expect(engine.useSkill(1, 'flying_sword', 'right').ok).toBe(true);
     expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
-    engine.endTurn();
-    expect(engine.getSnapshot().baseHp).toBe(6); // one claw landed turn 1; nothing since
-
-    // T4-T5 — only the slow jiangshi remain; keep the distance.
-    expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 2, y: 4 }).ok).toBe(true);
     expect(engine.moveUnit(2, { x: 1, y: 5 }).ok).toBe(true);
     engine.endTurn();
+    expect(engine.getSnapshot().baseHp).toBe(8); // no base-threat ever landed a hit
 
-    expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
-    expect(engine.moveUnit(1, { x: 3, y: 3 }).ok).toBe(true);
-    expect(engine.moveUnit(2, { x: 1, y: 6 }).ok).toBe(true);
+    // T4 — su_qing steps off row 3 (the choke jiangshi is filing straight up
+    // it) onto row 2 instead; nobody is standing in either heavy's path.
+    expect(engine.moveUnit(1, { x: 2, y: 2 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T5 — neither jiangshi has closed within a tile of the base; ride out
+    // the clock.
     engine.endTurn();
 
     const snap = engine.getSnapshot();
     expect(snap.outcome).toBe('victory');
-    expect(snap.baseHp).toBe(6);
+    expect(snap.baseHp).toBe(8); // neither ghost, the yuan_ling, nor either jiangshi ever touched the base
     expect(snap.players.every((p) => p.hp > 0)).toBe(true);
   });
 });
@@ -1210,13 +1345,11 @@ describe('lesson levels (standalone tutorial sequence — replaces the old scrip
     // (3,2), landing adjacent to the ghost at (4,2).
     expect(engine.moveUnit(0, { x: 3, y: 2 }).ok).toBe(true);
     expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true); // move-then-act: the intended flow
-    expect(engine.getSnapshot().monsters[0].hp).toBe(1); // yin_ghost 3 - sword_qi 2
+    // sword_qi now deals 2 AND pushes 1 (ITB weapon): the ghost is shoved east
+    // into the wall, so it takes the 2 plus a collision hit and dies outright.
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
     // The lesson's core rule: acting ends the unit's turn — no more movement.
     expect(engine.moveUnit(0, { x: 2, y: 2 })).toEqual({ ok: false, reason: 'already-acted' });
-    engine.endTurn();
-    // Finish it next turn from the same tile.
-    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
-    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true); // the ghost is dead
     expect(engine.getSnapshot().baseHp).toBe(map.baseHp); // base never took a hit
   });
 
@@ -1224,16 +1357,10 @@ describe('lesson levels (standalone tutorial sequence — replaces the old scrip
     const map = maps.lesson_opportunity_attack;
     const engine = new BattleEngine(map, STARTING_SQUAD, registry);
     expect(engine.moveUnit(0, { x: 2, y: 2 }).ok).toBe(true); // step down, adjacent to the ghost at (2,3)
-    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true); // hurt it, but it survives (3 - 2 = 1hp)
-    expect(engine.getSnapshot().monsters[0].hp).toBeGreaterThan(0);
+    expect(engine.useSkill(0, 'sword_qi', 'down').ok).toBe(true); // 2 damage + push 1 south into the wall = a collision kill
+    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
     // The lesson: there is no walking away from the swing — position IS the commitment.
     expect(engine.moveUnit(0, { x: 2, y: 1 })).toEqual({ ok: false, reason: 'already-acted' });
-    engine.endTurn(); // the ghost's telegraphed move (toward the base) resolves
-    // Finish the job next turn — reposition to line it up, then strike.
-    const ghost = engine.getSnapshot().monsters[0];
-    expect(engine.moveUnit(0, { x: ghost.position.x + 1, y: ghost.position.y }).ok).toBe(true);
-    expect(engine.useSkill(0, 'sword_qi', 'left').ok).toBe(true);
-    expect(engine.getSnapshot().monsters.every((m) => m.hp <= 0)).toBe(true);
     engine.endTurn();
     // Killing every monster is never victory by itself (A4) — this map's
     // totalTurns is well beyond the couple of turns this test spends, so the
