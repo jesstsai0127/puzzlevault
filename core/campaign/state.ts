@@ -1,4 +1,4 @@
-import { WORLD_STRUCTURE } from '../../content/registry';
+import { LESSON_MAP_IDS, WORLD_STRUCTURE } from '../../content/registry';
 
 /**
  * Campaign state layer — ITB alignment (2026-07-21).
@@ -119,6 +119,44 @@ export function isCampaignMap(mapId: string): boolean {
   return mapId === FINAL_MAP_ID;
 }
 
+/**
+ * Whether this launch is a genuine step of the standalone tutorial sequence.
+ *
+ * BOTH halves matter. `?tutorial=N` is player-editable and carries no proof
+ * that N belongs to the map it arrived with, so a URL like
+ * `?map=island4_m5&tutorial=0` used to make a real campaign mission behave
+ * like a tutorial step: wins auto-advanced without ever settling the
+ * campaign, losses replayed for free. Requiring the map to actually be a
+ * lesson map is what closes that.
+ */
+export function isTutorialStep(mapId: string, tutorialIndex: number | undefined): boolean {
+  return tutorialIndex !== undefined && LESSON_MAP_IDS.includes(mapId);
+}
+
+/**
+ * Whether a mid-mission "restart level" is offered for this map.
+ *
+ * ITB retry rules (2026-07-21 定案): never for a campaign mission — ITB has
+ * no mission restart, and offering one would refund the grid the mission has
+ * already cost. Lesson and standalone maps are practice and keep it.
+ */
+export function allowsLevelRestart(mapId: string): boolean {
+  return !isCampaignMap(mapId);
+}
+
+/**
+ * Whether the player may start `mapId` right now.
+ *
+ * The gate for the player-editable `?map=` param. Non-campaign maps (lessons,
+ * debug launches) are always allowed; campaign missions must be one the
+ * unlock rules currently offer, which also blocks re-entering a cleared
+ * mission and jumping ahead to a later island.
+ */
+export function canEnterMission(state: CampaignState, mapId: string): boolean {
+  if (!isCampaignMap(mapId)) return true;
+  return availableMissions(state).includes(mapId);
+}
+
 /** How many of the current island's regular missions are already cleared. */
 function clearedRegularCount(state: CampaignState, island: number): number {
   return regularMapIds(island).filter((id) => state.clearedMapIds.includes(id)).length;
@@ -154,57 +192,85 @@ export function availableMissions(state: CampaignState): string[] {
 }
 
 /**
- * Folds one finished mission into the campaign, returning a NEW state.
+ * Writes the base's CURRENT hp straight into the campaign grid — the single
+ * place grid damage is ever deducted.
  *
- * Grid arithmetic — the core of the whole layer:
+ * ITB retry rules (2026-07-21 定案): the grid is debited live, every turn,
+ * not settled at mission end. That is what makes "walk away from a mission
+ * that went badly and replay it" impossible: by the time the player could
+ * leave, the damage is already in the save. It costs no extra state — no
+ * in-progress flag, no mission-attempt record, nothing that could be left
+ * behind if the tab closes at the wrong moment.
  *
- *   damage = max(0, baseMaxHp - baseHpRemaining)
- *   gridHp = gridHp - damage   (then +1 if damage === 0 and the mission was won)
+ * Assignment, not subtraction: the mission runs with baseHpOverride = gridHp,
+ * so the base IS the grid for the duration and its hp is authoritative. It is
+ * assignment specifically so that resetTurn() — ITB's legal once-per-mission
+ * turn rewind, which restores baseHp along with the rest of the board — puts
+ * the grid back up too. Rewinding a turn must not leave the player charged
+ * for damage that no longer happened.
  *
- * The mission runs with baseHpOverride = gridHp, so baseHpRemaining IS the
- * surviving grid and `gridHp - damage` reduces to `baseHpRemaining`. The
- * subtraction form is kept anyway because it stays correct if a mission ever
- * runs on its own map.baseHp (a lesson map, a debug launch, a future mode
- * with a separate base) — it always transfers the DAMAGE, never the absolute
- * remainder, so a mismatched scale can't silently overwrite the campaign grid.
- *
- * The zero-damage +1 is the only grid recovery in the game (no bonus
- * objectives, no currency, no shop — deliberately the minimal version): the
- * grid is otherwise strictly monotonically decreasing, so the campaign has a
- * hard budget and a perfect mission is the only way to buy any of it back.
- * Capped at gridMax, and denied on defeat so that losing can never pay.
- *
- * A defeat still charges the damage taken. That is the point of the layer:
- * a wipe is not a free rewind, and retrying a mission costs grid every time.
+ * Reaching zero ends the campaign on the spot.
  */
-export function applyMissionResult(state: CampaignState, result: MissionResult): CampaignState {
-  const { mapId, outcome, baseHpRemaining, baseMaxHp } = result;
-  const damage = Math.max(0, baseMaxHp - baseHpRemaining);
-
-  let gridHp = state.gridHp - damage;
-  if (damage === 0 && outcome === 'victory') {
-    gridHp = Math.min(state.gridMax, gridHp + 1);
-  }
-  gridHp = Math.max(0, gridHp);
-
-  const next: CampaignState = {
+export function syncGridHp(state: CampaignState, baseHp: number): CampaignState {
+  const gridHp = Math.max(0, Math.min(state.gridMax, baseHp));
+  return {
     ...state,
     gridHp,
     clearedMapIds: [...state.clearedMapIds],
     bossCleared: [...state.bossCleared],
+    campaignOver: state.campaignOver || gridHp <= 0,
   };
+}
 
-  if (gridHp <= 0) {
-    // Grid exhausted — the whole campaign ends here regardless of whether
-    // this particular mission was technically won. Progress is frozen as-is;
+/**
+ * Settles a FINISHED mission into the campaign, returning a NEW state.
+ *
+ * Since the 2026-07-21 live-sync change this is no longer where grid damage
+ * is deducted — syncGridHp() above already did that, turn by turn. What is
+ * left here is everything that can only be known once the mission is over:
+ *
+ *  - the zero-damage +1 (you cannot tell a mission was flawless until it
+ *    ends, so this one reward stays deferred),
+ *  - recording the clear,
+ *  - advancing the island when a boss falls.
+ *
+ * It still opens by calling syncGridHp(state, baseHpRemaining), which is
+ * idempotent against the live sync — the last endTurn already wrote this
+ * exact number — and keeps this function correct on its own for tests and
+ * for any caller that did not sync live. There is deliberately only ONE
+ * deduction path, so the two cannot drift apart.
+ *
+ * The zero-damage +1 is the only grid recovery in the game (no bonus
+ * objectives, no currency, no shop — deliberately the minimal version), and
+ * it is fenced three ways: victory only, capped at gridMax, and **first
+ * clear only**. Without that last condition a cleared mission could be
+ * re-entered by URL and farmed for +1 at will, which would destroy the whole
+ * premise of a monotonically shrinking campaign budget.
+ *
+ * A defeat still costs whatever the base took. That is the point of the
+ * layer: a wipe is not a free rewind, and a retry is charged every time.
+ */
+export function applyMissionResult(state: CampaignState, result: MissionResult): CampaignState {
+  const { mapId, outcome, baseHpRemaining, baseMaxHp } = result;
+  const damage = Math.max(0, baseMaxHp - baseHpRemaining);
+  const alreadyCleared = state.clearedMapIds.includes(mapId);
+
+  const next = syncGridHp(state, baseHpRemaining);
+
+  if (next.campaignOver) {
+    // Grid exhausted — the campaign ends here regardless of whether this
+    // particular mission was technically won. Progress freezes as-is;
     // LevelSelectScene offers a restart, which discards this state entirely.
-    next.campaignOver = true;
     return next;
   }
 
   if (outcome !== 'victory') return next;
 
-  if (!next.clearedMapIds.includes(mapId)) next.clearedMapIds.push(mapId);
+  if (damage === 0 && !alreadyCleared) {
+    next.gridHp = Math.min(next.gridMax, next.gridHp + 1);
+  }
+
+  if (!alreadyCleared) next.clearedMapIds.push(mapId);
 
   // Clearing the island boss closes the island and advances to the next one
   // (or past ISLAND_COUNT, which is what unlocks the final battle).
