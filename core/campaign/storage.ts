@@ -1,4 +1,4 @@
-import { type CampaignState, newCampaign } from './state';
+import { type CampaignState, ISLAND_COUNT, newCampaign } from './state';
 
 /**
  * localStorage persistence for the campaign grid.
@@ -38,21 +38,41 @@ function safeStorage(): Storage | null {
   }
 }
 
-/** Whether the parsed blob is a structurally valid current-version CampaignState. */
+/**
+ * Whether the parsed blob is a valid current-version CampaignState.
+ *
+ * Checks the range invariants the rest of the layer assumes, not just types:
+ * a hand-edited `gridHp: 9999`, or a `bossCleared` array that no longer lines
+ * up with ISLAND_COUNT, would otherwise load verbatim and quietly produce
+ * wrong unlock behaviour. This is not anti-cheat — anyone with devtools can
+ * write a perfectly *valid* blob saying whatever they like — it is so that a
+ * corrupt or stale save fails cleanly into a fresh campaign instead of a
+ * subtly broken one.
+ */
 function isValid(value: unknown): value is CampaignState {
   if (typeof value !== 'object' || value === null) return false;
   const s = value as Record<string, unknown>;
-  return (
-    s.schemaVersion === SCHEMA_VERSION &&
-    typeof s.gridHp === 'number' &&
-    typeof s.gridMax === 'number' &&
-    typeof s.islandIndex === 'number' &&
-    typeof s.campaignOver === 'boolean' &&
-    Array.isArray(s.clearedMapIds) &&
-    s.clearedMapIds.every((id) => typeof id === 'string') &&
-    Array.isArray(s.bossCleared) &&
-    s.bossCleared.every((b) => typeof b === 'boolean')
-  );
+  if (s.schemaVersion !== SCHEMA_VERSION) return false;
+  if (typeof s.campaignOver !== 'boolean') return false;
+  if (typeof s.gridMax !== 'number' || !Number.isInteger(s.gridMax) || s.gridMax <= 0) return false;
+  if (typeof s.gridHp !== 'number' || !Number.isInteger(s.gridHp) || s.gridHp < 0 || s.gridHp > s.gridMax) return false;
+  if (
+    typeof s.islandIndex !== 'number' ||
+    !Number.isInteger(s.islandIndex) ||
+    s.islandIndex < 0 ||
+    s.islandIndex > ISLAND_COUNT
+  ) {
+    return false;
+  }
+  if (!Array.isArray(s.clearedMapIds) || !s.clearedMapIds.every((id) => typeof id === 'string')) return false;
+  if (
+    !Array.isArray(s.bossCleared) ||
+    s.bossCleared.length !== ISLAND_COUNT ||
+    !s.bossCleared.every((b) => typeof b === 'boolean')
+  ) {
+    return false;
+  }
+  return true;
 }
 
 /** Reads the saved campaign, falling back to a brand-new one on absent/corrupt/wrong-version data. */
