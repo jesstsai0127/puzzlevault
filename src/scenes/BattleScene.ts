@@ -984,7 +984,9 @@ export class BattleScene extends Phaser.Scene {
     }
 
     // A heal skill's engine-side resolveTarget() only ever lands on a living
-    // ally (see engine.ts's `targetsAllies` search) — never a monster. Mirror
+    // ally (heal maps to the 'allies' SideFilter — see sideFilterForEffect()
+    // in engine.ts) — never a monster, and never the friendly-fire 'any'
+    // path that damage and push effects take. Mirror
     // that restriction here so a player can't even AIM a heal at a direction
     // that has no ally in it (which would either hit nothing or, if the UI
     // didn't restrict it, look aimable at a monster it can never actually
