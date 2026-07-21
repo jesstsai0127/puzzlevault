@@ -168,7 +168,9 @@ export class BattleEngine {
     this.squadCharacterIds = squadCharacterIds;
     this.baseTiles = this.computeBaseTiles(map);
     this.baseMaxHp = opts?.baseHpOverride ?? map.baseHp;
-    this.spawnPool = (map.spawnPool ?? this.derivedSpawnPool(map)).map((t) => ({ ...t }));
+    // No fallback: a map must declare its own spawnPool to get reinforcements.
+    // See MapDef.spawnPool for why deriving one from spawnSchedule was removed.
+    this.spawnPool = (map.spawnPool ?? []).map((t) => ({ ...t }));
     this.reinforcementRoster = this.derivedReinforcementRoster(map);
     // Default 0 = loop inert. A map opts in by declaring these two numbers;
     // see MapDef.targetPopulation for why the default is off rather than
@@ -176,27 +178,6 @@ export class BattleEngine {
     this.targetPopulation = map.targetPopulation ?? 0;
     this.totalSpawnBudget = map.totalSpawnBudget ?? 0;
     this.resetRun();
-  }
-
-  /**
-   * Where reinforcements emerge when the map didn't declare a `spawnPool`:
-   * the tiles the author already chose for this map's scripted emergences,
-   * deduped, in declaration order. Reusing them is deliberate — those tiles
-   * are already validated as walkable, already sit where the author wanted
-   * pressure to come from, and are already the tiles the player has learned
-   * to watch. A map with no spawnSchedule (the lesson levels) yields an empty
-   * pool and therefore never reinforces.
-   */
-  private derivedSpawnPool(map: MapDef): Vec2[] {
-    const seen = new Set<string>();
-    const pool: Vec2[] = [];
-    for (const entry of map.spawnSchedule) {
-      const key = `${entry.tile.x},${entry.tile.y}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      pool.push(entry.tile);
-    }
-    return pool;
   }
 
   /**
@@ -479,13 +460,6 @@ export class BattleEngine {
     this.turnNumber += 1;
     this.monsters = this.monsters.filter((m) => m.hp > 0);
     this.resolveScheduledSpawns(endingTurn);
-    // Population feedback runs LAST, on the settled board: after the sweep and
-    // after this turn's emergences have landed, so it counts the monsters that
-    // genuinely survived into the next turn and never double-counts one it
-    // telegraphed a turn ago. It telegraphs for `turnNumber` (already
-    // incremented above) — i.e. the turn about to start, resolving one turn
-    // from now. See resolvePopulationReinforcement().
-    this.resolvePopulationReinforcement();
 
     if (this.baseHp <= 0) {
       // Freeze right here on the position that killed the base — the board
@@ -515,6 +489,16 @@ export class BattleEngine {
       this.pendingOutcome = 'victory';
       this.currentIntents = [];
     } else {
+      // Population feedback runs on the settled board — after the corpse
+      // sweep and after this turn's emergences landed, so it counts the
+      // monsters that genuinely survived into the next turn and never
+      // double-counts one it telegraphed a turn ago. It sits down here, past
+      // every outcome branch, so a turn that ended the run doesn't telegraph
+      // reinforcements onto a frozen board nobody will ever play: no
+      // observable harm either way (the run is over), just no dead marker.
+      // It telegraphs for `turnNumber` (already incremented above) — the turn
+      // about to start, resolving one turn from now.
+      this.resolvePopulationReinforcement();
       // Continue: every turn is a fresh round regardless — each living
       // unit's moved/acted flags reset here.
       this.startFreshTurn();
@@ -707,19 +691,28 @@ export class BattleEngine {
 
   /**
    * The next usable tile from `spawnPool`, advancing the cursor. Skips tiles
-   * already telegraphed for the same turn (two reinforcements can't emerge on
-   * one tile — the second would just be "blocked" by the first) and tiles a
-   * monster is currently standing on (that spawn would be wasted on the
-   * blocker rule). A player standing on a pool tile is NOT skipped: denying
-   * the emergence by body-blocking it is exactly the play the block rule is
-   * there to reward, and skipping it would quietly route the monster around
-   * the player instead. Returns null when no pool tile qualifies.
+   * already telegraphed for the same turn and tiles a monster is currently
+   * standing on (that spawn would be wasted on the blocker rule).
+   *
+   * The already-telegraphed check spans BOTH emergence sources — this run's
+   * `dynamicSpawns` AND the map's authored `spawnSchedule`. Missing the
+   * latter is not a corner case: an author is free to put a pool tile on a
+   * scripted emergence tile, and when that happened the turn drew two
+   * overlapping ⚠ markers on one tile, then had the later spawn treat the
+   * monster the earlier one had just produced as a "blocker" — spending
+   * budget, adding no monster, and docking that monster
+   * EMERGENCE_BLOCK_DAMAGE for the privilege.
+   *
+   * A player standing on a pool tile is NOT skipped: denying the emergence by
+   * body-blocking it is exactly the play the block rule is there to reward,
+   * and skipping it would quietly route the monster around the player
+   * instead. Returns null when no pool tile qualifies.
    */
   private nextReinforcementTile(): Vec2 | null {
     for (let attempt = 0; attempt < this.spawnPool.length; attempt++) {
       const tile = this.spawnPool[this.spawnPoolCursor % this.spawnPool.length];
       this.spawnPoolCursor += 1;
-      const alreadyTelegraphed = this.dynamicSpawns.some(
+      const alreadyTelegraphed = this.allSpawnEntries().some(
         (e) => e.telegraphTurn === this.turnNumber && equalsVec2(e.tile, tile),
       );
       const monsterOnTile = this.monsters.some((m) => m.hp > 0 && equalsVec2(m.position, tile));
