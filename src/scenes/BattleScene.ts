@@ -8,6 +8,8 @@ import { STARTING_SQUAD, DEFAULT_MAP_ID, LESSON_MAP_IDS, maps, registry } from '
 import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
 import { levelSelectUrl, tutorialStepUrl } from './levelNav';
+import { applyMissionResult, isCampaignMap, newCampaign, type CampaignState } from '../../core/campaign/state';
+import { loadCampaign, saveCampaign } from '../../core/campaign/storage';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
 
@@ -184,6 +186,15 @@ export class BattleScene extends Phaser.Scene {
   private pendingSteps: Array<{ x: number; y: number }> = [];
   /** ITB alignment (2026-07-17): set when this map is being played as a step of the standalone tutorial sequence (LESSON_MAP_IDS) — see handleConfirmOutcome()'s auto-advance. Undefined for every normal level. */
   private tutorialIndex?: number;
+  /**
+   * The campaign run this mission is played inside of (ITB alignment,
+   * 2026-07-21). Loaded fresh in init(): level switching is a real page
+   * navigation, so every mission gets a new BattleScene in a new document
+   * and localStorage is the only thing carrying the grid between them.
+   * Its gridHp becomes this mission's base HP — see create() — and the
+   * result is folded back in by handleConfirmOutcome().
+   */
+  private campaign: CampaignState = newCampaign();
 
   constructor() {
     super('BattleScene');
@@ -205,6 +216,7 @@ export class BattleScene extends Phaser.Scene {
   init(data: { mapId?: string; tutorialIndex?: number }) {
     this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
     this.tutorialIndex = data.tutorialIndex;
+    this.campaign = loadCampaign();
     this.tileHighlights = [];
     this.monsterSprites = new Map();
     this.monsterHpBars = new Map();
@@ -229,7 +241,30 @@ export class BattleScene extends Phaser.Scene {
     // A map can declare its own squad (e.g. demo4's 3-hero roster) — falls
     // back to the game's default 2-hero squad when it doesn't, so existing
     // maps need no changes. See MapDef.squadCharacterIds.
-    this.engine = new BattleEngine(this.map, this.map.squadCharacterIds ?? STARTING_SQUAD, registry);
+    // ITB alignment (2026-07-21): a campaign mission does not get its own
+    // fresh pool of base HP — it runs on whatever is left of the single
+    // campaign-wide grid, so damage taken here is still missing next
+    // mission. Non-campaign maps (lesson_*, direct debug launches) keep
+    // their own map.baseHp and never touch the run. The dead-campaign guard
+    // matters because a stale ?map= URL can reach this with gridHp 0, which
+    // would otherwise start a battle that is lost before the first turn.
+    const onCampaignGrid = isCampaignMap(this.map.id) && !this.campaign.campaignOver;
+    // TEMPORARY (remove when agent B's engine change lands): BattleEngine's
+    // 4th `opts` parameter with baseHpOverride is the agreed contract but is
+    // not in core/battle/engine.ts yet, so this cast is what keeps tsc green
+    // without editing engine.ts from this branch. Drop the cast once merged.
+    const EngineCtor = BattleEngine as unknown as new (
+      map: MapDef,
+      squadCharacterIds: string[],
+      registry: typeof import('../../content/registry').registry,
+      opts?: { baseHpOverride?: number },
+    ) => BattleEngine;
+    this.engine = new EngineCtor(
+      this.map,
+      this.map.squadCharacterIds ?? STARTING_SQUAD,
+      registry,
+      onCampaignGrid ? { baseHpOverride: this.campaign.gridHp } : undefined,
+    );
 
     // Left-align the board so the right side has a wide column for the rules panel.
     this.offsetX = 40;
@@ -784,13 +819,36 @@ export class BattleScene extends Phaser.Scene {
    * win auto-advances to the next step (or back to level select after the
    * last one) instead of just resetting this same map — read BEFORE calling
    * engine.confirmOutcome(), since that call clears the outcome.
+   *
+   * ITB alignment (2026-07-21): a campaign mission no longer replays itself
+   * in place on either result. Win or lose, the grid damage is banked into
+   * the campaign save and the player is returned to level select, where the
+   * unlock rules decide what is playable next (and a dead grid shows the
+   * campaign-over screen). Replaying to erase a bad result is exactly the
+   * consequence-free loop the carried grid exists to remove.
    */
   private handleConfirmOutcome() {
-    const outcome = this.engine.getSnapshot().outcome;
+    const snapshot = this.engine.getSnapshot();
+    const outcome = snapshot.outcome;
     if (this.tutorialIndex !== undefined && outcome === 'victory') {
       const nextIndex = this.tutorialIndex + 1;
       window.location.href =
         nextIndex < LESSON_MAP_IDS.length ? tutorialStepUrl(LESSON_MAP_IDS, nextIndex) : levelSelectUrl();
+      return;
+    }
+
+    // Tutorial steps stay outside the campaign entirely (a tutorial loss
+    // still just resets, as before), and so do non-campaign maps.
+    if (this.tutorialIndex === undefined && outcome && isCampaignMap(this.map.id) && !this.campaign.campaignOver) {
+      saveCampaign(
+        applyMissionResult(this.campaign, {
+          mapId: this.map.id,
+          outcome,
+          baseHpRemaining: snapshot.baseHp,
+          baseMaxHp: snapshot.baseMaxHp,
+        }),
+      );
+      window.location.href = levelSelectUrl();
       return;
     }
     this.engine.confirmOutcome();
