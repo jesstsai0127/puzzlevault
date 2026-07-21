@@ -127,5 +127,12 @@
   "ui.difficulty_hard": "困難",
   "ui.lesson_label": "【小關】",
   "ui.tutorial_entry": "教學",
-  "ui.tutorial_progress": "教學 {n}/{total}"
+  "ui.tutorial_progress": "教學 {n}/{total}",
+  "ui.campaign_grid": "電網",
+  "ui.campaign_grid_hint": "整個戰役共用一條，歸零即戰役結束。",
+  "ui.campaign_cleared": "已完成",
+  "ui.campaign_locked": "未解鎖",
+  "ui.campaign_over": "戰役結束——電網已崩潰",
+  "ui.campaign_won": "戰役完成",
+  "ui.campaign_restart": "重新開始戰役"
 }
