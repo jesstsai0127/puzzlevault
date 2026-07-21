@@ -2764,10 +2764,9 @@ describe('BattleEngine: dynamic population feedback loop', () => {
   }
 
   it('is INERT for a map that declares none of the three fields — the 21 shipped maps keep their exact old behavior', () => {
-    // Deliberately keeps a spawnSchedule (so a pool would be DERIVED from it)
-    // but declares no targetPopulation/totalSpawnBudget: the loop must still
-    // never fire. This is the backward-compatibility guarantee that let the
-    // feature ship without editing a single existing map JSON.
+    // Deliberately keeps a spawnSchedule but declares none of the three loop
+    // fields: the loop must still never fire. This is the backward-compat
+    // guarantee that let the feature ship without editing a single map JSON.
     const map: MapDef = {
       ...twoWaveMap(),
       initialMonsters: [],
@@ -2940,5 +2939,90 @@ describe('BattleEngine: dynamic population feedback loop', () => {
     engine.endTurn(); // end of turn 2 -> turn 3 is past totalTurns, so nothing is telegraphed
 
     expect(engine.getSnapshot().outcome).toBe('victory');
+  });
+  it('never reinforces without an explicitly declared spawnPool, however generous the other two numbers', () => {
+    // The spawnSchedule-derived pool fallback was removed: it produced a
+    // 1-tile pool on all but three campaign maps (0 on the lesson maps), so
+    // the per-turn cap was structurally unreachable and reinforcement never
+    // changed an outcome — while making scripted/dynamic emergences collide
+    // by default. A map now opts in explicitly or not at all.
+    const map = populationMap({
+      spawnPool: undefined,
+      targetPopulation: 5,
+      totalSpawnBudget: 99,
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    for (let i = 0; i < 8; i++) {
+      engine.endTurn();
+      expect(engine.getSnapshot().pendingSpawnTiles).toEqual([]);
+    }
+    expect(engine.getSnapshot().monsters).toHaveLength(1); // only the one it started with
+  });
+
+  it('never double-books a tile the authored spawnSchedule already telegraphed for the same turn', () => {
+    // Regression: the same-turn check used to scan only this run's dynamic
+    // entries, not the map's own script. An author putting a pool tile on a
+    // scripted emergence tile got two overlapping warning glyphs on one tile,
+    // and the later spawn treated the monster the earlier one had just
+    // produced as a blocker — burning budget, adding no monster, and docking
+    // that monster EMERGENCE_BLOCK_DAMAGE for its trouble.
+    const map = populationMap({
+      initialMonsters: [],
+      spawnSchedule: [{ telegraphTurn: 2, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      spawnPool: [{ x: 6, y: 1 }, { x: 6, y: 2 }], // pool tile 0 collides with the script
+      targetPopulation: 4,
+      totalSpawnBudget: 99,
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    engine.endTurn(); // end of turn 1 -> everything telegraphed for turn 2
+
+    const pending = engine.getSnapshot().pendingSpawnTiles;
+    const keys = pending.map((t) => `${t.x},${t.y}`);
+    expect(new Set(keys).size).toBe(keys.length); // no tile telegraphed twice
+    expect(keys).toContain('6,1'); // the authored entry, exactly once
+    expect(keys).toContain('6,2'); // the loop stepped past the collision
+
+    engine.endTurn(); // both resolve
+    const snap = engine.getSnapshot();
+    // Two real monsters on two distinct tiles — not one monster plus a
+    // self-inflicted block hit.
+    expect(snap.monsters).toHaveLength(2);
+    expect(snap.monsters.every((m) => m.hp === m.maxHp)).toBe(true);
+  });
+
+  it('reaches PER_TURN_SPAWN_CAP on a properly sized pool, and sustains it across turns', () => {
+    // The contract spawnPool's doc states: a pool must be comfortably larger
+    // than the per-turn cap, because occupied and already-telegraphed tiles
+    // are skipped. 4+ is the working floor. This is the proof the mechanism
+    // is genuinely alive once a map is authored to the contract.
+    const map = populationMap({
+      initialMonsters: [],
+      spawnSchedule: [{ telegraphTurn: AMPLE_TURNS, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      spawnPool: [
+        { x: 6, y: 1 },
+        { x: 6, y: 2 },
+        { x: 5, y: 1 },
+        { x: 5, y: 2 },
+      ],
+      targetPopulation: 6,
+      totalSpawnBudget: 99,
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    const perTurn: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      engine.endTurn();
+      perTurn.push(engine.getSnapshot().pendingSpawnTiles.length);
+    }
+
+    // The cap is actually reached, not merely permitted...
+    expect(Math.max(...perTurn)).toBe(2);
+    // ...and reinforcement keeps arriving turn after turn rather than
+    // sealing itself off after the first wave.
+    expect(perTurn.filter((n) => n > 0).length).toBeGreaterThanOrEqual(3);
+    // The board really does climb toward targetPopulation.
+    expect(engine.getSnapshot().monsters.length).toBeGreaterThanOrEqual(4);
   });
 });
