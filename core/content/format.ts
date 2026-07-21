@@ -223,6 +223,38 @@ export function validateMapDef(def: MapDef): string[] {
     });
   }
 
+  // Dynamic population loop (all three optional — an existing map that
+  // declares none of them still gets the loop via engine-side defaults
+  // derived from spawnSchedule/initialMonsters; see MapDef's doc comments).
+  if (def.spawnPool !== undefined) {
+    if (!Array.isArray(def.spawnPool)) {
+      problems.push('spawnPool, if present, must be an array of tiles');
+    } else {
+      def.spawnPool.forEach((tile: Vec2, si: number) => {
+        if (!isWalkable(tile)) {
+          problems.push(`spawnPool ${si}: tile (${tile.x},${tile.y}) not walkable`);
+        }
+      });
+    }
+  }
+  if (def.targetPopulation !== undefined && !(Number.isInteger(def.targetPopulation) && def.targetPopulation >= 0)) {
+    problems.push('targetPopulation, if present, must be a non-negative integer');
+  }
+  if (def.totalSpawnBudget !== undefined && !(Number.isInteger(def.totalSpawnBudget) && def.totalSpawnBudget >= 0)) {
+    problems.push('totalSpawnBudget, if present, must be a non-negative integer');
+  }
+  // A budget with nowhere to put the monsters is a content authoring mistake,
+  // not a silently-inert setting — but only flag it when the map explicitly
+  // asked for reinforcements it can't deliver.
+  if (
+    def.totalSpawnBudget !== undefined &&
+    def.totalSpawnBudget > 0 &&
+    Array.isArray(def.spawnPool) &&
+    def.spawnPool.length === 0
+  ) {
+    problems.push('totalSpawnBudget > 0 but spawnPool is empty — reinforcements have nowhere to emerge');
+  }
+
   if (
     Array.isArray(def.initialMonsters) &&
     def.initialMonsters.length === 0 &&
