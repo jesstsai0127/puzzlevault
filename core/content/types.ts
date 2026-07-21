@@ -168,11 +168,26 @@ export interface MapDef {
    * random: this game is full-information / zero-luck, so the same board must
    * always produce the same reinforcement.
    *
-   * OPTIONAL. When omitted the engine derives a pool from the map's own
-   * `spawnSchedule` tiles (deduped, in declaration order), so every existing
-   * map gets the loop without editing its JSON. A map with neither an
-   * explicit pool nor a spawnSchedule (the lesson levels) simply never
-   * reinforces — the derived pool is empty and the loop is inert.
+   * THIS MUST BE DESIGNED PER MAP, AND IT MUST BE BIG ENOUGH. The loop skips
+   * candidates already telegraphed this turn or already occupied by a
+   * monster, so a pool needs strictly MORE entries than PER_TURN_SPAWN_CAP
+   * (2) to reliably reach the per-turn cap — 4+ is the working floor. A
+   * 1-tile pool can never deliver two reinforcements in one turn, and a
+   * single body parked on it seals the level's reinforcements completely.
+   * This is NOT "reuse the hand-placed emergence tiles".
+   *
+   * OPTIONAL, and there is deliberately NO fallback: a map without an
+   * explicit pool has no pool, and the loop stays inert.
+   *
+   * An earlier version derived the pool from the map's `spawnSchedule` tiles.
+   * It was removed for two reasons. It did not work: every campaign map but
+   * three derived a 1-tile pool (lesson maps derived 0), making the per-turn
+   * cap structurally unreachable on 19 of 21 maps, and reinforcement
+   * measurably never changed a single mission outcome at any parameter
+   * setting. And it was harmful: it made scripted and dynamic emergences
+   * collide on the same tile BY DEFAULT rather than by accident, and it
+   * advertised a finished mechanism that no amount of content tuning could
+   * actually switch on.
    */
   spawnPool?: Vec2[];
   /**
