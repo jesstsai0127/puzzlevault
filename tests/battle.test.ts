@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BattleEngine } from '../core/battle/engine';
 import type { ContentRegistry } from '../core/battle/types';
 import type { CharacterDef, MapDef, MonsterDef, SkillDef } from '../core/content/types';
+import type { Vec2 } from '../core/geometry';
 
 const strike: SkillDef = {
   formatVersion: 1,
@@ -2702,5 +2703,242 @@ describe('BattleEngine: exact intent telegraphs (A2 — live strike tiles + atta
     // Same turn, repeated call: identical list — the telegraph is stable.
     const second = engine.getIntents();
     expect(second).toEqual(first);
+  });
+});
+
+describe('BattleEngine: constructor baseHpOverride', () => {
+  it('replaces the map\'s own baseHp as the battle\'s pool, and resetLevel() restores THAT value (not the map\'s)', () => {
+    const map = twoWaveMap(); // baseHp: 8
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry, { baseHpOverride: 3 });
+
+    const snap = engine.getSnapshot();
+    expect(snap.baseHp).toBe(3);
+    expect(snap.baseMaxHp).toBe(3); // the override IS the max, not a starting dent below 8
+
+    // Reset semantics WITHIN a battle are unchanged: back to what this battle
+    // started with, which is the override — a campaign's carried-over damage
+    // must not heal itself just because the player restarted the level.
+    engine.resetLevel();
+    expect(engine.getSnapshot().baseHp).toBe(3);
+  });
+
+  it('omitting opts entirely reproduces the 3-argument behavior exactly', () => {
+    const map = twoWaveMap();
+    const withoutOpts = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+    const withEmptyOpts = new BattleEngine(map, ['li_yan', 'su_qing'], registry, {});
+
+    expect(withoutOpts.getSnapshot().baseHp).toBe(map.baseHp);
+    expect(withoutOpts.getSnapshot().baseMaxHp).toBe(map.baseHp);
+    expect(withEmptyOpts.getSnapshot()).toEqual(withoutOpts.getSnapshot());
+  });
+});
+
+describe('BattleEngine: dynamic population feedback loop', () => {
+  // An arena whose only monster is trivially killable, so a test can empty the
+  // board on turn 1 and watch the loop react to the vacuum.
+  function populationMap(overrides: Partial<MapDef> = {}): MapDef {
+    return {
+      formatVersion: 1,
+      id: 'test-population',
+      nameKey: 'map.testpopulation.name',
+      grid,
+      baseHp: 8,
+      playerStarts: [
+        { x: 1, y: 1 },
+        { x: 1, y: 2 },
+      ],
+      initialMonsters: [{ monsterId: 'yin_ghost', spawn: { x: 2, y: 1 } }],
+      // `spawnPool` is tiles-only by contract (it answers "where", not
+      // "what"), so the loop derives WHICH monster to send from the ids the
+      // map already names — its spawnSchedule first, else its initialMonsters.
+      // This entry is parked far past every test's horizon: it never fires,
+      // it exists so the variants below that clear `initialMonsters` still
+      // have a roster to draw from.
+      spawnSchedule: [{ telegraphTurn: AMPLE_TURNS, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+      totalTurns: AMPLE_TURNS,
+      spawnPool: [{ x: 6, y: 1 }, { x: 6, y: 2 }],
+      targetPopulation: 2,
+      totalSpawnBudget: 4,
+      ...overrides,
+    };
+  }
+
+  it('is INERT for a map that declares none of the three fields — the 21 shipped maps keep their exact old behavior', () => {
+    // Deliberately keeps a spawnSchedule (so a pool would be DERIVED from it)
+    // but declares no targetPopulation/totalSpawnBudget: the loop must still
+    // never fire. This is the backward-compatibility guarantee that let the
+    // feature ship without editing a single existing map JSON.
+    const map: MapDef = {
+      ...twoWaveMap(),
+      initialMonsters: [],
+      spawnSchedule: [{ telegraphTurn: 1, monsterId: 'yin_ghost', tile: { x: 6, y: 1 } }],
+    };
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    engine.endTurn(); // the scripted entry fires...
+    expect(engine.getSnapshot().monsters).toHaveLength(1);
+    // ...and nothing else ever does, however long the board sits below any
+    // population an opted-in map would have wanted.
+    for (let i = 0; i < 6; i++) engine.endTurn();
+    expect(engine.getSnapshot().monsters).toHaveLength(1);
+    expect(engine.getSnapshot().pendingSpawnTiles).toEqual([]);
+  });
+
+  it('refills toward targetPopulation when the board falls below it — clearing the grid is not a stable state', () => {
+    const engine = new BattleEngine(populationMap(), ['li_yan', 'su_qing'], registry);
+    expect(engine.getSnapshot().monsters).toHaveLength(1); // 1 alive, target is 2
+
+    engine.endTurn(); // end of turn 1: deficit of 1 -> telegraph one reinforcement for turn 2
+    const afterT1 = engine.getSnapshot();
+    expect(afterT1.monsters).toHaveLength(1); // NOT spawned yet — only telegraphed
+    expect(afterT1.pendingSpawnTiles).toEqual([{ x: 6, y: 1 }]); // first pool tile
+
+    engine.endTurn(); // end of turn 2: it emerges
+    expect(engine.getSnapshot().monsters).toHaveLength(2); // back up to target
+  });
+
+  it('always telegraphs a full turn ahead — a reinforcement never appears on the turn it was decided', () => {
+    const engine = new BattleEngine(populationMap(), ['li_yan', 'su_qing'], registry);
+    const before = engine.getSnapshot().monsters.length;
+
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    // The decision was made during this endTurn, yet the count is unchanged
+    // and the player is looking at a warning glyph they get a whole turn to
+    // answer (stand on it to deny the spawn, or clear room to fight it).
+    expect(snap.monsters).toHaveLength(before);
+    expect(snap.pendingSpawnTiles.length).toBeGreaterThan(0);
+  });
+
+  it('never exceeds PER_TURN_SPAWN_CAP (2) in one turn, however large the deficit', () => {
+    const map = populationMap({
+      initialMonsters: [],
+      targetPopulation: 5,
+      totalSpawnBudget: 99,
+      spawnPool: [{ x: 6, y: 1 }, { x: 6, y: 2 }, { x: 5, y: 1 }, { x: 5, y: 2 }, { x: 4, y: 1 }],
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    engine.endTurn(); // deficit of 5, but the per-turn cap allows only 2
+    expect(engine.getSnapshot().pendingSpawnTiles).toHaveLength(2);
+  });
+
+  it('totalSpawnBudget is a hard lifetime ceiling — the loop stops for good once it is spent', () => {
+    const map = populationMap({
+      initialMonsters: [],
+      targetPopulation: 4,
+      totalSpawnBudget: 3, // deliberately not a multiple of the per-turn cap
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    // Run far past the point where the deficit alone would keep asking for more.
+    for (let i = 0; i < 10; i++) engine.endTurn();
+
+    // Exactly 3 monsters were ever produced by the loop, never a 4th, even
+    // though the board stayed below targetPopulation the whole time.
+    expect(engine.getSnapshot().monsters).toHaveLength(3);
+    expect(engine.getSnapshot().pendingSpawnTiles).toEqual([]);
+  });
+
+  it('walks spawnPool in declaration order with wraparound — no RNG anywhere', () => {
+    const map = populationMap({
+      initialMonsters: [],
+      targetPopulation: 3, // a standing deficit, so the cursor keeps being asked for tiles
+      totalSpawnBudget: 4,
+      spawnPool: [{ x: 6, y: 1 }, { x: 6, y: 2 }],
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    const perTurn: Vec2[][] = [];
+    for (let i = 0; i < 3; i++) {
+      engine.endTurn();
+      perTurn.push(engine.getSnapshot().pendingSpawnTiles);
+    }
+
+    // Turn 1: both pool tiles, in declaration order (never shuffled).
+    expect(perTurn[0]).toEqual([{ x: 6, y: 1 }, { x: 6, y: 2 }]);
+    // Turn 2: those two have just emerged and are standing on both pool
+    // tiles, so every candidate is occupied — the loop telegraphs nothing
+    // rather than wasting a spawn on the blocker rule.
+    expect(perTurn[1]).toEqual([]);
+    // Turn 3: the ghosts have walked off toward the players, and the cursor
+    // has WRAPPED back to the head of the pool.
+    expect(perTurn[2]).toEqual([{ x: 6, y: 1 }]);
+  });
+
+  it('is fully deterministic: two engines given identical input produce byte-identical boards', () => {
+    const play = (): string => {
+      const engine = new BattleEngine(populationMap(), ['li_yan', 'su_qing'], registry);
+      const log: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        engine.endTurn();
+        const snap = engine.getSnapshot();
+        log.push(
+          JSON.stringify({
+            monsters: snap.monsters.map((m) => ({ id: m.instanceId, pos: m.position, hp: m.hp })),
+            pending: snap.pendingSpawnTiles,
+            baseHp: snap.baseHp,
+          }),
+        );
+      }
+      return log.join('|');
+    };
+
+    // Zero luck is load-bearing for this game: the same board and the same
+    // actions must always produce the same reinforcements, or a "reset and
+    // retry" would face a different level than the attempt that just failed.
+    expect(play()).toBe(play());
+  });
+
+  it('a run reset replays the identical reinforcement sequence from a clean cursor', () => {
+    const engine = new BattleEngine(populationMap(), ['li_yan', 'su_qing'], registry);
+    engine.endTurn();
+    const firstTelegraph = engine.getSnapshot().pendingSpawnTiles;
+
+    engine.resetLevel();
+    engine.endTurn();
+
+    expect(engine.getSnapshot().pendingSpawnTiles).toEqual(firstTelegraph);
+  });
+
+  it('a reinforcement is blocked by a body on its tile exactly like a scripted emergence, and the denied spawn does not come back', () => {
+    const map = populationMap({
+      initialMonsters: [],
+      // Hero 0 starts one step from the pool tile, so it can be standing on
+      // the marker when the reinforcement telegraphed on turn 1 resolves at
+      // the end of turn 2.
+      playerStarts: [{ x: 5, y: 1 }, { x: 1, y: 2 }],
+      targetPopulation: 1,
+      totalSpawnBudget: 1, // the loop's single shot
+      spawnPool: [{ x: 6, y: 1 }],
+    });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    engine.endTurn(); // telegraphs the one reinforcement for turn 2
+    expect(engine.getSnapshot().pendingSpawnTiles).toEqual([{ x: 6, y: 1 }]);
+
+    // Walk a hero onto the marked tile to deny the emergence.
+    expect(engine.moveUnit(0, { x: 6, y: 1 }).ok).toBe(true);
+    const hpBefore = engine.getSnapshot().players[0].hp;
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.monsters).toHaveLength(0); // denied outright — no monster, no ambush
+    expect(snap.players[0].hp).toBe(hpBefore - 1); // the flat EMERGENCE_BLOCK_DAMAGE
+    // Budget is spent at telegraph time, so blocking is a PERMANENT win: the
+    // loop has nothing left to send even though the board is still empty.
+    for (let i = 0; i < 5; i++) engine.endTurn();
+    expect(engine.getSnapshot().monsters).toHaveLength(0);
+  });
+
+  it('does not telegraph past the mission clock — a won board never shows a pointless warning glyph', () => {
+    const map = populationMap({ totalTurns: 2 });
+    const engine = new BattleEngine(map, ['li_yan', 'su_qing'], registry);
+
+    engine.endTurn(); // end of turn 1 -> may telegraph for turn 2
+    engine.endTurn(); // end of turn 2 -> turn 3 is past totalTurns, so nothing is telegraphed
+
+    expect(engine.getSnapshot().outcome).toBe('victory');
   });
 });
