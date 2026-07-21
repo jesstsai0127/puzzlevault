@@ -295,18 +295,25 @@ function playUnit(engine: BattleEngine, map: MapDef, unitIndex: number, log: (s:
   log(`  ${label}: nothing to hit → rest${res.ok ? '' : ` (REJECTED: ${res.reason})`}`);
 }
 
-export function runGreedy(mapId: string, verbose: boolean): GreedyResult {
+/**
+ * `baseHpOverride` runs the mission on an injected base pool instead of the
+ * map's own `baseHp` — that is how a campaign-scale measurement works, since
+ * under the A9 persistent-grid rules a mission's base IS the campaign grid as
+ * it stands on entry (see tools/greedy-campaign.ts). Omit it for the per-level
+ * measurement, which stays exactly as it was.
+ */
+export function runGreedy(mapId: string, verbose: boolean, baseHpOverride?: number): GreedyResult {
   const map = maps[mapId];
   if (!map) throw new Error(`Unknown map: ${mapId}`);
   const squad = map.squadCharacterIds ?? STARTING_SQUAD;
-  const engine = new BattleEngine(map, squad, registry);
+  const engine = new BattleEngine(map, squad, registry, baseHpOverride !== undefined ? { baseHpOverride } : undefined);
   const log = (s: string): void => {
     if (verbose) console.log(s);
   };
 
   if (verbose) {
     console.log(`\n${'='.repeat(64)}`);
-    console.log(`GREEDY RUN: ${mapId} | squad: ${squad.join(', ')} | ${map.totalTurns} turns | base ${map.baseHp} HP`);
+    console.log(`GREEDY RUN: ${mapId} | squad: ${squad.join(', ')} | ${map.totalTurns} turns | base ${baseHpOverride ?? map.baseHp} HP`);
     console.log('='.repeat(64));
   }
 
