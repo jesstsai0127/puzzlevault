@@ -19,6 +19,28 @@ export const CAMPAIGN_STORAGE_KEY = 'puzzlevault.campaign.v1';
 const SCHEMA_VERSION = 1;
 
 /**
+ * Separate revision counter guarding against two tabs racing on the same
+ * save. Every page load is a full navigation (see levelNav.ts), so nothing
+ * here needs to survive past one — `seenRev` is deliberately module-level,
+ * reset fresh by the next page's own `loadCampaign()` call.
+ *
+ * Without this, tab A taking mission damage (gridHp 8 -> 6, saved) and tab B
+ * — still holding its stale in-memory gridHp: 8 from before A's save —
+ * finishing its own mission and calling saveCampaign() would silently
+ * overwrite A's already-recorded loss with B's stale higher number, healing
+ * grid damage that already happened for free. Kept as its own localStorage
+ * key rather than a field on CampaignState because it's a storage-layer
+ * concern, not campaign business logic — state.ts stays persistence-agnostic.
+ */
+const REV_KEY = `${CAMPAIGN_STORAGE_KEY}.rev`;
+let seenRev = 0;
+
+function readRev(store: Storage): number {
+  const n = Number(store.getItem(REV_KEY));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
  * localStorage if it exists and actually works, else null.
  *
  * This module is imported by tests running in plain node (no `window`), and
@@ -87,6 +109,7 @@ export function loadCampaign(): CampaignState {
   const store = safeStorage();
   if (!store) return newCampaign();
   try {
+    seenRev = readRev(store);
     const raw = store.getItem(CAMPAIGN_STORAGE_KEY);
     if (!raw) return newCampaign();
     const parsed: unknown = JSON.parse(raw);
@@ -98,12 +121,28 @@ export function loadCampaign(): CampaignState {
   }
 }
 
-/** Persists the campaign. A storage failure (quota, privacy mode) is non-fatal — the run just won't survive a reload. */
+/**
+ * Persists the campaign. A storage failure (quota, privacy mode) is
+ * non-fatal — the run just won't survive a reload.
+ *
+ * Also drops the write if another tab has saved since this one last read the
+ * campaign (see REV_KEY above) — this session's in-memory state was built on
+ * data that's no longer current, and writing it would clobber the other
+ * tab's progress. `seenRev` is resynced to the current revision either way,
+ * so a single dropped save doesn't stop this tab's LATER saves from landing.
+ */
 export function saveCampaign(state: CampaignState): void {
   const store = safeStorage();
   if (!store) return;
   try {
+    const currentRev = readRev(store);
+    if (currentRev !== seenRev) {
+      seenRev = currentRev;
+      return;
+    }
     store.setItem(CAMPAIGN_STORAGE_KEY, JSON.stringify(state));
+    seenRev = currentRev + 1;
+    store.setItem(REV_KEY, String(seenRev));
   } catch {
     /* ignore — persistence is best-effort, the in-memory run continues */
   }
@@ -115,6 +154,8 @@ export function clearCampaign(): void {
   if (!store) return;
   try {
     store.removeItem(CAMPAIGN_STORAGE_KEY);
+    store.removeItem(REV_KEY);
+    seenRev = 0;
   } catch {
     /* ignore */
   }
