@@ -9,109 +9,100 @@
  * win/loss stopped being the definition of winning, so measuring it stopped
  * measuring difficulty.
  *
- * This tool asks the real question instead: play the 17-mission campaign
- * (A10's pick-3-of-4 per island, then the island boss, then final_hive) with a
- * single grid pool carried across every mission, and report where — if
- * anywhere — a non-thinking player runs out of grid.
+ * This tool asks the real question instead: play the campaign (A10's
+ * pick-3-of-4 per island, then the island boss, then final_hive) with a single
+ * grid pool carried across every mission, and report where — if anywhere — a
+ * non-thinking player runs out of grid.
  *
  * The pass bar is `design/roadmap.md:251`: 普通 = 隨便玩會輸. Greedy must die
- * somewhere in these 17 missions. If it finishes the campaign alive, the
- * campaign is still too easy.
+ * somewhere in the campaign. If it finishes alive, the campaign is still too
+ * easy.
  *
- * Grid arithmetic is duplicated here rather than imported from core/campaign so
- * this stays runnable independently of the scene layer; it mirrors
- * `applyMissionResult`/`syncGridHp` (assign-on-sync, zero-damage bonus capped,
- * a mission's base pool IS the grid on entry).
+ * Grid bookkeeping is NOT reimplemented here — it drives the real
+ * `core/campaign/state.ts` state machine (newCampaign/applyMissionResult/
+ * availableMissions), the exact code path BattleScene uses. Hand-duplicating
+ * that arithmetic was tried first and is exactly the kind of thing that goes
+ * stale silently: state.ts is pure (no DOM), so importing it costs nothing and
+ * guarantees this tool can never measure against rules the game no longer has.
  */
-import { runGreedy, type GreedyResult } from './greedy-play';
-import { WORLD_STRUCTURE } from '../content/registry';
-
-/** Mirrors core/campaign/state.ts. Kept in sync by hand — see the module doc. */
-const GRID_START = 8;
-const GRID_MAX = 12;
-/** A10: each island offers 4 regular missions and you play 3, then its boss. */
-const REGULARS_PLAYED_PER_ISLAND = 3;
+import { runGreedy } from './greedy-play';
+import {
+  applyMissionResult,
+  availableMissions,
+  FINAL_MAP_ID,
+  GRID_MAX,
+  GRID_START,
+  ISLAND_COUNT,
+  newCampaign,
+  regularMapIds,
+  REQUIRED_CLEARS,
+  type CampaignState,
+} from '../core/campaign/state';
 
 interface MissionRecord {
   mapId: string;
   gridBefore: number;
   gridAfter: number;
-  damage: number;
-  bonus: boolean;
-  outcome: GreedyResult['outcome'];
+  outcome: 'victory' | 'defeat';
 }
 
 /**
- * The 17-mission path: per island, the first `REGULARS_PLAYED_PER_ISLAND`
- * regular missions in listed order, then that island's boss (the last entry);
- * finally the standalone final mission.
- *
- * Play-order selection is deliberate. A real player picks which 3 to take, and
- * a greedy/non-thinking one has no basis to pick well — taking them in the
- * order presented is the honest model of "not thinking". A player who picked
- * the three cheapest missions every time would do better than this, so treat
- * the result as the careless-play line, not the floor of all possible play.
+ * Which of an island's 4 regular missions a non-thinking player picks first.
+ * A real player chooses which `REQUIRED_CLEARS` to take; greedy has no basis
+ * to pick well, so it takes them in listed order — the honest model of "not
+ * thinking" about mission selection, same as it doesn't think in-mission. A
+ * player who picked the cheapest missions every time would do better than
+ * this, so treat the result as the careless-play line, not the floor of all
+ * possible play.
  */
-function campaignPath(): string[] {
-  const path: string[] = [];
-  for (const world of WORLD_STRUCTURE) {
-    const ids = world.levels.map((l) => l.mapId);
-    if (ids.length === 1) {
-      path.push(ids[0]); // the standalone final mission
-      continue;
-    }
-    const boss = ids[ids.length - 1];
-    const regulars = ids.slice(0, ids.length - 1);
-    path.push(...regulars.slice(0, REGULARS_PLAYED_PER_ISLAND), boss);
-  }
-  return path;
+function pickNext(state: CampaignState): string | null {
+  const offered = availableMissions(state);
+  if (offered.length === 0) return null;
+  const regulars = regularMapIds(state.islandIndex).filter((id) => offered.includes(id));
+  return regulars[0] ?? offered[0]; // no regulars left offered -> only the boss (or final_hive) remains
 }
 
 function runCampaign(verbose: boolean): { records: MissionRecord[]; survived: boolean; finalGrid: number } {
-  let grid = GRID_START;
+  let state = newCampaign();
   const records: MissionRecord[] = [];
 
-  for (const mapId of campaignPath()) {
-    const gridBefore = grid;
-    const result = runGreedy(mapId, verbose, grid);
-
-    // syncGridHp is an assignment, not a subtraction: the mission's base pool
-    // IS the grid, so whatever survives the mission is the grid going forward.
-    const gridAfterMission = Math.max(0, result.baseHp);
-    const damage = gridBefore - gridAfterMission;
-    // Zero-damage bonus is settled at mission completion and only on a win.
-    const bonus = damage === 0 && result.outcome === 'victory';
-    grid = Math.min(GRID_MAX, gridAfterMission + (bonus ? 1 : 0));
-
-    records.push({ mapId, gridBefore, gridAfter: grid, damage, bonus, outcome: result.outcome });
-    if (grid <= 0) return { records, survived: false, finalGrid: 0 };
+  for (let mapId = pickNext(state); mapId !== null; mapId = pickNext(state)) {
+    const gridBefore = state.gridHp;
+    const result = runGreedy(mapId, verbose, gridBefore);
+    state = applyMissionResult(state, {
+      mapId,
+      outcome: result.outcome === 'victory' ? 'victory' : 'defeat',
+      baseHpRemaining: Math.max(0, result.baseHp),
+      baseMaxHp: gridBefore,
+    });
+    records.push({ mapId, gridBefore, gridAfter: state.gridHp, outcome: result.outcome === 'victory' ? 'victory' : 'defeat' });
+    if (state.campaignOver) return { records, survived: false, finalGrid: 0 };
   }
-  return { records, survived: true, finalGrid: grid };
+  return { records, survived: true, finalGrid: state.gridHp };
 }
 
 function main(): void {
   const verbose = process.argv.includes('--verbose');
   const { records, survived, finalGrid } = runCampaign(verbose);
 
-  console.log(`\n=== CAMPAIGN (greedy, persistent grid ${GRID_START}/${GRID_MAX}) ===\n`);
-  console.log('| # | mission | grid in | dmg | bonus | grid out | mission |');
-  console.log('|---|---------|---------|-----|-------|----------|---------|');
+  console.log(`\n=== CAMPAIGN (greedy, persistent grid ${GRID_START}/${GRID_MAX}, ${REQUIRED_CLEARS}-of-4 per island × ${ISLAND_COUNT} islands + ${FINAL_MAP_ID}) ===\n`);
+  console.log('| # | mission | grid in | grid out | mission |');
+  console.log('|---|---------|---------|----------|---------|');
   records.forEach((r, i) => {
     console.log(
-      `| ${String(i + 1).padStart(2)} | ${r.mapId.padEnd(12)} | ${String(r.gridBefore).padStart(7)} | ${String(r.damage).padStart(3)} | ${(r.bonus ? '+1' : '  ').padStart(5)} | ${String(r.gridAfter).padStart(8)} | ${r.outcome} |`,
+      `| ${String(i + 1).padStart(2)} | ${r.mapId.padEnd(12)} | ${String(r.gridBefore).padStart(7)} | ${String(r.gridAfter).padStart(8)} | ${r.outcome} |`,
     );
   });
 
   const played = records.length;
-  const total = campaignPath().length;
   console.log('');
   if (survived) {
     console.log(
-      `RESULT: greedy SURVIVED all ${total} missions with ${finalGrid}/${GRID_MAX} grid left — the campaign still fails the "隨便玩會輸" bar.`,
+      `RESULT: greedy SURVIVED the campaign (${played} missions played) with ${finalGrid}/${GRID_MAX} grid left — the campaign still fails the "隨便玩會輸" bar.`,
     );
   } else {
     console.log(
-      `RESULT: greedy DIED at mission ${played}/${total} (${records[played - 1].mapId}) — grid exhausted. The "隨便玩會輸" bar is met.`,
+      `RESULT: greedy DIED at mission ${played} (${records[played - 1].mapId}) — grid exhausted. The "隨便玩會輸" bar is met.`,
     );
   }
 }
