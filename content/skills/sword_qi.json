@@ -4,5 +4,8 @@
   "nameKey": "skill.sword_qi.name",
   "descKey": "skill.sword_qi.desc",
   "range": 1,
-  "effects": [{ "type": "damage", "amount": 2, "target": "firstInLine" }]
+  "effects": [
+    { "type": "damage", "amount": 2, "target": "firstInLine" },
+    { "type": "push", "amount": 1, "target": "firstInLine" }
+  ]
 }
