@@ -3,6 +3,7 @@ import {
   allowsLevelRestart,
   applyMissionResult,
   availableMissions,
+  beginMission,
   bossMapId,
   canEnterMission,
   FINAL_MAP_ID,
@@ -11,13 +12,16 @@ import {
   isCampaignMap,
   isCampaignWon,
   isTutorialStep,
+  markResetTurnUsed,
   newCampaign,
   regularMapIds,
+  resetTurnUsedFor,
   syncGridHp,
   type CampaignState,
 } from '../core/campaign/state';
-import { LESSON_MAP_IDS } from '../content/registry';
-import { CAMPAIGN_STORAGE_KEY, clearCampaign, loadCampaign, saveCampaign } from '../core/campaign/storage';
+import { LESSON_MAP_IDS, maps, registry, STARTING_SQUAD } from '../content/registry';
+import { BattleEngine } from '../core/battle/engine';
+import { CAMPAIGN_STORAGE_KEY, clearCampaign, loadCampaign, saveCampaign } from '../src/campaign/storage';
 
 /** Plays `mapId` losing `damage` grid, at whatever gridHp the state currently holds. */
 function play(state: CampaignState, mapId: string, damage: number, outcome: 'victory' | 'defeat' = 'victory') {
@@ -46,6 +50,63 @@ describe('newCampaign', () => {
     expect(s.clearedMapIds).toEqual([]);
     expect(s.bossCleared).toEqual([false, false, false, false]);
     expect(s.campaignOver).toBe(false);
+    expect(s.activeMission).toBeNull();
+  });
+});
+
+describe('activeMission — the one turn-reset survives a reload but is not refreshed', () => {
+  const m0 = () => regularMapIds(0)[0];
+
+  it('beginMission opens a fresh record with the reset unspent', () => {
+    const s = beginMission(newCampaign(), m0());
+    expect(s.activeMission).toEqual({ mapId: m0(), resetTurnUsed: false });
+    expect(resetTurnUsedFor(s, m0())).toBe(false);
+  });
+
+  it('re-entering the SAME mission preserves a spent reset (the reload case)', () => {
+    let s = beginMission(newCampaign(), m0());
+    s = markResetTurnUsed(s);
+    expect(resetTurnUsedFor(s, m0())).toBe(true);
+    // F5 on the same ?map= URL: init() calls beginMission again.
+    s = beginMission(s, m0());
+    expect(resetTurnUsedFor(s, m0())).toBe(true); // NOT reset to false
+  });
+
+  it('entering a DIFFERENT mission starts with a fresh reset', () => {
+    let s = beginMission(newCampaign(), m0());
+    s = markResetTurnUsed(s);
+    s = beginMission(s, regularMapIds(0)[1]);
+    expect(s.activeMission).toEqual({ mapId: regularMapIds(0)[1], resetTurnUsed: false });
+  });
+
+  it('resetTurnUsedFor is false for a map that is not the active mission', () => {
+    const s = markResetTurnUsed(beginMission(newCampaign(), m0()));
+    expect(resetTurnUsedFor(s, regularMapIds(0)[1])).toBe(false);
+  });
+
+  it('settling a mission clears the active record, so the next mission starts fresh', () => {
+    let s = markResetTurnUsed(beginMission(newCampaign(), m0()));
+    s = play(s, m0(), 1);
+    expect(s.activeMission).toBeNull();
+  });
+
+  it('markResetTurnUsed / beginMission do not mutate their input', () => {
+    const s = beginMission(newCampaign(), m0());
+    const snap = JSON.parse(JSON.stringify(s));
+    markResetTurnUsed(s);
+    beginMission(s, regularMapIds(0)[1]);
+    expect(s).toEqual(snap);
+  });
+
+  it('round-trips the active mission through storage (reload restores resetTurnUsed)', () => {
+    installFakeStorage();
+    let s = markResetTurnUsed(beginMission(newCampaign(), m0()));
+    saveCampaign(s);
+    const reloaded = loadCampaign();
+    expect(reloaded.activeMission).toEqual({ mapId: m0(), resetTurnUsed: true });
+    // And the restore path the scene uses reports the reset as spent.
+    expect(resetTurnUsedFor(reloaded, m0())).toBe(true);
+    delete (globalThis as { localStorage?: unknown }).localStorage;
   });
 });
 
@@ -357,6 +418,39 @@ describe('syncGridHp — grid damage is banked live, not at mission end', () => 
     expect(canEnterMission(reloaded, regularMapIds(0)[0])).toBe(true);
     expect(reloaded.clearedMapIds).toEqual([]);
     delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+});
+
+// Engine integration: proves the campaign grid actually drives the battle's
+// base HP through the real BattleEngine (agent B's merged baseHpOverride),
+// and that the live sync reads back the overridden value — not the map's own
+// baseHp, which was the pre-merge regression (grid rebounded to 8 each level).
+describe('baseHpOverride drives the battle base, and the grid never rebounds to the map default', () => {
+  const m = maps['island1_m1'];
+
+  it('the engine starts a campaign mission at the grid, not at map.baseHp', () => {
+    expect(m.baseHp).toBe(8); // the map's own default, deliberately different from the grid below
+    const e = new BattleEngine(m, m.squadCharacterIds ?? STARTING_SQUAD, registry, { baseHpOverride: 3 });
+    expect(e.getSnapshot().baseHp).toBe(3);
+    expect(e.getSnapshot().baseMaxHp).toBe(3);
+  });
+
+  it('syncing the grid from the engine keeps the reduced value — it does not jump to 8', () => {
+    const grid = 3;
+    const e = new BattleEngine(m, m.squadCharacterIds ?? STARTING_SQUAD, registry, { baseHpOverride: grid });
+    // Simulate BattleScene's endTurn sync with whatever the engine reports.
+    const synced = syncGridHp({ ...newCampaign(), gridHp: grid }, e.getSnapshot().baseHp);
+    expect(synced.gridHp).toBe(grid);
+    expect(synced.gridHp).not.toBe(m.baseHp);
+  });
+
+  it('an immediate resetTurn() burns the once-per-mission reset without disturbing the board', () => {
+    // This is exactly how the scene restores a spent reset on reload.
+    const e = new BattleEngine(m, m.squadCharacterIds ?? STARTING_SQUAD, registry, { baseHpOverride: 5 });
+    expect(e.getSnapshot().resetTurnUsed).toBe(false);
+    e.resetTurn();
+    expect(e.getSnapshot().resetTurnUsed).toBe(true);
+    expect(e.getSnapshot().baseHp).toBe(5); // board/base untouched by the burn
   });
 });
 
