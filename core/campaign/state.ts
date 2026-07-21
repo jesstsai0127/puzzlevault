@@ -59,6 +59,26 @@ export const ISLAND_COUNT = 4;
 /** The final battle's mapId — unlocked once all island bosses are down. */
 export const FINAL_MAP_ID = 'final_hive';
 
+/**
+ * The mission the player is currently inside, and the per-mission resources
+ * that must not be refreshed by reloading the page.
+ *
+ * `resetTurnUsed` lives here because the engine keeps it in instance memory
+ * only: every reload builds a new BattleEngine, so ITB's "one turn-reset per
+ * mission" silently became "one per reload" — a resource obtainable on demand
+ * by pressing F5. Persisting it is what makes the limit real.
+ *
+ * The mission restarting from its opening board on reload is deliberately NOT
+ * prevented. The grid damage was already banked live, so a replay is strictly
+ * worse than continuing, and the game is perfect-information and
+ * deterministic — a fresh attempt cannot roll a friendlier board.
+ */
+export interface ActiveMission {
+  mapId: string;
+  /** Whether this mission's single turn-reset has already been spent. */
+  resetTurnUsed: boolean;
+}
+
 export interface CampaignState {
   schemaVersion: 1;
   /** Grid points remaining, carried across every mission. Zero ends the campaign. */
@@ -73,6 +93,8 @@ export interface CampaignState {
   bossCleared: boolean[];
   /** True once the grid hit zero — the run is dead and must be restarted from island 1. */
   campaignOver: boolean;
+  /** The mission in progress, or null between missions. See ActiveMission. */
+  activeMission: ActiveMission | null;
 }
 
 export interface MissionResult {
@@ -93,7 +115,42 @@ export function newCampaign(): CampaignState {
     clearedMapIds: [],
     bossCleared: new Array(ISLAND_COUNT).fill(false),
     campaignOver: false,
+    activeMission: null,
   };
+}
+
+/**
+ * Marks a mission as entered, returning a NEW state.
+ *
+ * Re-entering the SAME mission (a reload, or leaving and coming back)
+ * preserves its spent turn-reset — that is the whole point of persisting it.
+ * Entering a different mission starts a fresh record.
+ */
+export function beginMission(state: CampaignState, mapId: string): CampaignState {
+  const active: ActiveMission =
+    state.activeMission?.mapId === mapId ? { ...state.activeMission } : { mapId, resetTurnUsed: false };
+  return {
+    ...state,
+    clearedMapIds: [...state.clearedMapIds],
+    bossCleared: [...state.bossCleared],
+    activeMission: active,
+  };
+}
+
+/** Records that the active mission's one turn-reset has been spent. */
+export function markResetTurnUsed(state: CampaignState): CampaignState {
+  if (!state.activeMission) return state;
+  return {
+    ...state,
+    clearedMapIds: [...state.clearedMapIds],
+    bossCleared: [...state.bossCleared],
+    activeMission: { ...state.activeMission, resetTurnUsed: true },
+  };
+}
+
+/** Whether `mapId` is the active mission and has already spent its turn-reset. */
+export function resetTurnUsedFor(state: CampaignState, mapId: string): boolean {
+  return state.activeMission?.mapId === mapId && state.activeMission.resetTurnUsed;
 }
 
 /** The 5 mapIds (m1-m5) belonging to island `index`, straight from WORLD_STRUCTURE. */
@@ -256,6 +313,9 @@ export function applyMissionResult(state: CampaignState, result: MissionResult):
   const alreadyCleared = state.clearedMapIds.includes(mapId);
 
   const next = syncGridHp(state, baseHpRemaining);
+  // The mission is over either way, so its in-progress record goes — the
+  // next entry starts with a fresh turn-reset, as a new mission should.
+  next.activeMission = null;
 
   if (next.campaignOver) {
     // Grid exhausted — the campaign ends here regardless of whether this
