@@ -1196,6 +1196,98 @@ describe('island4_m3: winnable — hold the row-3 lane, then let the choke run o
   });
 });
 
+describe('island4_m5 (island boss): winnable via a central AoE-push pincer into both hazard columns (solvability upper check)', () => {
+  // The hardest mission in the campaign to solve by feel: base is a central
+  // 2×2 flanked by hazard COLUMNS on both x=1 and x=6 (rows 1-4), the squad
+  // here is [li_yan, ling_er, bai_zhi] — no ranged attacker, ling_er and
+  // bai_zhi deal zero direct damage — and TWO threats are already adjacent
+  // to the base at turn 1 (yin_ghost at (2,2), yuan_ling at (5,2)), so their
+  // first strikes are locked in before any action can reach them (li_yan's
+  // moveRange3 from (2,6)/(4,6)/(6,6) can't close either gap turn 1). A
+  // passive run confirms this: it loses by turn 3 with base AND a player
+  // both dead. This is also the one mission in the whole campaign where a
+  // greedy non-thinking run dies within the mission itself (base 8→0 by
+  // turn 3), not just drains the campaign-wide grid.
+  //
+  // The key that makes it solvable: ling_er's ULTIMATE, roaring_shockwave
+  // (allEnemies, push 2, once per mission — see roaring_shockwave.json),
+  // pushes every living monster AWAY FROM WHEREVER SHE'S STANDING (the
+  // engine computes each push direction from the caster's position toward
+  // the target — see BattleEngine.pushUnit's `fromPos` — so a single cast
+  // radiates outward in every monster's own direction, not one aimed line).
+  // Stood at (4,4) — dead center between the two hazard columns — this
+  // pushes the west-side yin_ghost and jiangshi due west into the x=1
+  // hazard column (instant kills, monsters die outright in hazard) and
+  // chips everything else via wall/edge collisions, ALL IN ONE ACTION,
+  // BEFORE any monster's already-locked turn-1 attack intent resolves — a
+  // dead monster never gets to swing. It even happens to trigger a second
+  // free kill: teng_yao's vine_lash is aimed at "nearest player" but
+  // literally fires in a straight line, so with yuan_ling standing directly
+  // south of it, its own shot (still locked from turn start) finishes off
+  // the yuan_ling my ultimate only chipped — a monster killing its own ally.
+  it('open with the central ultimate to hazard-kill the west flank, then mop up what survives — base never touched', () => {
+    const map = maps.island4_m5;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, ling_er, bai_zhi]
+
+    // T1 — ling_er steps to dead center and casts roaring_shockwave: yin_ghost
+    // and the west jiangshi are shoved straight into the x=1 hazard column and
+    // die outright; teng_yao and the east jiangshi are chipped by wall/edge
+    // collisions; yuan_ling is chipped to 1 hp (finished off by teng_yao's own
+    // shot below). Bai_zhi flees (6,6) immediately — jiangshi5 spawns
+    // adjacent to her there and its turn-1 attack is ALREADY locked in; only
+    // actually leaving the tile makes the frozen swing whiff on empty air.
+    // Li_yan repositions toward the fight (nothing is in her reach yet).
+    expect(engine.moveUnit(1, { x: 4, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'roaring_shockwave', 'up').ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 4, y: 5 }).ok).toBe(true);
+    expect(engine.moveUnit(0, { x: 3, y: 6 }).ok).toBe(true);
+    engine.endTurn();
+    const afterT1 = engine.getSnapshot();
+    expect(afterT1.baseHp).toBe(8); // every turn-1 attacker is dead before its locked claw/bolt could land
+    expect(afterT1.monsters.filter((m) => m.hp > 0).map((m) => m.monsterId).sort()).toEqual(['jiangshi', 'teng_yao']);
+    expect(afterT1.players.every((p) => p.hp > 0)).toBe(true);
+
+    // T2 — only teng_yao (stationary sniper) and the east jiangshi (already
+    // chipped to 5 hp by the ultimate) remain. Li_yan advances on the
+    // jiangshi; bai_zhi keeps clear of its lane.
+    expect(engine.moveUnit(0, { x: 4, y: 6 }).ok).toBe(true);
+    expect(engine.moveUnit(2, { x: 3, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    // T3 — li_yan closes in and hits the jiangshi (2 dmg + push); (5,6) is
+    // also the tile the scripted 3rd jiangshi is telegraphed to emerge on
+    // THIS turn — standing there blocks that spawn outright for a flat 1
+    // damage instead of a whole fresh 6-hp jiangshi (A3 emergence-block).
+    // Teng_yao's own frozen shot then finishes chipping the pushed jiangshi
+    // down its column (more monster-on-monster friendly fire).
+    expect(engine.moveUnit(0, { x: 5, y: 6 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    engine.endTurn();
+    const afterT3 = engine.getSnapshot();
+    expect(afterT3.baseHp).toBe(8); // still untouched
+    const jiangshiAfterT3 = afterT3.monsters.find((m) => m.monsterId === 'jiangshi');
+    expect(jiangshiAfterT3?.hp).toBe(1); // one hit from li_yan, one more from teng_yao's own line
+
+    // T4 — li_yan finishes the last jiangshi. Killing it removes the body
+    // blocking teng_yao's column, so its already-locked shot reaches through
+    // to li_yan instead this turn (2 dmg) — an easy hit to eat this late.
+    expect(engine.moveUnit(0, { x: 5, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    engine.endTurn();
+    expect(engine.getSnapshot().monsters.filter((m) => m.hp > 0).map((m) => m.monsterId)).toEqual(['teng_yao']);
+
+    // T5 — only the stationary teng_yao is left; li_yan simply steps out of
+    // its column and the clock runs out with nobody in its line of fire.
+    expect(engine.moveUnit(0, { x: 4, y: 5 }).ok).toBe(true);
+    engine.endTurn();
+
+    const snap = engine.getSnapshot();
+    expect(snap.outcome).toBe('victory');
+    expect(snap.baseHp).toBe(8); // flawless — the base never took a single hit all game
+    expect(snap.players.every((p) => p.hp > 0)).toBe(true);
+  });
+});
+
 describe("final mission (final_hive) — ITB Last Stand's decisive phase: protect a 4-HP objective for 5 turns", () => {
   it('fixed 8×8 grid, totalTurns 5, baseHp 4 (the sealing array, matching the Renfield Bomb), explicit 3-person squad', () => {
     const map = maps.final_hive;
