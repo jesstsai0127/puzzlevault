@@ -127,5 +127,12 @@
   "ui.difficulty_hard": "Hard",
   "ui.lesson_label": "[Lesson]",
   "ui.tutorial_entry": "Tutorial",
-  "ui.tutorial_progress": "Tutorial {n}/{total}"
+  "ui.tutorial_progress": "Tutorial {n}/{total}",
+  "ui.campaign_grid": "Power Grid",
+  "ui.campaign_grid_hint": "Carried across the whole campaign — at zero the campaign ends.",
+  "ui.campaign_cleared": "CLEARED",
+  "ui.campaign_locked": "LOCKED",
+  "ui.campaign_over": "CAMPAIGN OVER — the grid has fallen",
+  "ui.campaign_won": "CAMPAIGN COMPLETE",
+  "ui.campaign_restart": "Restart Campaign"
 }
