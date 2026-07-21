@@ -8,6 +8,10 @@
   "skillIds": ["corpse_smash"],
   "aiRules": [
     {
+      "when": { "kind": "targetInRange", "target": "nearestBaseTile", "range": 1 },
+      "action": { "kind": "useSkill", "skillId": "corpse_smash" }
+    },
+    {
       "when": { "kind": "targetInRange", "target": "nearestPlayer", "range": 1 },
       "action": { "kind": "useSkill", "skillId": "corpse_smash" }
     },
