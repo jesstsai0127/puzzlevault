@@ -7,7 +7,17 @@ import {
   stepDirectionToward,
 } from '../geometry';
 import type { CardinalDir, Vec2 } from '../geometry';
-import type { AiCondition, AiRule, AiTarget, EffectPrimitive, EffectType, MapDef, MonsterDef, TargetMode } from '../content/types';
+import type {
+  AiCondition,
+  AiRule,
+  AiTarget,
+  EffectPrimitive,
+  EffectType,
+  MapDef,
+  MonsterDef,
+  SpawnScheduleEntry,
+  TargetMode,
+} from '../content/types';
 import type {
   ActionResult,
   AttackPreview,
@@ -33,6 +43,15 @@ const POISON_MIST_DAMAGE = 1;
 
 /** ITB emergence rule (A3): a player unit standing on a tile when its telegraphed spawn resolves blocks the monster entirely and takes this flat damage instead. */
 const EMERGENCE_BLOCK_DAMAGE = 1;
+
+/**
+ * Ceiling on how many monsters the population feedback loop may telegraph in
+ * a SINGLE turn, however far below targetPopulation the board has fallen. A
+ * board wiped from 5 to 0 refills over several turns rather than dumping five
+ * monsters back on at once — the player's good turn still buys real breathing
+ * room, it just doesn't buy a permanently empty grid.
+ */
+const PER_TURN_SPAWN_CAP = 2;
 
 /**
  * A unit can never hold more than this many shield charges at once — each
@@ -107,13 +126,91 @@ export class BattleEngine {
   private resetTurnUsed = false;
   private monsterSpawnCounter = 0;
 
-  constructor(map: MapDef, squadCharacterIds: string[], registry: ContentRegistry) {
+  // --- Dynamic population feedback loop (see resolvePopulationReinforcement) ---
+  /** Candidate emergence tiles, walked in order with wraparound. Fixed for the engine's lifetime. */
+  private spawnPool: Vec2[] = [];
+  /** Monster ids the loop cycles through, in order with wraparound. Fixed for the engine's lifetime. */
+  private reinforcementRoster: string[] = [];
+  private targetPopulation = 0;
+  private totalSpawnBudget = 0;
+  /**
+   * Reinforcements this loop has telegraphed, kept ENGINE-side rather than
+   * appended to `this.map.spawnSchedule`: `map` is the shared object owned by
+   * the content registry, so mutating it would leak this run's reinforcements
+   * into every other battle on the same map (and survive resetRun()).
+   */
+  private dynamicSpawns: SpawnScheduleEntry[] = [];
+  /** Next index into spawnPool / reinforcementRoster — the whole reason the loop is deterministic. Reset by resetRun(). */
+  private spawnPoolCursor = 0;
+  private rosterCursor = 0;
+  /** Counts against totalSpawnBudget. Incremented when a reinforcement is TELEGRAPHED, not when it resolves. */
+  private dynamicSpawnsUsed = 0;
+
+  /**
+   * `opts.baseHpOverride`, when given, replaces the map's own `baseHp` as this
+   * battle's base HP pool — the campaign layer carries a base's damage across
+   * missions, so the map file's number is the *default* starting pool, not an
+   * invariant. It changes only what `baseMaxHp` is initialised to: resetRun()
+   * still resets `baseHp` all the way back to `baseMaxHp`, so the reset
+   * semantics WITHIN a single battle are completely unchanged (a mid-battle
+   * loss/reset restores the HP this battle actually started with, not the
+   * map's pristine value). Omitting `opts` reproduces the old behavior
+   * exactly, so every existing 3-argument caller is unaffected.
+   */
+  constructor(
+    map: MapDef,
+    squadCharacterIds: string[],
+    registry: ContentRegistry,
+    opts?: { baseHpOverride?: number },
+  ) {
     this.map = map;
     this.registry = registry;
     this.squadCharacterIds = squadCharacterIds;
     this.baseTiles = this.computeBaseTiles(map);
-    this.baseMaxHp = map.baseHp;
+    this.baseMaxHp = opts?.baseHpOverride ?? map.baseHp;
+    this.spawnPool = (map.spawnPool ?? this.derivedSpawnPool(map)).map((t) => ({ ...t }));
+    this.reinforcementRoster = this.derivedReinforcementRoster(map);
+    // Default 0 = loop inert. A map opts in by declaring these two numbers;
+    // see MapDef.targetPopulation for why the default is off rather than
+    // derived from initialMonsters.
+    this.targetPopulation = map.targetPopulation ?? 0;
+    this.totalSpawnBudget = map.totalSpawnBudget ?? 0;
     this.resetRun();
+  }
+
+  /**
+   * Where reinforcements emerge when the map didn't declare a `spawnPool`:
+   * the tiles the author already chose for this map's scripted emergences,
+   * deduped, in declaration order. Reusing them is deliberate — those tiles
+   * are already validated as walkable, already sit where the author wanted
+   * pressure to come from, and are already the tiles the player has learned
+   * to watch. A map with no spawnSchedule (the lesson levels) yields an empty
+   * pool and therefore never reinforces.
+   */
+  private derivedSpawnPool(map: MapDef): Vec2[] {
+    const seen = new Set<string>();
+    const pool: Vec2[] = [];
+    for (const entry of map.spawnSchedule) {
+      const key = `${entry.tile.x},${entry.tile.y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pool.push(entry.tile);
+    }
+    return pool;
+  }
+
+  /**
+   * Which monster types the population loop cycles through. `spawnPool` is a
+   * list of TILES only (by design — the pool answers "where", not "what"), so
+   * the roster is derived separately: the monsterIds the author already
+   * scheduled as reinforcements for this map, falling back to the ids on the
+   * opening board. Deduped and order-preserving, so the cycle is deterministic.
+   */
+  private derivedReinforcementRoster(map: MapDef): string[] {
+    const dedupe = (ids: string[]): string[] => [...new Set(ids)];
+    const scheduled = dedupe(map.spawnSchedule.map((e) => e.monsterId));
+    if (scheduled.length > 0) return scheduled;
+    return dedupe(map.initialMonsters.map((s) => s.monsterId));
   }
 
   private computeBaseTiles(map: MapDef): Vec2[] {
@@ -141,11 +238,23 @@ export class BattleEngine {
     };
   }
 
-  /** Tiles telegraphed to spawn a monster at the end of THIS turn (A3 emergence markers) — for UI warning glyphs. */
+  /**
+   * Tiles telegraphed to spawn a monster at the end of THIS turn (A3
+   * emergence markers) — for UI warning glyphs. Covers BOTH sources: the
+   * author's fixed `spawnSchedule` and the dynamic population loop's
+   * reinforcements. The player must be able to see every incoming monster;
+   * a reinforcement that emerged without a warning glyph would be a hidden
+   * roll in a zero-luck game.
+   */
   private pendingSpawnTiles(): Vec2[] {
-    return this.map.spawnSchedule
+    return this.allSpawnEntries()
       .filter((entry) => entry.telegraphTurn === this.turnNumber)
       .map((entry) => ({ ...entry.tile }));
+  }
+
+  /** Every emergence entry in play: the map's authored script plus this run's dynamic reinforcements. */
+  private allSpawnEntries(): SpawnScheduleEntry[] {
+    return [...this.map.spawnSchedule, ...this.dynamicSpawns];
   }
 
   getIntents(): MonsterIntent[] {
@@ -370,6 +479,13 @@ export class BattleEngine {
     this.turnNumber += 1;
     this.monsters = this.monsters.filter((m) => m.hp > 0);
     this.resolveScheduledSpawns(endingTurn);
+    // Population feedback runs LAST, on the settled board: after the sweep and
+    // after this turn's emergences have landed, so it counts the monsters that
+    // genuinely survived into the next turn and never double-counts one it
+    // telegraphed a turn ago. It telegraphs for `turnNumber` (already
+    // incremented above) — i.e. the turn about to start, resolving one turn
+    // from now. See resolvePopulationReinforcement().
+    this.resolvePopulationReinforcement();
 
     if (this.baseHp <= 0) {
       // Freeze right here on the position that killed the base — the board
@@ -448,6 +564,14 @@ export class BattleEngine {
     // and ONLY with a full level reset (see resetTurn()).
     this.resetTurnUsed = false;
     this.baseHp = this.baseMaxHp;
+    // The population loop's entire state is per-RUN, not per-map: a restarted
+    // level must replay the identical reinforcement sequence from a clean
+    // cursor, otherwise a retry would face a different board than the attempt
+    // that just failed — the exact hidden variation zero-luck rules out.
+    this.dynamicSpawns = [];
+    this.dynamicSpawnsUsed = 0;
+    this.spawnPoolCursor = 0;
+    this.rosterCursor = 0;
 
     this.players = this.squadCharacterIds.map((charId, i) => {
       const def = this.registry.characters[charId];
@@ -504,7 +628,7 @@ export class BattleEngine {
    * play, so the block deliberately isn't player-only.
    */
   private resolveScheduledSpawns(endingTurn: number): void {
-    const due = this.map.spawnSchedule.filter((entry) => entry.telegraphTurn === endingTurn);
+    const due = this.allSpawnEntries().filter((entry) => entry.telegraphTurn === endingTurn);
     for (const entry of due) {
       const blocker =
         this.players.find((p) => p.hp > 0 && equalsVec2(p.position, entry.tile)) ??
@@ -524,6 +648,84 @@ export class BattleEngine {
         shield: 0,
       });
     }
+  }
+
+  /**
+   * The ITB population feedback loop, run at the END of every turn once the
+   * dead are swept and this turn's due emergences have resolved: if the board
+   * has fallen below `targetPopulation`, telegraph reinforcements to close
+   * the gap (at most PER_TURN_SPAWN_CAP per turn, and never more than
+   * `totalSpawnBudget` over the whole run).
+   *
+   * Why this exists: with a fixed script alone, "kill everything" was a
+   * dominant, permanently stable answer — once the grid was empty nothing
+   * could ever threaten the base again, and a 5-turn mission became a
+   * formality. Tying the refill rate INVERSELY to the survivor count means
+   * clearing the board is the single most expensive thing a player can do
+   * with a turn, and the level's pressure is a floor rather than a countdown.
+   *
+   * Two rules make this fair rather than merely punishing:
+   *  - Reinforcements telegraph for the NEXT turn (`turnNumber`, already
+   *    incremented by endTurn() before this runs), never the current one. The
+   *    player always gets one full turn to see the ⚠ marker and respond —
+   *    stand on the tile to deny the spawn, or clear space to fight it.
+   *  - Tile and monster choice walk `spawnPool` / `reinforcementRoster` by
+   *    cursor with wraparound. There is deliberately no RNG anywhere in this
+   *    method: full information and zero luck are load-bearing for this game,
+   *    and the same sequence of player actions must always produce the exact
+   *    same reinforcements.
+   *
+   * The budget is spent at TELEGRAPH time, not on a successful emergence — so
+   * blocking an emergence tile (the existing EMERGENCE_BLOCK_DAMAGE play) is
+   * a genuine, permanent win: the monster is gone AND it never comes back out
+   * of the budget.
+   */
+  private resolvePopulationReinforcement(): void {
+    if (this.spawnPool.length === 0 || this.reinforcementRoster.length === 0) return;
+    if (this.dynamicSpawnsUsed >= this.totalSpawnBudget) return;
+    // `turnNumber` is already the turn we'd telegraph FOR. If that turn is
+    // past the mission clock it can never resolve, so telegraphing it would
+    // only paint a ⚠ marker on a board the player has already won.
+    if (this.turnNumber > this.map.totalTurns) return;
+
+    const living = this.monsters.filter((m) => m.hp > 0).length;
+    const deficit = this.targetPopulation - living;
+    if (deficit <= 0) return;
+
+    const budgetLeft = this.totalSpawnBudget - this.dynamicSpawnsUsed;
+    const count = Math.min(deficit, PER_TURN_SPAWN_CAP, budgetLeft);
+
+    for (let i = 0; i < count; i++) {
+      const tile = this.nextReinforcementTile();
+      if (!tile) return; // every pool tile is unusable this turn — try again next turn
+      const monsterId = this.reinforcementRoster[this.rosterCursor % this.reinforcementRoster.length];
+      this.rosterCursor += 1;
+      this.dynamicSpawns.push({ telegraphTurn: this.turnNumber, monsterId, tile: { ...tile } });
+      this.dynamicSpawnsUsed += 1;
+    }
+  }
+
+  /**
+   * The next usable tile from `spawnPool`, advancing the cursor. Skips tiles
+   * already telegraphed for the same turn (two reinforcements can't emerge on
+   * one tile — the second would just be "blocked" by the first) and tiles a
+   * monster is currently standing on (that spawn would be wasted on the
+   * blocker rule). A player standing on a pool tile is NOT skipped: denying
+   * the emergence by body-blocking it is exactly the play the block rule is
+   * there to reward, and skipping it would quietly route the monster around
+   * the player instead. Returns null when no pool tile qualifies.
+   */
+  private nextReinforcementTile(): Vec2 | null {
+    for (let attempt = 0; attempt < this.spawnPool.length; attempt++) {
+      const tile = this.spawnPool[this.spawnPoolCursor % this.spawnPool.length];
+      this.spawnPoolCursor += 1;
+      const alreadyTelegraphed = this.dynamicSpawns.some(
+        (e) => e.telegraphTurn === this.turnNumber && equalsVec2(e.tile, tile),
+      );
+      const monsterOnTile = this.monsters.some((m) => m.hp > 0 && equalsVec2(m.position, tile));
+      if (!alreadyTelegraphed && !monsterOnTile) return tile;
+    }
+    return null;
   }
 
   /**
