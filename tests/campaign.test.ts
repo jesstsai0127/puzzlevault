@@ -1,17 +1,22 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  allowsLevelRestart,
   applyMissionResult,
   availableMissions,
   bossMapId,
+  canEnterMission,
   FINAL_MAP_ID,
   GRID_MAX,
   GRID_START,
   isCampaignMap,
   isCampaignWon,
+  isTutorialStep,
   newCampaign,
   regularMapIds,
+  syncGridHp,
   type CampaignState,
 } from '../core/campaign/state';
+import { LESSON_MAP_IDS } from '../content/registry';
 import { CAMPAIGN_STORAGE_KEY, clearCampaign, loadCampaign, saveCampaign } from '../core/campaign/storage';
 
 /** Plays `mapId` losing `damage` grid, at whatever gridHp the state currently holds. */
@@ -88,14 +93,16 @@ describe('applyMissionResult — grid arithmetic', () => {
     expect(s.campaignOver).toBe(false);
   });
 
-  it('treats a base that somehow gained HP as zero damage rather than a refund', () => {
-    const s = applyMissionResult(newCampaign(), {
-      mapId: regularMapIds(0)[0],
-      outcome: 'victory',
-      baseMaxHp: 4,
-      baseHpRemaining: 6,
-    });
-    expect(s.gridHp).toBe(GRID_START + 1); // the zero-damage bonus, not +2 of free grid
+  // Since the live-sync change, baseHpRemaining is authoritative: the mission
+  // runs with baseHpOverride = gridHp, so the base IS the grid and settling
+  // assigns rather than subtracts. A base that ended above where it started
+  // therefore cannot mint grid beyond the cap.
+  it('never exceeds gridMax even if the base somehow ends above its starting hp', () => {
+    const s = applyMissionResult(
+      { ...newCampaign(), gridHp: GRID_MAX },
+      { mapId: regularMapIds(0)[0], outcome: 'victory', baseMaxHp: GRID_MAX, baseHpRemaining: GRID_MAX + 5 },
+    );
+    expect(s.gridHp).toBe(GRID_MAX);
   });
 });
 
@@ -196,6 +203,163 @@ describe('availableMissions — 5-choose-3 unlock rules', () => {
   });
 });
 
+// ---------------------------------------------------------------------
+// The four bypasses found in review (2026-07-21). Each of these guards a
+// way the campaign's cost could be avoided entirely, so each gets its own
+// regression test.
+// ---------------------------------------------------------------------
+
+describe('isTutorialStep — ?tutorial=N cannot launder a campaign mission', () => {
+  it('is true for a real lesson map carrying a tutorial index', () => {
+    expect(isTutorialStep(LESSON_MAP_IDS[0], 0)).toBe(true);
+    expect(isTutorialStep(LESSON_MAP_IDS[3], 3)).toBe(true);
+  });
+
+  it('is false for a campaign mission even when a tutorial index is supplied', () => {
+    // The exploit URL: ?map=island4_m5&tutorial=0 — a valid non-negative
+    // integer index on a map that is not part of the tutorial at all.
+    expect(isTutorialStep('island4_m5', 0)).toBe(false);
+    expect(isTutorialStep('island1_m1', 0)).toBe(false);
+    expect(isTutorialStep(FINAL_MAP_ID, 2)).toBe(false);
+  });
+
+  it('is false for a lesson map opened outside the sequence', () => {
+    expect(isTutorialStep(LESSON_MAP_IDS[0], undefined)).toBe(false);
+  });
+});
+
+describe('re-clearing a mission cannot farm grid', () => {
+  it('gives no zero-damage bonus for a mission already cleared', () => {
+    const mapId = regularMapIds(0)[0];
+    let s = play(newCampaign(), mapId, 2); // 8 -> 6, cleared
+    expect(s.gridHp).toBe(GRID_START - 2);
+
+    // Re-entered by hand-typed URL and played flawlessly: previously 6 -> 7.
+    s = play(s, mapId, 0);
+    expect(s.gridHp).toBe(GRID_START - 2);
+  });
+
+  it('does not duplicate the mapId when a cleared mission is replayed', () => {
+    const mapId = regularMapIds(0)[0];
+    let s = play(newCampaign(), mapId, 1);
+    s = play(s, mapId, 0);
+    expect(s.clearedMapIds.filter((id) => id === mapId)).toHaveLength(1);
+  });
+
+  it('still charges damage taken on a replay, so a repeat is never free', () => {
+    const mapId = regularMapIds(0)[0];
+    let s = play(newCampaign(), mapId, 1);
+    s = play(s, mapId, 3);
+    expect(s.gridHp).toBe(GRID_START - 4);
+  });
+
+  it('keeps the bonus for a first clear so the reward still exists', () => {
+    const s = play(newCampaign(), regularMapIds(0)[0], 0);
+    expect(s.gridHp).toBe(GRID_START + 1);
+  });
+});
+
+describe('canEnterMission — the ?map= gate', () => {
+  it('allows a mission the unlock rules currently offer', () => {
+    expect(canEnterMission(newCampaign(), regularMapIds(0)[0])).toBe(true);
+  });
+
+  it('blocks jumping ahead to a later island', () => {
+    // Without this, island4_m1 would land in clearedMapIds while islandIndex
+    // still pointed at island 1 — progress desynced from the 3-of-4 count.
+    expect(canEnterMission(newCampaign(), regularMapIds(3)[0])).toBe(false);
+    expect(canEnterMission(newCampaign(), FINAL_MAP_ID)).toBe(false);
+  });
+
+  it('blocks a boss until three regular missions are cleared, then allows it', () => {
+    let s = clearRegulars(newCampaign(), 0, 2);
+    expect(canEnterMission(s, bossMapId(0)!)).toBe(false);
+    s = clearRegulars(newCampaign(), 0, 3);
+    expect(canEnterMission(s, bossMapId(0)!)).toBe(true);
+  });
+
+  it('blocks re-entering a cleared mission', () => {
+    const mapId = regularMapIds(0)[0];
+    const s = play(newCampaign(), mapId, 1);
+    expect(canEnterMission(s, mapId)).toBe(false);
+  });
+
+  it('blocks the skipped 4th mission once the island moved on', () => {
+    const s = clearRegulars(newCampaign(), 0, 3);
+    expect(canEnterMission(s, regularMapIds(0)[3])).toBe(false);
+  });
+
+  it('blocks everything once the campaign is over', () => {
+    const s = play(newCampaign(), regularMapIds(0)[0], GRID_START);
+    expect(s.campaignOver).toBe(true);
+    expect(canEnterMission(s, regularMapIds(0)[1])).toBe(false);
+  });
+
+  it('always allows non-campaign maps, which never touch the grid', () => {
+    for (const id of LESSON_MAP_IDS) expect(canEnterMission(newCampaign(), id)).toBe(true);
+  });
+});
+
+describe('allowsLevelRestart — ITB has no mid-mission restart', () => {
+  it('denies a restart button on every campaign mission', () => {
+    expect(allowsLevelRestart('island1_m1')).toBe(false);
+    expect(allowsLevelRestart('island4_m5')).toBe(false);
+    expect(allowsLevelRestart(FINAL_MAP_ID)).toBe(false);
+  });
+
+  it('keeps the restart button on lesson maps, which are practice', () => {
+    for (const id of LESSON_MAP_IDS) expect(allowsLevelRestart(id)).toBe(true);
+  });
+});
+
+describe('syncGridHp — grid damage is banked live, not at mission end', () => {
+  it('writes the base hp straight into the grid', () => {
+    const s = syncGridHp(newCampaign(), 5);
+    expect(s.gridHp).toBe(5);
+    expect(s.campaignOver).toBe(false);
+  });
+
+  it('does not mutate the state passed in', () => {
+    const s = newCampaign();
+    const before = JSON.parse(JSON.stringify(s));
+    syncGridHp(s, 3);
+    expect(s).toEqual(before);
+  });
+
+  it('ends the campaign the moment the grid is emptied mid-mission', () => {
+    const s = syncGridHp(newCampaign(), 0);
+    expect(s.gridHp).toBe(0);
+    expect(s.campaignOver).toBe(true);
+  });
+
+  it('follows a resetTurn rewind back up — the legal ITB undo is not charged', () => {
+    let s = syncGridHp(newCampaign(), 5); // took 3 this turn
+    expect(s.gridHp).toBe(5);
+    s = syncGridHp(s, 8); // resetTurn() restored baseHp to the turn's start
+    expect(s.gridHp).toBe(GRID_START);
+  });
+
+  it('is idempotent against the settle step, so there is only one deduction', () => {
+    const mapId = regularMapIds(0)[0];
+    const live = syncGridHp(newCampaign(), 6); // banked live during play
+    const settled = applyMissionResult(live, { mapId, outcome: 'victory', baseMaxHp: GRID_START, baseHpRemaining: 6 });
+    expect(settled.gridHp).toBe(6); // not 8-2-2 = 4
+  });
+
+  it('abandoning a damaged mission does not refund it — the reload reads the debited grid', () => {
+    installFakeStorage();
+    // Two turns in, the base is down to 5 of the 8 the mission started with.
+    saveCampaign(syncGridHp(newCampaign(), 5));
+    // Player closes the tab / navigates away without confirming an outcome.
+    const reloaded = loadCampaign();
+    expect(reloaded.gridHp).toBe(5);
+    // Re-entering the same mission is still allowed, but it now starts from 5.
+    expect(canEnterMission(reloaded, regularMapIds(0)[0])).toBe(true);
+    expect(reloaded.clearedMapIds).toEqual([]);
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+});
+
 describe('isCampaignMap', () => {
   it('accepts island missions and the final battle', () => {
     expect(isCampaignMap('island1_m1')).toBe(true);
@@ -288,6 +452,32 @@ describe('campaign storage', () => {
     const data = installFakeStorage();
     data[CAMPAIGN_STORAGE_KEY] = JSON.stringify({ schemaVersion: 1, gridHp: 'eight' });
     expect(loadCampaign()).toEqual(newCampaign());
+  });
+
+  it('rejects a grid above its own cap', () => {
+    const data = installFakeStorage();
+    data[CAMPAIGN_STORAGE_KEY] = JSON.stringify({ ...newCampaign(), gridHp: 9999 });
+    expect(loadCampaign()).toEqual(newCampaign());
+  });
+
+  it('rejects a bossCleared array that no longer matches ISLAND_COUNT', () => {
+    const data = installFakeStorage();
+    data[CAMPAIGN_STORAGE_KEY] = JSON.stringify({ ...newCampaign(), bossCleared: [] });
+    expect(loadCampaign()).toEqual(newCampaign());
+  });
+
+  it('rejects an out-of-range islandIndex', () => {
+    const data = installFakeStorage();
+    data[CAMPAIGN_STORAGE_KEY] = JSON.stringify({ ...newCampaign(), islandIndex: 9 });
+    expect(loadCampaign()).toEqual(newCampaign());
+  });
+
+  it('rejects non-integer / negative grid values', () => {
+    const data = installFakeStorage();
+    for (const gridHp of [-1, 3.5, Number.NaN]) {
+      data[CAMPAIGN_STORAGE_KEY] = JSON.stringify({ ...newCampaign(), gridHp });
+      expect(loadCampaign()).toEqual(newCampaign());
+    }
   });
 
   it('clearCampaign wipes the save so the next load starts over', () => {
