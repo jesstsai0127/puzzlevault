@@ -5,7 +5,7 @@ import zhTW from '../../locales/zh-TW.json';
 import { maps, WORLD_STRUCTURE, LESSON_MAP_IDS } from '../../content/registry';
 import { MAP_QUERY_PARAM, tutorialStepUrl } from './levelNav';
 import { availableMissions, isCampaignWon } from '../../core/campaign/state';
-import { clearCampaign, loadCampaign } from '../../core/campaign/storage';
+import { clearCampaign, loadCampaign } from '../campaign/storage';
 
 const i18n = new I18n(en, zhTW);
 
