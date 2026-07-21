@@ -8,7 +8,16 @@ import { STARTING_SQUAD, DEFAULT_MAP_ID, LESSON_MAP_IDS, maps, registry } from '
 import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
 import { levelSelectUrl, tutorialStepUrl } from './levelNav';
-import { applyMissionResult, isCampaignMap, newCampaign, type CampaignState } from '../../core/campaign/state';
+import {
+  allowsLevelRestart,
+  applyMissionResult,
+  canEnterMission,
+  isCampaignMap,
+  isTutorialStep,
+  newCampaign,
+  syncGridHp,
+  type CampaignState,
+} from '../../core/campaign/state';
 import { loadCampaign, saveCampaign } from '../../core/campaign/storage';
 
 const EFFECT_ICON: Record<EffectType, string> = { damage: '⚔', push: '➜', shield: '🛡', heal: '✚', taunt: '👁' };
@@ -159,7 +168,8 @@ export class BattleScene extends Phaser.Scene {
   private ultimateButton?: Button;
   private endTurnButton!: Button;
   private resetTurnButton!: Button;
-  private resetLevelButton!: Button;
+  /** Optional since 2026-07-21: campaign missions have no restart-level button at all (ITB retry rules) — only lesson/standalone maps build one. */
+  private resetLevelButton?: Button;
   private backToLevelSelectButton!: Button;
   private confirmButton!: Button;
   private outcomeOverlay!: Phaser.GameObjects.Rectangle;
@@ -195,6 +205,10 @@ export class BattleScene extends Phaser.Scene {
    * result is folded back in by handleConfirmOutcome().
    */
   private campaign: CampaignState = newCampaign();
+  /** True when this mission is being played on the shared campaign grid — drives the baseHp override, the live grid sync, and the absence of a restart button. */
+  private onCampaignGrid = false;
+  /** Set in init() when a ?map= names a campaign mission the unlock rules do not currently offer; create() bounces back to level select. */
+  private campaignBlocked = false;
 
   constructor() {
     super('BattleScene');
@@ -217,6 +231,17 @@ export class BattleScene extends Phaser.Scene {
     this.map = maps[data.mapId ?? DEFAULT_MAP_ID] ?? maps[DEFAULT_MAP_ID];
     this.tutorialIndex = data.tutorialIndex;
     this.campaign = loadCampaign();
+
+    // The ?map= query param is player-editable, so the unlock rules have to
+    // be enforced here and not just by which rows LevelSelectScene makes
+    // clickable. Without this gate a hand-typed URL could jump straight to a
+    // later island: the mission would be recorded into clearedMapIds while
+    // islandIndex still pointed at island 1, permanently desynchronising
+    // progress from the 3-of-4 count. A dead campaign lands here too —
+    // availableMissions() returns nothing once campaignOver is set.
+    this.campaignBlocked = !canEnterMission(this.campaign, this.map.id);
+    this.onCampaignGrid = isCampaignMap(this.map.id) && !this.campaignBlocked;
+
     this.tileHighlights = [];
     this.monsterSprites = new Map();
     this.monsterHpBars = new Map();
@@ -237,6 +262,14 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create() {
+    // Locked mission reached by a hand-edited ?map= (see init()). Bail out
+    // before building anything — no engine, no input handlers — and let the
+    // navigation take over.
+    if (this.campaignBlocked) {
+      window.location.href = levelSelectUrl();
+      return;
+    }
+
     this.cameras.main.setBackgroundColor(COLORS.bg);
     // A map can declare its own squad (e.g. demo4's 3-hero roster) — falls
     // back to the game's default 2-hero squad when it doesn't, so existing
@@ -245,10 +278,7 @@ export class BattleScene extends Phaser.Scene {
     // fresh pool of base HP — it runs on whatever is left of the single
     // campaign-wide grid, so damage taken here is still missing next
     // mission. Non-campaign maps (lesson_*, direct debug launches) keep
-    // their own map.baseHp and never touch the run. The dead-campaign guard
-    // matters because a stale ?map= URL can reach this with gridHp 0, which
-    // would otherwise start a battle that is lost before the first turn.
-    const onCampaignGrid = isCampaignMap(this.map.id) && !this.campaign.campaignOver;
+    // their own map.baseHp and never touch the run.
     // TEMPORARY (remove when agent B's engine change lands): BattleEngine's
     // 4th `opts` parameter with baseHpOverride is the agreed contract but is
     // not in core/battle/engine.ts yet, so this cast is what keeps tsc green
@@ -263,7 +293,7 @@ export class BattleScene extends Phaser.Scene {
       this.map,
       this.map.squadCharacterIds ?? STARTING_SQUAD,
       registry,
-      onCampaignGrid ? { baseHpOverride: this.campaign.gridHp } : undefined,
+      this.onCampaignGrid ? { baseHpOverride: this.campaign.gridHp } : undefined,
     );
 
     // Left-align the board so the right side has a wide column for the rules panel.
@@ -508,10 +538,15 @@ export class BattleScene extends Phaser.Scene {
     }
     this.resetTurnButton = this.makeButton(this.scale.width - 340, barY, 150, 40, () => this.handleResetTurn());
     this.endTurnButton = this.makeButton(this.scale.width - 170, barY, 150, 40, () => this.handleEndTurn());
-    // Full manual restart — always clickable, independent of resetTurn/endTurn
-    // and of any pending outcome, so a player can bail out and start over
-    // whenever they want, not just after losing.
-    this.resetLevelButton = this.makeButton(this.scale.width - 290, 10, 130, 28, () => this.handleResetLevel());
+    // ITB retry rules (2026-07-21 定案): a campaign mission gets NO restart
+    // button. ITB has no mid-mission reset — the only rewind it grants is the
+    // once-per-mission turn reset (resetTurnButton above), and a free
+    // full-mission restart would hand back every grid point the mission cost.
+    // Lesson/standalone maps keep it: they are practice, outside the campaign,
+    // and starting over is exactly what a player wants there.
+    if (allowsLevelRestart(this.map.id)) {
+      this.resetLevelButton = this.makeButton(this.scale.width - 290, 10, 130, 28, () => this.handleResetLevel());
+    }
     // Lets a playtester hop back to the level list — see LevelSelectScene /
     // design/roadmap.md ch.5. Goes through a real navigation (see levelNav.ts)
     // rather than scene.start(), which stopped routing pointer events after a
@@ -764,9 +799,33 @@ export class BattleScene extends Phaser.Scene {
 
   private handleResetTurn() {
     this.engine.resetTurn();
+    // After the rewind, not before: resetTurn() restores baseHp along with
+    // the rest of the board, and the grid has to follow it back up. This is
+    // ITB's legal once-per-mission rewind — the player must not stay charged
+    // for damage the reset just undid.
+    this.syncCampaignGrid();
     this.armedSkillId = null;
     this.pendingSteps = [];
     this.render();
+  }
+
+  /**
+   * Writes the base's current hp into the saved campaign grid.
+   *
+   * ITB retry rules (2026-07-21 定案): grid damage is banked every turn
+   * rather than settled when the mission ends, which is what makes "leave a
+   * mission that is going badly and start it over" impossible — the damage
+   * is in localStorage before the player can navigate away, and a reload
+   * just reads it back. No in-progress flag is involved, so there is nothing
+   * that can be left stale by a hard close.
+   *
+   * The zero-damage +1 is deliberately NOT handled here: whether a mission
+   * was flawless is only knowable once it is over. See applyMissionResult().
+   */
+  private syncCampaignGrid() {
+    if (!this.onCampaignGrid) return;
+    this.campaign = syncGridHp(this.campaign, this.engine.getSnapshot().baseHp);
+    saveCampaign(this.campaign);
   }
 
   private handleTileClick(x: number, y: number) {
@@ -808,6 +867,7 @@ export class BattleScene extends Phaser.Scene {
     if (this.engine.getSnapshot().outcome) return;
     this.engine.endTurn();
     this.playHitFeedback(this.engine.getLastEvents());
+    this.syncCampaignGrid();
     this.armedSkillId = null;
     this.pendingSteps = [];
     this.render();
@@ -826,20 +886,31 @@ export class BattleScene extends Phaser.Scene {
    * unlock rules decide what is playable next (and a dead grid shows the
    * campaign-over screen). Replaying to erase a bad result is exactly the
    * consequence-free loop the carried grid exists to remove.
+   *
+   * The tutorial branch keys off the MAP being a lesson map, not merely off
+   * `?tutorial=N` being present in the URL. Trusting the query param alone
+   * was an outright bypass of the campaign: `?map=island4_m5&tutorial=0` set
+   * tutorialIndex, so a win took the auto-advance path and never reached
+   * saveCampaign() while a loss was excluded from the campaign branch and
+   * simply replayed — every campaign mission playable at zero grid cost.
+   * tutorialIndexFromUrl() cannot validate this on its own; it does not know
+   * which map the index belongs to.
    */
   private handleConfirmOutcome() {
     const snapshot = this.engine.getSnapshot();
     const outcome = snapshot.outcome;
-    if (this.tutorialIndex !== undefined && outcome === 'victory') {
-      const nextIndex = this.tutorialIndex + 1;
+    const inTutorialSequence = isTutorialStep(this.map.id, this.tutorialIndex);
+    if (inTutorialSequence && outcome === 'victory') {
+      const nextIndex = this.tutorialIndex! + 1;
       window.location.href =
         nextIndex < LESSON_MAP_IDS.length ? tutorialStepUrl(LESSON_MAP_IDS, nextIndex) : levelSelectUrl();
       return;
     }
 
-    // Tutorial steps stay outside the campaign entirely (a tutorial loss
-    // still just resets, as before), and so do non-campaign maps.
-    if (this.tutorialIndex === undefined && outcome && isCampaignMap(this.map.id) && !this.campaign.campaignOver) {
+    // Lesson steps stay outside the campaign entirely (a lesson loss still
+    // just resets, as before), and so do non-campaign maps. onCampaignGrid
+    // was decided in init() by the same unlock rules that gate entry.
+    if (!inTutorialSequence && outcome && this.onCampaignGrid) {
       saveCampaign(
         applyMissionResult(this.campaign, {
           mapId: this.map.id,
@@ -1418,7 +1489,7 @@ export class BattleScene extends Phaser.Scene {
       snap.resetTurnUsed ? `${i18n.t('ui.reset_turn')}\n${i18n.t('ui.reset_turn_used')}` : i18n.t('ui.reset_turn'),
     );
     this.endTurnButton.label.setText(i18n.t('ui.end_turn'));
-    this.resetLevelButton.label.setText(i18n.t('ui.reset_level'));
+    this.resetLevelButton?.label.setText(i18n.t('ui.reset_level'));
     this.backToLevelSelectButton.label.setText(i18n.t('ui.select_level'));
     {
       const resetDisabled = outcomePending || snap.resetTurnUsed;
