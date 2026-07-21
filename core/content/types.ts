@@ -160,6 +160,48 @@ export interface MapDef {
   initialMonsters: WaveSpawnDef[];
   /** Future emergences, each telegraphed one turn ahead (A3). May be empty for a level with no reinforcements. */
   spawnSchedule: SpawnScheduleEntry[];
+  /**
+   * Candidate emergence tiles for the DYNAMIC population feedback loop (see
+   * BattleEngine.resolvePopulationReinforcement()) — distinct from
+   * `spawnSchedule`, which is the author's hand-placed fixed script. The
+   * engine walks this list in order, wrapping around, and never picks at
+   * random: this game is full-information / zero-luck, so the same board must
+   * always produce the same reinforcement.
+   *
+   * OPTIONAL. When omitted the engine derives a pool from the map's own
+   * `spawnSchedule` tiles (deduped, in declaration order), so every existing
+   * map gets the loop without editing its JSON. A map with neither an
+   * explicit pool nor a spawnSchedule (the lesson levels) simply never
+   * reinforces — the derived pool is empty and the loop is inert.
+   */
+  spawnPool?: Vec2[];
+  /**
+   * The living-monster count the level tries to hold. At the end of every
+   * turn, if fewer than this many monsters are alive, the engine telegraphs
+   * reinforcements for the NEXT turn to close the gap — so clearing the board
+   * is never a stable win state, the ITB "you can't zero out the grid" rule.
+   *
+   * OPTIONAL, defaults to 0 — i.e. the loop is OFF unless a map opts in.
+   *
+   * The default is deliberately inert rather than derived from
+   * `initialMonsters.length`. Deriving it would silently re-balance all 21
+   * shipped missions the moment this field existed, invalidating the
+   * hand-authored solvability walkthroughs in tests/content-registry.test.ts
+   * that certify each one is beatable. Turning the loop on is a per-map
+   * content decision (pick a target, pick a budget, re-verify the level),
+   * not something the engine should do behind the author's back.
+   */
+  targetPopulation?: number;
+  /**
+   * Hard lifetime ceiling on how many monsters the population loop above may
+   * telegraph over the WHOLE run — without it a level could reinforce
+   * forever and stop being a solvable puzzle. `spawnSchedule` entries are the
+   * author's own script and do NOT count against this budget.
+   *
+   * OPTIONAL, defaults to 0 (loop off) — same rationale as
+   * `targetPopulation` above.
+   */
+  totalSpawnBudget?: number;
   /** Fixed mission length (A4): survive this many turns with the base alive to win — killing every monster is never required. */
   totalTurns: number;
   /** Shared HP pool for all of this map's 'B' base tiles combined. */
