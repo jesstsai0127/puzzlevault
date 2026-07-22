@@ -1351,6 +1351,174 @@ describe("final mission (final_hive) — ITB Last Stand's decisive phase: protec
       engine.endTurn();
     }
   });
+
+  // The finale's squad is [li_yan, ling_er, bai_zhi] — the same no-ranged-attacker,
+  // no-direct-damage-from-two-of-three roster as island4_m5 — but baseHp here is
+  // only 4 (vs. 8 there) against 6 total monsters (2 yin_ghost, 2 teng_yao, 2
+  // jiangshi) converging from both flanks over 5 turns. A passive run confirms
+  // it can't be idled through (see the test above). The line below is not just
+  // survivable, it's flawless: baseHp stays at 4/4 the ENTIRE game and no player
+  // ever drops below max except a single deliberate 1-hp trade.
+  //
+  // The keys that make it solvable:
+  //  - T1: yin_ghost_west's own locked move-toward-base intent carries it into
+  //    (2,3) BEFORE teng_yao_north's locked vine_lash (aimed at li_yan, nearest
+  //    player, straight down column x=2) resolves later in the same endTurn loop
+  //    (monsters resolve in spawn order — both yin_ghosts, then teng_yao, then
+  //    jiangshi) — its own ally eats the shot instead of li_yan. Free, from a
+  //    fully passive turn.
+  //  - T2: ling_er's ULTIMATE, roaring_shockwave (allEnemies, push 2, once per
+  //    mission), cast from her start tile (5,4) with both yin_ghosts now flanking
+  //    the base at (2,3)/(5,3), pushes every living monster away from her in its
+  //    own direction in one shot: the west ghost (already at 1 hp from the T1
+  //    friendly fire) takes a wall-collision hit at (0,3) and dies; the east
+  //    ghost gets shoved due north straight into the hazard tile at (5,2) and
+  //    dies outright (a monster shoved into hazard dies, no partial damage); both
+  //    already-locked ghost_claw base-hits (2+2, which would have been lethal to
+  //    a 4-hp base) never fire because the caster is dead before its turn comes
+  //    up in the endTurn loop. It also chips teng_yao_north (wall collision,
+  //    pushed to (1,1)) and jiangshi_north (wall collision, held at (5,1)) for
+  //    free, in the same single action.
+  //  - The wall-collision-finishes-a-chip-target trick repeats twice more: li_yan
+  //    solo-kills the chipped teng_yao_north (T2) and jiangshi_north (T4) by
+  //    attacking FROM the far side of the monster relative to the nearest wall,
+  //    so sword_qi's own push effect drives the survivor into that wall for the
+  //    extra point of collision damage that finishes it — one hero action, one
+  //    kill, each time.
+  //  - The second teng_yao (scripted for telegraphTurn 3 at (5,6)) is denied
+  //    entirely: bai_zhi simply stands on its emergence tile, trading 1 flat
+  //    EMERGENCE_BLOCK_DAMAGE (which she heals right back with a T4 rest) for
+  //    permanently erasing a 4-hp sniper from the rest of the mission.
+  //  - The second jiangshi (scripted for telegraphTurn 2 at (1,6)) is simply too
+  //    far from the base to ever reach attack range inside the 5-turn clock once
+  //    left alone — it's a non-threat by pure distance, not something that needs
+  //    fighting at all.
+  it('open with the central ultimate to hazard/wall-kill both flanks, chain wall-collision solo-kills through both jiangshi, and body-block the second teng_yao out of existence — base stays flawless at 4/4 the whole game', () => {
+    const map = maps.final_hive;
+    const engine = new BattleEngine(map, map.squadCharacterIds!, registry); // [li_yan, ling_er, bai_zhi]
+
+    // T1 — nothing is in reach yet: both yin_ghosts are 2 tiles from the base,
+    // teng_yao_north and jiangshi_north are still up north. A fully passive turn
+    // costs nothing, and sets up the free friendly-fire kill described above.
+    expect(engine.rest(0).ok).toBe(true);
+    expect(engine.rest(1).ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+    const afterT1 = engine.getSnapshot();
+    expect(afterT1.baseHp).toBe(4); // no monster could reach the base turn 1
+    expect(afterT1.players.every((p) => p.hp === p.maxHp)).toBe(true);
+    const westGhostT1 = afterT1.monsters.find((m) => m.instanceId === 'yin_ghost#1');
+    expect(westGhostT1?.position).toEqual({ x: 2, y: 3 });
+    expect(westGhostT1?.hp).toBe(1); // chipped by teng_yao's own vine_lash, not by us
+
+    // T2 — both yin_ghosts are now adjacent to the base; left alone their
+    // ghost_claw hits (2+2) would kill a 4-hp base outright this turn. ling_er's
+    // ultimate solves both at once, for free, with zero movement.
+    expect(engine.useSkill(1, 'roaring_shockwave', 'up').ok).toBe(true);
+    let snap = engine.getSnapshot();
+    expect(snap.monsters.filter((m) => m.hp > 0).map((m) => m.instanceId).sort()).toEqual([
+      'jiangshi#4',
+      'teng_yao#3',
+    ]); // both yin_ghosts dead (wall collision / hazard shove) before their locked base-hits could resolve
+    expect(snap.baseHp).toBe(4); // untouched
+    const tengYaoT2 = snap.monsters.find((m) => m.instanceId === 'teng_yao#3');
+    expect(tengYaoT2).toMatchObject({ hp: 3, position: { x: 1, y: 1 } }); // wall-collision chip, pushed off (2,1)
+    const jiangshiNorthT2 = snap.monsters.find((m) => m.instanceId === 'jiangshi#4');
+    expect(jiangshiNorthT2).toMatchObject({ hp: 5, position: { x: 5, y: 1 } }); // wall-collision chip, held in place
+
+    // li_yan closes on the chipped teng_yao from due north: sword_qi's 2 damage
+    // plus its own push driving the 1-hp survivor into the (1,0) wall for a
+    // collision point finishes it in one action.
+    expect(engine.moveUnit(0, { x: 1, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    snap = engine.getSnapshot();
+    expect(snap.monsters.filter((m) => m.hp > 0).map((m) => m.instanceId)).toEqual(['jiangshi#4']);
+    expect(snap.players[0]).toMatchObject({ hp: 6, position: { x: 1, y: 2 } }); // li_yan untouched
+
+    expect(engine.rest(2).ok).toBe(true); // bai_zhi: nothing threatens her yet
+    engine.endTurn();
+    const afterT2 = engine.getSnapshot();
+    expect(afterT2.baseHp).toBe(4); // still untouched
+    expect(afterT2.players.every((p) => p.hp === p.maxHp)).toBe(true);
+    // jiangshi_north advanced to (4,1); the scripted second jiangshi emerges fresh at (1,6)
+    expect(afterT2.monsters.map((m) => `${m.instanceId}@${m.position.x},${m.position.y}:${m.hp}`).sort()).toEqual([
+      'jiangshi#4@4,1:5',
+      'jiangshi#5@1,6:6',
+    ]);
+
+    // T3 — li_yan chips jiangshi_north from due west and pushes it east to
+    // (5,1); on its own re-walk toward the base next endTurn, the hazard tile at
+    // (5,2) blocks its straight vertical shortcut, so the multi-step fallback
+    // walks it right back to (4,1) — a full turn stalled for 2 free damage, no
+    // net progress toward the base. Meanwhile bai_zhi crosses to (5,6), the
+    // tile telegraphed this turn for the second teng_yao's emergence, and
+    // ling_er repositions centrally and shields up in case either jiangshi
+    // reaches a hero later.
+    expect(engine.moveUnit(0, { x: 3, y: 1 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'right').ok).toBe(true);
+    snap = engine.getSnapshot();
+    expect(snap.monsters.find((m) => m.instanceId === 'jiangshi#4')).toMatchObject({
+      hp: 3,
+      position: { x: 5, y: 1 },
+    });
+
+    expect(engine.moveUnit(2, { x: 5, y: 6 }).ok).toBe(true); // bai_zhi: body-block the emergence tile
+    expect(engine.rest(2).ok).toBe(true);
+    expect(engine.moveUnit(1, { x: 4, y: 4 }).ok).toBe(true);
+    expect(engine.useSkill(1, 'heavy_shield', 'up').ok).toBe(true);
+    engine.endTurn();
+    const afterT3 = engine.getSnapshot();
+    expect(afterT3.baseHp).toBe(4); // still untouched
+    expect(afterT3.players[2]).toMatchObject({ hp: 4, position: { x: 5, y: 6 } }); // bai_zhi ate the emergence block — the ONLY damage anyone takes all game
+    expect(afterT3.players[1]).toMatchObject({ hp: 9, shield: 2 });
+    // jiangshi_north's re-walk bounced it right back to (4,1) with zero net progress;
+    // jiangshi_west is still just marching, nowhere near attack range
+    expect(afterT3.monsters.map((m) => `${m.instanceId}@${m.position.x},${m.position.y}:${m.hp}`).sort()).toEqual([
+      'jiangshi#4@4,1:3',
+      'jiangshi#5@1,5:6',
+    ]);
+    // and the second teng_yao never exists — no monster with that id spawned this game
+    expect(afterT3.monsters.some((m) => m.monsterId === 'teng_yao')).toBe(false);
+
+    // T4 — jiangshi_north (3 hp, back at (4,1)) is now in range1 of li_yan
+    // (still at (3,1) from last turn) and its locked intent this turn is
+    // corpse_smash aimed at HER, not the base. li_yan attacks it from due
+    // south instead: sword_qi's 2 damage plus a push-collision into the (4,0)
+    // wall kills it before its own locked swing can land, cancelling the
+    // attack outright.
+    expect(engine.moveUnit(0, { x: 4, y: 2 }).ok).toBe(true);
+    expect(engine.useSkill(0, 'sword_qi', 'up').ok).toBe(true);
+    snap = engine.getSnapshot();
+    expect(snap.monsters.filter((m) => m.hp > 0).map((m) => m.instanceId)).toEqual(['jiangshi#5']);
+    expect(snap.players[0]).toMatchObject({ hp: 6, position: { x: 4, y: 2 } }); // li_yan never took the corpse_smash
+
+    expect(engine.rest(2).ok).toBe(true); // bai_zhi heals the T3 emergence-block chip back to full
+    expect(engine.rest(1).ok).toBe(true); // ling_er: nothing to do, still shielded
+    engine.endTurn();
+    const afterT4 = engine.getSnapshot();
+    expect(afterT4.baseHp).toBe(4); // still untouched, one turn from the finish
+    expect(afterT4.players).toMatchObject([
+      { hp: 6, position: { x: 4, y: 2 } },
+      { hp: 9, shield: 2, position: { x: 4, y: 4 } },
+      { hp: 5, position: { x: 5, y: 6 } }, // bai_zhi's rest healed the emergence chip back to full
+    ]);
+    // jiangshi_west is the only monster left, still just marching — never gets within range1 of anything
+    expect(afterT4.monsters).toHaveLength(1);
+    expect(afterT4.monsters[0]).toMatchObject({ instanceId: 'jiangshi#5', hp: 6, position: { x: 1, y: 4 } });
+
+    // T5 — the last monster on the board only has a move intent (it's still 2+
+    // tiles from the base and closes at most 1 tile/turn); nothing to do but
+    // hold the line to the final bell.
+    expect(engine.rest(0).ok).toBe(true);
+    expect(engine.rest(1).ok).toBe(true);
+    expect(engine.rest(2).ok).toBe(true);
+    engine.endTurn();
+
+    const finalSnap = engine.getSnapshot();
+    expect(finalSnap.outcome).toBe('victory');
+    expect(finalSnap.baseHp).toBe(4); // flawless — the 4-hp base never took a single hit the entire game
+    expect(finalSnap.players.map((p) => p.hp)).toEqual([6, 9, 5]); // every player at full hp at the final bell
+  });
 });
 
 describe('lesson levels (standalone tutorial sequence — replaces the old scripted TutorialDef system)', () => {
