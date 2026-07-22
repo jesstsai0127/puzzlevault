@@ -68,10 +68,18 @@ export const FINAL_MAP_ID = 'final_hive';
  * mission" silently became "one per reload" — a resource obtainable on demand
  * by pressing F5. Persisting it is what makes the limit real.
  *
- * The mission restarting from its opening board on reload is deliberately NOT
- * prevented. The grid damage was already banked live, so a replay is strictly
- * worse than continuing, and the game is perfect-information and
- * deterministic — a fresh attempt cannot roll a friendlier board.
+ * ITB alignment (2026-07-22): resuming from a reload — replaying the mission
+ * from its opening board while the grid damage already taken stays banked —
+ * was deliberately left standing on the reasoning that a fresh attempt is
+ * strictly worse than continuing. That missed a real exploit: previewed
+ * damage is only ever committed to the grid at endTurn() (see syncGridHp
+ * below), so a player who dislikes what a telegraph shows can reload BEFORE
+ * ending the turn and get an unlimited do-over of the current turn's
+ * planning — the "one turn-reset per mission" limit in spirit, but free and
+ * unbounded. ITB has no mid-mission restart at all. `abandonActiveMission()`
+ * below closes this: any reload that lands back on an already-started,
+ * uncleared mission settles it as an immediate defeat (banking whatever
+ * damage was already live-synced, no more, no less) instead of resuming it.
  */
 export interface ActiveMission {
   mapId: string;
@@ -122,9 +130,13 @@ export function newCampaign(): CampaignState {
 /**
  * Marks a mission as entered, returning a NEW state.
  *
- * Re-entering the SAME mission (a reload, or leaving and coming back)
- * preserves its spent turn-reset — that is the whole point of persisting it.
- * Entering a different mission starts a fresh record.
+ * The same-mapId branch is defensive rather than load-bearing since the
+ * 2026-07-22 ITB alignment: `BattleScene` now calls `abandonActiveMission()`
+ * on any reload that lands back on an already-started mission BEFORE this
+ * would ever run again for the same mapId, so in the normal flow
+ * `state.activeMission` is always null here. Kept so the function stays
+ * correct on its own (e.g. for tests, or any future caller) rather than
+ * assuming its caller always cleared the slot first.
  */
 export function beginMission(state: CampaignState, mapId: string): CampaignState {
   const active: ActiveMission =
@@ -151,6 +163,36 @@ export function markResetTurnUsed(state: CampaignState): CampaignState {
 /** Whether `mapId` is the active mission and has already spent its turn-reset. */
 export function resetTurnUsedFor(state: CampaignState, mapId: string): boolean {
   return state.activeMission?.mapId === mapId && state.activeMission.resetTurnUsed;
+}
+
+/**
+ * Settles the in-progress mission as a defeat, returning a NEW state.
+ *
+ * ITB alignment (2026-07-22): closes the "reload to escape a bad preview"
+ * exploit (see ActiveMission's doc comment). Called whenever a page load
+ * finds `state.activeMission` already pointing at the mission being entered
+ * — the player left mid-attempt, so ITB's rule ("no mid-mission restart")
+ * says that attempt is over, not paused.
+ *
+ * `baseHpRemaining`/`baseMaxHp` are both the CURRENT gridHp: syncGridHp()
+ * already banked every completed turn's damage live, so this call must not
+ * deduct anything further (that would double-charge a turn that already
+ * cost grid) or grant anything (the zero-damage bonus is victory-only and a
+ * forced defeat never qualifies regardless of how these two numbers compare
+ * — see applyMissionResult). This is bookkeeping for a loss already priced
+ * in, not a second judgment on the attempt.
+ *
+ * A no-op (returns `state` unchanged) when nothing is active, so callers can
+ * call this unconditionally on every page load without checking first.
+ */
+export function abandonActiveMission(state: CampaignState): CampaignState {
+  if (!state.activeMission) return state;
+  return applyMissionResult(state, {
+    mapId: state.activeMission.mapId,
+    outcome: 'defeat',
+    baseHpRemaining: state.gridHp,
+    baseMaxHp: state.gridHp,
+  });
 }
 
 /** The 5 mapIds (m1-m5) belonging to island `index`, straight from WORLD_STRUCTURE. */
