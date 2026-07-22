@@ -9,6 +9,7 @@ import type { EffectType, MapDef, SkillDef } from '../../core/content/types';
 import type { BattleSnapshot, CombatTarget, RunOutcome, TurnEvent } from '../../core/battle/types';
 import { levelSelectUrl, tutorialStepUrl } from './levelNav';
 import {
+  abandonActiveMission,
   allowsLevelRestart,
   applyMissionResult,
   beginMission,
@@ -17,7 +18,6 @@ import {
   isTutorialStep,
   markResetTurnUsed,
   newCampaign,
-  resetTurnUsedFor,
   syncGridHp,
   type CampaignState,
 } from '../../core/campaign/state';
@@ -212,6 +212,15 @@ export class BattleScene extends Phaser.Scene {
   private onCampaignGrid = false;
   /** Set in init() when a ?map= names a campaign mission the unlock rules do not currently offer; create() bounces back to level select. */
   private campaignBlocked = false;
+  /**
+   * Set in init() when a ?map= reload lands back on a campaign mission that
+   * was already started and never settled. ITB has no mid-mission restart
+   * (2026-07-22), so init() has already forfeited it (abandonActiveMission())
+   * by the time create() checks this — create() just bounces back to level
+   * select the same way it does for campaignBlocked, without ever building
+   * an engine for a mission that is already over.
+   */
+  private missionAbandoned = false;
 
   constructor() {
     super('BattleScene');
@@ -245,6 +254,19 @@ export class BattleScene extends Phaser.Scene {
     this.campaignBlocked = !canEnterMission(this.campaign, this.map.id);
     this.onCampaignGrid = isCampaignMap(this.map.id) && !this.campaignBlocked;
 
+    // ITB alignment (2026-07-22): a reload landing back on a mission the save
+    // already marks as active (started, never settled) is exactly the
+    // "leave mid-attempt, come back" case ITB does not allow — see
+    // abandonActiveMission()'s doc comment for the exploit this closes.
+    // Forfeit it as a defeat right here, before create() ever builds an
+    // engine for it.
+    this.missionAbandoned = this.onCampaignGrid && this.campaign.activeMission?.mapId === this.map.id;
+    if (this.missionAbandoned) {
+      this.campaign = abandonActiveMission(this.campaign);
+      saveCampaign(this.campaign);
+      this.onCampaignGrid = false;
+    }
+
     this.tileHighlights = [];
     this.monsterSprites = new Map();
     this.monsterHpBars = new Map();
@@ -265,10 +287,12 @@ export class BattleScene extends Phaser.Scene {
   }
 
   create() {
-    // Locked mission reached by a hand-edited ?map= (see init()). Bail out
+    // Locked mission reached by a hand-edited ?map= (see init()), or a
+    // mid-attempt mission just forfeited because this load found it already
+    // active (see init()'s missionAbandoned check). Either way bail out
     // before building anything — no engine, no input handlers — and let the
     // navigation take over.
-    if (this.campaignBlocked) {
+    if (this.campaignBlocked || this.missionAbandoned) {
       window.location.href = levelSelectUrl();
       return;
     }
@@ -289,20 +313,15 @@ export class BattleScene extends Phaser.Scene {
       this.onCampaignGrid ? { baseHpOverride: this.campaign.gridHp } : undefined,
     );
 
-    // Resuming a mission the player already started (a reload, or a return
-    // trip through level select). ITB grants exactly one turn-reset per
-    // mission, but resetTurnUsed lives only in the engine instance, so a
-    // reload used to hand out a fresh one every time — a free resource on
-    // demand. The flag is restored by spending it: calling resetTurn() on a
-    // brand-new engine sets it while rewinding to a turn-start snapshot that
-    // is still the pristine opening board, so it consumes the reset without
-    // disturbing anything. That keeps the restore inside the engine's public
-    // API rather than reaching into its private state.
+    // init() has already forfeited any prior attempt at this same mission
+    // (missionAbandoned would have bounced out above), so reaching here on
+    // a campaign mission always means a genuinely fresh attempt — beginMission
+    // always starts a clean { resetTurnUsed: false } record, never a resumed
+    // one. See ActiveMission's doc comment for why resuming is no longer
+    // offered at all.
     if (this.onCampaignGrid) {
-      const resumingWithResetSpent = resetTurnUsedFor(this.campaign, this.map.id);
       this.campaign = beginMission(this.campaign, this.map.id);
       saveCampaign(this.campaign);
-      if (resumingWithResetSpent) this.engine.resetTurn();
     }
 
     // Left-align the board so the right side has a wide column for the rules panel.
