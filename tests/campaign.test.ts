@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  abandonActiveMission,
   allowsLevelRestart,
   applyMissionResult,
   availableMissions,
@@ -54,7 +55,7 @@ describe('newCampaign', () => {
   });
 });
 
-describe('activeMission — the one turn-reset survives a reload but is not refreshed', () => {
+describe('activeMission — beginMission/markResetTurnUsed/resetTurnUsedFor as pure functions', () => {
   const m0 = () => regularMapIds(0)[0];
 
   it('beginMission opens a fresh record with the reset unspent', () => {
@@ -63,11 +64,16 @@ describe('activeMission — the one turn-reset survives a reload but is not refr
     expect(resetTurnUsedFor(s, m0())).toBe(false);
   });
 
-  it('re-entering the SAME mission preserves a spent reset (the reload case)', () => {
+  // ITB alignment (2026-07-22): BattleScene no longer actually reaches this
+  // path on a reload — abandonActiveMission() forfeits the mission before
+  // beginMission would ever run again for the same mapId (see the describe
+  // block below). This test stays because beginMission is still a correct,
+  // independently-callable pure function, not because a reload behaves this
+  // way in the game anymore.
+  it('re-entering the SAME mission preserves a spent reset (beginMission alone, not the actual reload path)', () => {
     let s = beginMission(newCampaign(), m0());
     s = markResetTurnUsed(s);
     expect(resetTurnUsedFor(s, m0())).toBe(true);
-    // F5 on the same ?map= URL: init() calls beginMission again.
     s = beginMission(s, m0());
     expect(resetTurnUsedFor(s, m0())).toBe(true); // NOT reset to false
   });
@@ -107,6 +113,88 @@ describe('activeMission — the one turn-reset survives a reload but is not refr
     // And the restore path the scene uses reports the reset as spent.
     expect(resetTurnUsedFor(reloaded, m0())).toBe(true);
     delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+});
+
+describe('abandonActiveMission — ITB has no mid-mission restart (2026-07-22)', () => {
+  const m0 = () => regularMapIds(0)[0];
+
+  it('is a no-op when nothing is active', () => {
+    const s = newCampaign();
+    expect(abandonActiveMission(s)).toEqual(s);
+  });
+
+  it('settles the active mission as a defeat and clears the record', () => {
+    let s = beginMission(newCampaign(), m0());
+    s = syncGridHp(s, GRID_START - 3); // two turns in, already down 3 live
+    s = abandonActiveMission(s);
+    expect(s.activeMission).toBeNull();
+    expect(s.gridHp).toBe(GRID_START - 3); // exactly what was already banked
+  });
+
+  it('does not double-deduct — the live-synced damage is the only damage charged', () => {
+    // If this deducted again on top of the live sync, gridHp would go
+    // further below GRID_START - 3 than the mission actually cost.
+    let s = beginMission(newCampaign(), m0());
+    s = syncGridHp(s, GRID_START - 5);
+    s = abandonActiveMission(s);
+    expect(s.gridHp).toBe(GRID_START - 5);
+  });
+
+  it('never awards the zero-damage bonus, even on a mission abandoned before taking any damage', () => {
+    // baseHpRemaining === baseMaxHp === gridHp here, which would read as
+    // "zero damage" — but the outcome is 'defeat', and applyMissionResult's
+    // bonus branch is victory-only, so no +1 must ever land here.
+    let s = beginMission(newCampaign(), m0());
+    s = abandonActiveMission(s);
+    expect(s.gridHp).toBe(GRID_START);
+    expect(s.clearedMapIds).toEqual([]);
+  });
+
+  it('does not mark the mission cleared, so it remains available for a fresh attempt', () => {
+    let s = beginMission(newCampaign(), m0());
+    s = syncGridHp(s, GRID_START - 2);
+    s = abandonActiveMission(s);
+    expect(s.clearedMapIds).not.toContain(m0());
+    expect(availableMissions(s)).toContain(m0());
+  });
+
+  it('ends the campaign if the grid was already exhausted by the time it is called', () => {
+    let s = beginMission(newCampaign(), m0());
+    s = syncGridHp(s, 0);
+    s = abandonActiveMission(s);
+    expect(s.campaignOver).toBe(true);
+  });
+
+  it('does not mutate its input', () => {
+    const s = syncGridHp(beginMission(newCampaign(), m0()), GRID_START - 1);
+    const snap = JSON.parse(JSON.stringify(s));
+    abandonActiveMission(s);
+    expect(s).toEqual(snap);
+  });
+
+  it('closes the reload-to-escape-a-bad-preview exploit: reloading mid-attempt forfeits it instead of resuming', () => {
+    // Simulates what BattleScene.init() now does on every load: check for a
+    // matching active mission and forfeit it BEFORE beginMission ever runs
+    // again for the same mapId — beginMission is never called a second time
+    // on an unsettled mission anymore.
+    let s = beginMission(newCampaign(), m0());
+    s = markResetTurnUsed(s);
+    s = syncGridHp(s, GRID_START - 2); // one bad turn already banked
+
+    // "Reload": init() finds activeMission.mapId === m0() and forfeits it —
+    // it does NOT call beginMission(s, m0()) to resume, which is exactly
+    // the behavior that used to let a player retry the mission for free.
+    expect(s.activeMission?.mapId).toBe(m0());
+    s = abandonActiveMission(s);
+    expect(s.activeMission).toBeNull();
+    expect(s.gridHp).toBe(GRID_START - 2); // the bad turn stays charged
+
+    // The mission is available again, but as a wholly fresh attempt — the
+    // spent reset does NOT carry over, unlike the old resume path.
+    expect(availableMissions(s)).toContain(m0());
+    const fresh = beginMission(s, m0());
+    expect(fresh.activeMission).toEqual({ mapId: m0(), resetTurnUsed: false });
   });
 });
 
